@@ -1,0 +1,1355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLARA System Architecture Diagrams</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #1e88e5;
+            --primary-dark: #1565c0;
+            --secondary: #26a69a;
+            --bg-light: #f5f7fa;
+            --bg-white: #ffffff;
+            --text-dark: #2c3e50;
+            --text-light: #546e7a;
+            --border: #e0e0e0;
+            --shadow: rgba(0, 0, 0, 0.1);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: var(--text-dark);
+            background: var(--bg-light);
+            line-height: 1.6;
+        }
+
+        body.dark-mode {
+            --bg-light: #1a1a1a;
+            --bg-white: #2d2d2d;
+            --text-dark: #e0e0e0;
+            --text-light: #b0bec5;
+            --border: #404040;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 2rem 2rem 1.5rem;
+            box-shadow: 0 4px 6px var(--shadow);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 0.95rem;
+            opacity: 0.9;
+        }
+
+        .theme-toggle {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.3s ease;
+        }
+
+        .theme-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            gap: 2rem;
+            padding: 2rem;
+        }
+
+        aside {
+            width: 280px;
+            background: var(--bg-white);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px var(--shadow);
+            position: sticky;
+            top: 140px;
+            height: fit-content;
+            max-height: calc(100vh - 160px);
+            overflow-y: auto;
+        }
+
+        .toc-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .toc-list {
+            list-style: none;
+        }
+
+        .toc-item {
+            margin-bottom: 0.5rem;
+        }
+
+        .toc-link {
+            color: var(--text-light);
+            text-decoration: none;
+            display: block;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .toc-link:hover {
+            background: var(--bg-light);
+            color: var(--primary);
+            transform: translateX(4px);
+        }
+
+        .toc-link.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .diagram-card {
+            background: var(--bg-white);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px var(--shadow);
+            scroll-margin-top: 140px;
+        }
+
+        .diagram-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .diagram-number {
+            color: var(--secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .diagram-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        .diagram-content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+            overflow: auto;
+            position: relative;
+        }
+
+        .diagram-content .mermaid {
+            min-width: fit-content;
+        }
+
+        /* Diagram action buttons */
+        .diagram-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .diagram-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .btn-icon {
+            background: var(--bg-light);
+            border: 1px solid var(--border);
+            color: var(--text-light);
+            padding: 0.4rem 0.7rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .btn-icon:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        /* ===== FULLSCREEN MODAL ===== */
+        .fullscreen-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: var(--bg-white);
+            z-index: 10000;
+            flex-direction: column;
+        }
+
+        .fullscreen-overlay.active {
+            display: flex;
+        }
+
+        .fullscreen-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .fullscreen-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .fullscreen-controls {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .fullscreen-controls button {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .fullscreen-controls button:hover {
+            background: rgba(255,255,255,0.35);
+        }
+
+        .zoom-level {
+            font-size: 0.85rem;
+            min-width: 50px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .fullscreen-body {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            cursor: grab;
+        }
+
+        .fullscreen-body:active {
+            cursor: grabbing;
+        }
+
+        .fullscreen-diagram {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform-origin: 0 0;
+            transition: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .fullscreen-diagram svg {
+            max-width: none !important;
+            max-height: none !important;
+        }
+
+        /* Zoom hint */
+        .zoom-hint {
+            position: absolute;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+
+        .zoom-hint.show {
+            opacity: 1;
+        }
+
+        @media print {
+            aside { display: none; }
+            .theme-toggle { display: none; }
+            .btn-icon { display: none; }
+            .container { display: block; }
+            .diagram-card { page-break-inside: avoid; }
+            .fullscreen-overlay { display: none !important; }
+        }
+
+        @media (max-width: 1024px) {
+            .container { flex-direction: column; }
+            aside {
+                width: 100%;
+                position: static;
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div>
+                <h1>🏥 CLARA System Architecture</h1>
+                <p class="subtitle">Comprehensive Mermaid Diagram Collection — 13 Visual Specifications</p>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()">🌙 Dark Mode</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <aside>
+            <h2 class="toc-title">📋 Diagrams</h2>
+            <ul class="toc-list">
+                <li class="toc-item"><a href="#diagram-1" class="toc-link">1. Master System Architecture</a></li>
+                <li class="toc-item"><a href="#diagram-2" class="toc-link">2. Two-Layer Intent Router (Inline)</a></li>
+                <li class="toc-item"><a href="#diagram-3" class="toc-link">3. Two-Layer Intent Router Detail</a></li>
+                <li class="toc-item"><a href="#diagram-4" class="toc-link">4. RAG Pipeline Detail</a></li>
+                <li class="toc-item"><a href="#diagram-5" class="toc-link">5. FIDES Fact-Checking Pipeline</a></li>
+                <li class="toc-item"><a href="#diagram-6" class="toc-link">6. AI Council / Hội chẩn</a></li>
+                <li class="toc-item"><a href="#diagram-7" class="toc-link">7. Cache Architecture</a></li>
+                <li class="toc-item"><a href="#diagram-8" class="toc-link">8. Vietnamese NLP Pipeline</a></li>
+                <li class="toc-item"><a href="#diagram-9" class="toc-link">9. Doctor Workflow — Sub-Agent</a></li>
+                <li class="toc-item"><a href="#diagram-10" class="toc-link">10. Research Workflow — Progressive</a></li>
+                <li class="toc-item"><a href="#diagram-11" class="toc-link">11. Emergency Fast-Path</a></li>
+                <li class="toc-item"><a href="#diagram-12" class="toc-link">12. Drug Normalization Pipeline</a></li>
+                <li class="toc-item"><a href="#diagram-13" class="toc-link">13. Infrastructure & DevOps</a></li>
+            </ul>
+        </aside>
+
+        <main>
+            <!-- Diagram 1: Master System Architecture -->
+            <section id="diagram-1" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 1</div>
+                    <h2 class="diagram-title">Master System Architecture</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    %% ═══════════════════════════════════════════════════════════
+    %% STYLE DEFINITIONS
+    %% ═══════════════════════════════════════════════════════════
+    classDef user fill:#ffffff,stroke:#333,stroke-width:2px,color:#000000;
+    classDef security fill:#fff8e1,stroke:#f57f17,stroke-width:2px,color:#000000;
+    classDef optim fill:#fffde7,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5,color:#000000;
+    classDef parallel fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000;
+    classDef litFill fill:#e1bee7,stroke:#4a148c,stroke-width:2px,color:#000000;
+    classDef safeFill fill:#ffccbc,stroke:#bf360c,stroke-width:2px,color:#000000;
+    classDef codingFill fill:#bbdefb,stroke:#0d47a1,stroke-width:2px,color:#000000;
+    classDef external fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000000;
+    classDef ragProcess fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000000;
+    classDef specDecoding fill:#e0f7fa,stroke:#006064,stroke-width:2px,stroke-dasharray: 3 3,color:#000000;
+    classDef output fill:#eceff1,stroke:#37474f,stroke-width:2px,color:#000000;
+    classDef emergency fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000000;
+    classDef roleClass fill:#e8eaf6,stroke:#283593,stroke-width:2px,color:#000000;
+    classDef intentClass fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000000;
+    classDef blockchain fill:#e0f2f1,stroke:#00695c,stroke-width:2px,stroke-dasharray: 5 2,color:#000000;
+    classDef vnNLP fill:#fce4ec,stroke:#880e4f,stroke-width:2px,color:#000000;
+    classDef cacheStyle fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000;
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 1: USER INTERACTION & SECURITY
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L1_User ["① User Interaction & Security Layer"]
+        User([🧑 User Query]) --> UI["Giao diện CLARA<br/>(Next.js + React)"]
+        UI --> API_GW["API Gateway<br/>(Kong/Traefik + JWT Auth<br/>+ Rate Limiting)"]
+        API_GW -->|Raw Data| PII_Filter{{"🔒 PII/PHI Filter<br/>(Regex + NER)"}}
+        PII_Filter -- "Sensitive Data" --> Anonymizer["🔐 Anonymization Module<br/>(Hash + Tokenize PII)"]
+        Anonymizer --> VN_NLP
+        PII_Filter -- "Clean" --> VN_NLP["🇻🇳 Vietnamese NLP<br/>(NFC Normalize<br/>+ Diacritics Restore<br/>+ Word Segmentation)"]
+        VN_NLP --> Query_Proc["Query Processor<br/>(Medical NER<br/>+ Entity Extraction<br/>+ ICD-11 / RxNorm Mapping)"]
+    end
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 2: CLASSIFICATION & ROUTING
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L2_Class ["② Multi-Tier Classification & Routing"]
+        Query_Proc --> Emerg_Check{{"🚨 Emergency Check<br/>(Fast-path Bypass)<br/>Keywords: co giật, ngừng thở,<br/>đau ngực, xuất huyết,<br/>ngộ độc, tự tử..."}}
+
+        Emerg_Check -- "🔴 EMERGENCY" --> Fast_Path["⚡ Fast-Path Alert<br/>(< 1 second)<br/>115 + First-Aid<br/>+ Nearest Hospital"]
+
+        Emerg_Check -- "✅ No Emergency" --> Layer1_Role{{"Layer 1: Role Classifier<br/>Model: Qwen2.5-0.5B<br/>Latency: < 20ms"}}
+
+        Layer1_Role -- "normal_user<br/>(conf > 0.7)" --> Layer2_Normal["Layer 2A: Normal Intent<br/>• general_info<br/>• symptom_check<br/>• med_query<br/>• prevention<br/>• emergency<br/>• navigation<br/>• clarification"]
+        Layer1_Role -- "researcher<br/>(conf > 0.85)" --> Layer2_Research["Layer 2B: Research Intent<br/>• deep_research<br/>• drug_analysis<br/>• clinical_trial<br/>• evidence_synth<br/>• guideline_analysis<br/>• stat_inquiry<br/>• mechanism<br/>• methodology"]
+        Layer1_Role -- "doctor<br/>(verified)" --> Layer2_Doctor["Layer 2C: Doctor Intent<br/>• diagnosis (DDx)<br/>• treatment_plan<br/>• drug_interact (DDI)<br/>• dose_adjust<br/>• peer_consult<br/>• protocol_lookup<br/>• case_review<br/>• second_opinion"]
+
+        Layer2_Normal & Layer2_Research & Layer2_Doctor --> Route_Workflow(("Route to<br/>Workflow"))
+        Route_Workflow --> Cache_Check{{"📦 Cache Check<br/>(4-Layer: Redis → PG<br/>→ Embedding → Freshness)"}}
+    end
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 3: CORE AGENTS & WORKFLOW ROUTING
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L3_Agents ["③ Core Agents & Workflow Router"]
+        Cache_Check -- "✅ Cache Hit" --> Stream_Engine
+        Cache_Check -- "❌ Cache Miss" --> Workflow_Router{{"Workflow Router<br/>(Intent-Based)"}}
+
+        Workflow_Router -- "Tier 1: Simple<br/>(< 2 min)" --> T1_Flow["Tier 1 Workflow<br/>(Single-source RAG<br/>+ Quick Synthesis<br/>+ Basic Check)"]
+        Workflow_Router -- "Tier 2: Research<br/>(5-20 min)" --> T2_Flow["Tier 2 Workflow<br/>(Multi-source RAG<br/>+ Progressive Stream<br/>+ Full FIDES)"]
+        Workflow_Router -- "Tier 3: AI Council<br/>(< 20 min)" --> T3_Flow["Tier 3 Workflow<br/>(Multi-Specialist<br/>+ Deliberation<br/>+ Full FIDES + Logs)"]
+
+        T1_Flow --> Coding_Agent["🔧 Medical Coding Agent<br/>(Tool Orchestrator — SLM)<br/>Builds API queries,<br/>selects sources"]
+        T2_Flow --> Lit_Agent["📚 Literature Agent<br/>(SLM)<br/>PubMed search,<br/>evidence synthesis"]
+        T2_Flow --> Safety_Agent["⚠️ Safety Agent<br/>(SLM)<br/>DDI check, dosage,<br/>contraindications"]
+        T3_Flow --> Council_Agent["🏥 AI Council Orchestrator<br/>(Multi-Specialist)<br/>Cardio, Neuro, Pharma..."]
+    end
+
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 4: SMART ROUTER & KNOWLEDGE SOURCES
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L4_Sources ["④ Smart Router & Knowledge Sources"]
+        Coding_Agent & Lit_Agent & Safety_Agent & Council_Agent --> Router_Ingest["Router Ingest<br/>(Collect agent requests)"]
+
+        Router_Ingest --> Context_Analysis["Context Analyzer<br/>(Query understanding<br/>+ Medical entity extraction)"]
+
+        subgraph Routing_Logic ["Smart Routing Core"]
+            Context_Analysis --> Semantic_Match["Semantic Matcher<br/>(BGE-M3 embeddings<br/>+ MeSH term mapping)"]
+            Context_Analysis --> Latency_Opt["Latency Optimizer<br/>(Source response time<br/>+ Rate limit aware)"]
+            Semantic_Match & Latency_Opt --> Decision_Engine{{"Decision Engine<br/>(Select optimal sources)"}}
+        end
+
+        Decision_Engine -- "Y văn<br/>(Literature)" --> PubMed[("📄 PubMed/PMC<br/>E-Utils API<br/>10 req/s")]
+        Decision_Engine -- "Thử nghiệm<br/>(Clinical)" --> Trials[("🔬 ClinicalTrials.gov<br/>REST API v2")]
+        Decision_Engine -- "Cảnh báo<br/>(Safety)" --> OpenFDA[("⚠️ openFDA<br/>Drug Events<br/>240 req/min")]
+        Decision_Engine -- "Định danh<br/>(Coding)" --> ICD11[("🏷️ ICD-11 API<br/>WHO REST<br/>OAuth2")]
+        Decision_Engine -- "Dược điển<br/>(Pharmacy)" --> RxNorm[("💊 RxNorm API<br/>NLM REST<br/>~20 req/s")]
+        Decision_Engine -- "VN Sources" --> VN_Sources[("🇻🇳 Vietnamese<br/>Dược thư QG<br/>BYT Protocols<br/>BYT Circulars")]
+    end
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 5: RAG PIPELINE
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L5_RAG ["⑤ Detailed RAG Pipeline"]
+        PubMed & Trials & OpenFDA & ICD11 & RxNorm & VN_Sources -->|"JSON/XML"| Aggregator["Context Aggregator<br/>(Merge multi-source data)"]
+
+        Aggregator --> Cleaner["Cleaner Module<br/>(HTML/noise removal<br/>+ Unicode NFC)"]
+        Cleaner --> Chunker["Semantic Chunker<br/>(512-1024 tokens<br/>+ 128 token overlap<br/>+ Medical-aware splits)"]
+
+        Chunker --> ReRanker{{"Re-Ranking Pipeline<br/>1. BGE-Reranker-v2-m3<br/>2. Medical domain boosts<br/>3. Diversity filter<br/>4. Relevance threshold"}}
+
+        Query_Proc -.->|"Original context"| ReRanker
+
+        ReRanker -- "Top K chunks" --> Context_Win["Context Window<br/>(~70K tokens budget<br/>+ overflow strategy)"]
+        ReRanker -- "Score < 0.3" --> Discard((Discard))
+
+        subgraph Synthesis_Block ["Synthesis & Verification"]
+            Context_Win --> Synthesis_Model["🧠 Synthesis Model<br/>(Qwen2.5-72B /<br/>Claude API fallback)<br/>Generate cited response"]
+
+            Synthesis_Model --> Citation_Eng["📎 Citation Engine<br/>(Attach sources [1][2]<br/>PMID, NCT, RxCUI, DOI)"]
+
+            Citation_Eng --> Fact_Verifier{{"🔍 FIDES Fact Verifier<br/>5-Step Pipeline:<br/>1. Claim Decomposition<br/>2. Evidence Retrieval<br/>3. Cross-Reference<br/>4. Citation Validation<br/>5. Verdict"}}
+
+            Fact_Verifier -- "Hallucination<br/>detected" --> Correction["Self-Correction<br/>(Re-synthesize with<br/>corrected claims)"]
+            Correction --> Synthesis_Model
+        end
+    end
+
+
+    %% ═══════════════════════════════════════════════════════════
+    %% LAYER 6: OUTPUT, AUDIT & BLOCKCHAIN
+    %% ═══════════════════════════════════════════════════════════
+    subgraph L6_Output ["⑥ Output, Audit & Blockchain"]
+        Fast_Path --> Stream_Engine
+        Fact_Verifier -- "✅ Verified" --> Stream_Engine["📡 Response Streamer<br/>(WebSocket for Research<br/>+ SSE for Simple)"]
+        Stream_Engine -->|"Token stream"| UI
+
+        %% Blockchain Audit Trail
+        Fact_Verifier -- "Hash TX" --> Blockchain_Node[("⛓️ Blockchain Ledger<br/>Hyperledger (detail)<br/>+ Polygon (anchor)")]
+        Blockchain_Node -- "Immutable Log" --> Final_Doc[("📁 Database<br/>Documentation<br/>(Encrypted PostgreSQL)")]
+
+        %% Cache feedback loop
+        Final_Doc -.->|"Learn & Update<br/>(UPDATE not ADD)"| Cache_Check
+
+        %% Claim severity actions
+        Fact_Verifier -- "CRITICAL fail<br/>(dosage/DDI)" --> Block_Response["🚫 BLOCK RESPONSE<br/>(Safety critical)"]
+        Fact_Verifier -- "HIGH fail<br/>(diagnosis)" --> Flag_Warn["⚠️ FLAG & WARN"]
+        Fact_Verifier -- "MEDIUM fail<br/>(statistics)" --> Uncertainty["📝 ADD UNCERTAINTY NOTE"]
+    end
+
+    %% ═══════════════════════════════════════════════════════════
+    %% STYLE ASSIGNMENTS
+    %% ═══════════════════════════════════════════════════════════
+    class User,UI,Query_Proc,API_GW user;
+    class PII_Filter,Anonymizer security;
+    class VN_NLP vnNLP;
+    class Cache_Check cacheStyle;
+    class Stream_Engine,Router_Ingest,Context_Analysis,Semantic_Match,Latency_Opt,Decision_Engine optim;
+    class Workflow_Router,T1_Flow,T2_Flow,T3_Flow parallel;
+    class Emerg_Check,Fast_Path,Block_Response emergency;
+    class Layer1_Role roleClass;
+    class Layer2_Normal,Layer2_Research,Layer2_Doctor intentClass;
+    class Route_Workflow output;
+    class Lit_Agent litFill;
+    class Safety_Agent safeFill;
+    class Coding_Agent,Council_Agent codingFill;
+    class PubMed,Trials,OpenFDA,ICD11,RxNorm,VN_Sources external;
+    class Aggregator,Cleaner,Chunker,ReRanker,Context_Win,Citation_Eng,Fact_Verifier,Correction ragProcess;
+    class Synthesis_Model specDecoding;
+    class Final_Doc,Flag_Warn,Uncertainty output;
+    class Blockchain_Node blockchain;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 2: Two-Layer Intent Router (Inline) -->
+            <section id="diagram-2" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 2</div>
+                    <h2 class="diagram-title">Two-Layer Intent Router (Inline)</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph LR
+    subgraph Layer1 ["Layer 1: Role Classification (<20ms)"]
+        Q[Query] --> RC{{"Qwen2.5-0.5B<br/>(QLoRA fine-tuned)"}}
+        RC -- "conf > 0.85" --> DR[DOCTOR]
+        RC -- "conf > 0.7" --> RE[RESEARCHER]
+        RC -- "conf < 0.7 → default" --> NU[NORMAL USER]
+    end
+
+    subgraph Layer2 ["Layer 2: Intent Classification (<80ms)"]
+        DR --> L2C{{"Phi-3-mini<br/>+ LoRA-C"}}
+        RE --> L2B{{"Phi-3-mini<br/>+ LoRA-B"}}
+        NU --> L2A{{"Phi-3-mini<br/>+ LoRA-A"}}
+    end
+
+    L2C --> W3[Tier 3 Workflow]
+    L2B --> W2[Tier 2 Workflow]
+    L2A --> W1[Tier 1 Workflow]
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 3: Two-Layer Intent Router Detail -->
+            <section id="diagram-3" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 3 (9.1)</div>
+                    <h2 class="diagram-title">Two-Layer Intent Router Detail</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph Input ["Query Input"]
+        Q["User Query<br/>+ Profile + Session History"]
+    end
+
+    subgraph L1 ["Layer 1: Role Classifier (Qwen2.5-0.5B, <20ms)"]
+        Q --> Signals["Classification Signals:<br/>• Lexical complexity (HIGH)<br/>• Query structure (HIGH)<br/>• User profile (HIGHEST)<br/>• Session history (MEDIUM)<br/>• Language register (MEDIUM)"]
+        Signals --> RC{{"Role Classification"}}
+    end
+
+    RC -- "NORMAL (conf < 0.7)" --> L2A
+    RC -- "RESEARCHER (0.7-0.85)" --> L2B
+    RC -- "DOCTOR (verified, > 0.85)" --> L2C
+
+    subgraph L2 ["Layer 2: Intent Classifiers (Phi-3-mini + LoRA, <80ms)"]
+        L2A["LoRA Adapter A<br/>7 Normal Intents<br/>NU_INFO, NU_SYMPTOM,<br/>NU_DRUG, NU_PREVENT,<br/>NU_EMERGENCY,<br/>NU_NAVIGATE, NU_CLARIFY"]
+        L2B["LoRA Adapter B<br/>8 Research Intents<br/>RE_LIT_SEARCH, RE_EVIDENCE,<br/>RE_COMPARE, RE_GUIDELINE,<br/>RE_STAT, RE_MECHANISM,<br/>RE_TRIAL, RE_METHODOLOGY"]
+        L2C["LoRA Adapter C<br/>8 Doctor Intents<br/>DR_DDX, DR_TX_PLAN,<br/>DR_DRUG_INTERACT,<br/>DR_DOSE_ADJUST,<br/>DR_CONSULT, DR_PROTOCOL,<br/>DR_CASE_REVIEW,<br/>DR_SECOND_OPINION"]
+    end
+
+    L2A --> W1["Tier 1: Simple Workflow"]
+    L2B --> W2["Tier 2: Research Workflow"]
+    L2C --> W3["Tier 3: AI Council / Clinical"]
+
+    classDef l1Style fill:#e8eaf6,stroke:#283593,stroke-width:2px,color:#000;
+    classDef l2Style fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000;
+    classDef tierStyle fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000;
+    class RC,Signals l1Style;
+    class L2A,L2B,L2C l2Style;
+    class W1,W2,W3 tierStyle;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 4: RAG Pipeline Detail -->
+            <section id="diagram-4" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 4 (9.2)</div>
+                    <h2 class="diagram-title">RAG Pipeline Detail</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph QueryPhase ["Query Understanding & Decomposition"]
+        RQ["Raw Query"] --> QU["Query Understanding<br/>(Medical NER, Language Detection,<br/>ICD-11 / RxNorm Mapping)"]
+        QU --> QD["Query Decomposition<br/>(Break into atomic sub-queries<br/>+ source priority per sub-query)"]
+    end
+
+    subgraph RetrievalPhase ["Multi-Source Retrieval"]
+        QD --> PS["Parallel Source Queries"]
+        PS --> R1["PubMed<br/>(MeSH-enriched)"]
+        PS --> R2["ClinicalTrials.gov"]
+        PS --> R3["RxNorm + openFDA"]
+        PS --> R4["BYT / Dược thư"]
+        PS --> R5["Local Vector DB<br/>(FAISS/Milvus)"]
+    end
+
+    subgraph ProcessingPhase ["Processing Pipeline"]
+        R1 & R2 & R3 & R4 & R5 --> AGG["Aggregator"]
+        AGG --> CLEAN["Cleaner (HTML, noise)"]
+        CLEAN --> CHUNK["Chunker<br/>(512-1024 tokens,<br/>128 overlap)"]
+        CHUNK --> EMBED["BGE-M3 Embeddings<br/>(1024-dim dense +<br/>BM25 sparse)"]
+        EMBED --> HYBRID["Hybrid Search<br/>(α=0.6 dense + 0.4 sparse)"]
+        HYBRID --> RERANK["Cross-Encoder Reranker<br/>(BGE-Reranker-v2-m3<br/>+ domain boosts)"]
+        RERANK --> DIV["Diversity Filter<br/>(max 40% per source)"]
+        DIV --> CTX["Context Window<br/>(~70K tokens)"]
+    end
+
+    subgraph SynthPhase ["Synthesis & Verification"]
+        CTX --> SYNTH["Synthesis Agent<br/>(Qwen2.5-72B / Claude)"]
+        SYNTH --> CITE["Citation Engine"]
+        CITE --> FIDES["FIDES Verifier"]
+        FIDES -- "Pass" --> RESP["Response"]
+        FIDES -- "Fail" --> CORR["Self-Correction"] --> SYNTH
+    end
+
+    classDef retrieve fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    classDef process fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000;
+    classDef synth fill:#e0f7fa,stroke:#006064,stroke-width:2px,color:#000;
+    class R1,R2,R3,R4,R5 retrieve;
+    class AGG,CLEAN,CHUNK,EMBED,HYBRID,RERANK,DIV,CTX process;
+    class SYNTH,CITE,FIDES,CORR synth;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 5: FIDES Fact-Checking Pipeline -->
+            <section id="diagram-5" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 5 (9.3)</div>
+                    <h2 class="diagram-title">FIDES Fact-Checking Pipeline</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph Input ["LLM Response Input"]
+        RESP["Generated Response<br/>(Vietnamese medical text)"]
+    end
+
+    subgraph Step1 ["Step 1: Claim Decomposition"]
+        RESP --> SEG["Sentence Segmentation<br/>+ VN Coreference Resolution"]
+        SEG --> ATOMIC["Atomic Fact Extraction<br/>(BioMistral-7B VN)"]
+        ATOMIC --> CAT["Categorize Claims:<br/>• Drug (CRITICAL)<br/>• Dosage (CRITICAL)<br/>• Diagnosis (HIGH)<br/>• Treatment (HIGH)<br/>• Statistical (MEDIUM)<br/>• General (LOW)"]
+    end
+
+    subgraph Step2 ["Step 2: Per-Claim Evidence Retrieval"]
+        CAT --> ROUTE_V{{"Route by Category"}}
+        ROUTE_V -- "Drug/Dosage" --> DB_V["Structured DB Lookup<br/>(Dược thư + RxNorm<br/>+ DrugBank)"]
+        ROUTE_V -- "Diagnosis/Treatment" --> LIT_V["Literature Search<br/>(PubMed + BYT<br/>+ Guidelines)"]
+        ROUTE_V -- "Statistical" --> STAT_V["Statistical Source<br/>(Meta-analyses<br/>+ Epidemiology DB)"]
+    end
+
+    subgraph Step3 ["Step 3: Cross-Reference Verification"]
+        DB_V & LIT_V & STAT_V --> XREF["Cross-Reference Engine<br/>≥2 source confirmation<br/>for CRITICAL claims"]
+        XREF --> CONFLICT{{"Conflict Detection"}}
+    end
+
+    subgraph Step4 ["Step 4: Citation Validation"]
+        CONFLICT -- "No conflict" --> CITE_V["Validate Citations<br/>(PMID exists? DOI valid?<br/>NCT# active? BYT current?)"]
+        CONFLICT -- "Conflict found" --> RESOLVE["Conflict Resolution<br/>(Evidence hierarchy:<br/>BYT > Guidelines ><br/>Meta-analysis > RCT)"]
+        RESOLVE --> CITE_V
+    end
+
+    subgraph Step5 ["Step 5: Verdict & Action"]
+        CITE_V --> SCORE["Confidence Score<br/>(0.0 - 1.0 per claim)"]
+        SCORE -- "All ≥ 0.7" --> PASS["✅ PASS<br/>Response approved"]
+        SCORE -- "CRITICAL < 0.7" --> BLOCK["🚫 BLOCK<br/>Re-synthesize"]
+        SCORE -- "HIGH < 0.7" --> FLAG["⚠️ FLAG<br/>Add warnings"]
+        SCORE -- "MEDIUM < 0.7" --> NOTE["📝 UNCERTAINTY<br/>Add disclaimers"]
+        BLOCK --> CORRECT["Self-Correction Loop<br/>(Max 2 iterations)"]
+        CORRECT --> RESP
+    end
+
+    classDef critical fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
+    classDef pass fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    classDef warn fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    class BLOCK,CORRECT critical;
+    class PASS pass;
+    class FLAG,NOTE warn;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 6: AI Council / Hội chẩn -->
+            <section id="diagram-6" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 6 (9.4)</div>
+                    <h2 class="diagram-title">AI Council (Hội chẩn)</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph CaseInput ["Case Presentation"]
+        CASE["Structured Case Data:<br/>• Demographics<br/>• Chief complaint<br/>• Medical history<br/>• Current medications<br/>• Lab results<br/>• Imaging findings<br/>• Specific question"]
+    end
+
+    subgraph Activation ["Specialist Agent Activation (Parallel)"]
+        CASE --> ORCH["Council Orchestrator<br/>(Select 2-5 specialists<br/>based on case domain)"]
+        ORCH --> CARDIO["🫀 Cardiology Agent<br/>(OpenBioLLM-8B<br/>+ Cardio LoRA)"]
+        ORCH --> NEURO["🧠 Neurology Agent<br/>(OpenBioLLM-8B<br/>+ Neuro LoRA)"]
+        ORCH --> PHARMA["💊 Pharmacology Agent<br/>(BioMistral-7B<br/>+ Pharma LoRA)"]
+        ORCH --> GENMED["🏥 General Med Agent<br/>(OpenBioLLM-8B<br/>+ GenMed LoRA)"]
+        ORCH --> ENDO["⚗️ Endocrinology Agent<br/>(OpenBioLLM-8B<br/>+ Endo LoRA)"]
+    end
+
+    subgraph Deliberation ["Council Deliberation"]
+        CARDIO & NEURO & PHARMA & GENMED & ENDO --> MOD["Council Moderator Agent"]
+        MOD --> CONSENSUS["Identify Consensus Areas"]
+        MOD --> DISAGREE["Flag Disagreements"]
+        MOD --> SYNTH_C["Synthesize Recommendation<br/>+ Confidence Level"]
+    end
+
+    subgraph Output ["Hội Chẩn Report"]
+        CONSENSUS & DISAGREE & SYNTH_C --> REPORT["📋 Report:<br/>• Executive Summary<br/>• Specialist Opinions<br/>• Consensus Areas ✓<br/>• Disagreements ⚠️<br/>• Recommended Actions<br/>• Processing Logs"]
+        REPORT --> FIDES_C["Full FIDES Verification<br/>(ALL claims verified)"]
+        FIDES_C --> DELIVER["Deliver to Doctor<br/>(WebSocket + Logs)"]
+    end
+
+    classDef specialist fill:#e1bee7,stroke:#4a148c,stroke-width:2px,color:#000;
+    classDef moderator fill:#bbdefb,stroke:#0d47a1,stroke-width:2px,color:#000;
+    classDef report fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    class CARDIO,NEURO,PHARMA,GENMED,ENDO specialist;
+    class MOD,CONSENSUS,DISAGREE,SYNTH_C moderator;
+    class REPORT,DELIVER report;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 7: Cache Architecture -->
+            <section id="diagram-7" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 7 (9.5)</div>
+                    <h2 class="diagram-title">Cache Architecture</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph CacheEntry ["Cache Lookup"]
+        Q_IN["Incoming Query<br/>(role + normalized hash)"] --> L1{{"L1: Redis Hot Cache<br/>(TTL: 24h general,<br/>6h drugs, 1h trials)"}}
+        L1 -- "HIT" --> RETURN["Return Cached Response"]
+        L1 -- "MISS" --> L2{{"L2: PostgreSQL JSONB<br/>(TTL: 7 days,<br/>version tracking)"}}
+        L2 -- "HIT" --> PROMOTE["Promote to L1<br/>+ Return"]
+        L2 -- "MISS" --> L3{{"L3: Embedding Cache<br/>(FAISS/Milvus,<br/>TTL: 30 days)"}}
+        L3 -- "Semantic MATCH<br/>(cosine > 0.92)" --> ADAPT["Adapt similar<br/>cached response"]
+        L3 -- "NO MATCH" --> FRESH["Full RAG Pipeline"]
+    end
+
+    subgraph UpdateLogic ["UPDATE Strategy (Not ADD)"]
+        FRESH --> NEW_RESULT["New RAG Result"]
+        NEW_RESULT --> EXISTS{{"Cache entry<br/>exists?"}}
+        EXISTS -- "Yes" --> MERGE["MERGE new findings<br/>with existing<br/>(keep_latest_evidence)"]
+        EXISTS -- "No" --> CREATE["Create new entry"]
+        MERGE --> VERSION["Increment version<br/>+ Update timestamp"]
+        CREATE --> VERSION
+        VERSION --> STORE["Store in L1 + L2"]
+    end
+
+    subgraph Freshness ["L4: Freshness Tracker"]
+        TRACKER["Source Update Monitor<br/>(Continuous)"] --> INVALIDATE["Invalidate stale entries<br/>when source data changes"]
+        INVALIDATE --> L1
+        INVALIDATE --> L2
+    end
+
+    subgraph NotCached ["❌ Never Cached"]
+        NC["• Patient-specific data<br/>• Personalized advice<br/>• Emergency protocols<br/>• Doctor council deliberations"]
+    end
+
+    classDef cacheHit fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    classDef cacheMiss fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
+    classDef update fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    class RETURN,PROMOTE,ADAPT cacheHit;
+    class FRESH cacheMiss;
+    class MERGE,VERSION,STORE update;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 8: Vietnamese NLP Pipeline -->
+            <section id="diagram-8" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 8 (9.6)</div>
+                    <h2 class="diagram-title">Vietnamese NLP Pipeline</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph LR
+    subgraph Pipeline ["Vietnamese NLP Processing Pipeline"]
+        RAW["Raw Vietnamese<br/>Text Input"] --> NFC["Unicode NFC<br/>Normalize<br/>(U+1EC7 vs<br/>U+0065+0323+0302)"]
+        NFC --> DIACRITICS["Diacritics Restore<br/>(BERT-based)<br/>'benh tieu duong'<br/>→ 'bệnh tiểu đường'"]
+        DIACRITICS --> TELEX["Telex/VNI Cleanup<br/>'beenh' → 'bệnh'<br/>'thuoocs' → 'thuốc'"]
+        TELEX --> SEGMENT["Word Segmentation<br/>(Preserve compounds:<br/>'đái tháo đường' = 1 token<br/>'viêm phổi' = 1 token)"]
+        SEGMENT --> ENTITY["Cross-Language<br/>Entity Linking<br/>(VN↔EN, ~50K entries)<br/>'viêm phổi' ↔ 'pneumonia'"]
+        ENTITY --> SYNONYM["Medical Synonym<br/>Normalization<br/>'tiểu đường'<br/>→ 'đái tháo đường'<br/>(TCVN standard)"]
+    end
+
+    SYNONYM --> OUTPUT["Processed Query<br/>(Ready for<br/>classification<br/>& retrieval)"]
+
+    classDef nlp fill:#fce4ec,stroke:#880e4f,stroke-width:2px,color:#000;
+    class NFC,DIACRITICS,TELEX,SEGMENT,ENTITY,SYNONYM nlp;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 9: Doctor Workflow — Sub-Agent Architecture -->
+            <section id="diagram-9" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 9 (9.7)</div>
+                    <h2 class="diagram-title">Doctor Workflow — Sub-Agent Architecture</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph Input_D ["Doctor Input"]
+        CLINICAL["Clinical Scenario<br/>(Patient data + Question)"]
+    end
+
+    subgraph Classification_D ["Classification"]
+        CLINICAL --> CLASSIFY_D["L1: doctor (verified)<br/>L2: clinical_decision"]
+        CLASSIFY_D --> ANALYZE["Case Analysis<br/>(Extract patient data,<br/>key questions,<br/>required analyses)"]
+    end
+
+    subgraph SubAgents ["Parallel Sub-Agent Activation"]
+        ANALYZE --> SA1["SA1: DDI Agent<br/>• RxNorm/DrugBank queries<br/>• Mechanism analysis<br/>• Severity classification"]
+        ANALYZE --> SA2["SA2: Protocol Agent<br/>• BYT guideline matching<br/>• WHO protocols<br/>• Contraindication check"]
+        ANALYZE --> SA3["SA3: Evidence Agent<br/>• PubMed RCTs<br/>• Meta-analyses<br/>• Local VN studies"]
+        ANALYZE --> SA4["SA4: Lab Agent<br/>• Reference ranges<br/>• Abnormality detection<br/>• Follow-up suggestions"]
+        ANALYZE --> SA5["SA5: Dosage Agent<br/>• Renal/hepatic adjust<br/>• Weight/age factors<br/>• Drug normalization"]
+    end
+
+    subgraph Integration_D ["Integration & Delivery"]
+        SA1 & SA2 & SA3 & SA4 & SA5 --> MERGE_D["Merge & Consolidate<br/>(Resolve conflicts,<br/>integrate findings)"]
+        MERGE_D --> SYNTH_D["Comprehensive Synthesis<br/>(Integrated analysis<br/>+ Risk assessment)"]
+        SYNTH_D --> FIDES_D["Full FIDES Fact-Check<br/>(Verify all claims,<br/>evidence grading)"]
+        FIDES_D --> RESP_D["Response with<br/>Processing Logs<br/>(Visible to doctor)"]
+    end
+
+    classDef agent fill:#e1bee7,stroke:#4a148c,stroke-width:2px,color:#000;
+    classDef integration fill:#bbdefb,stroke:#0d47a1,stroke-width:2px,color:#000;
+    class SA1,SA2,SA3,SA4,SA5 agent;
+    class MERGE_D,SYNTH_D,FIDES_D integration;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 10: Research Workflow — Progressive Display -->
+            <section id="diagram-10" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 10 (9.8)</div>
+                    <h2 class="diagram-title">Research Workflow — Progressive Display</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph Input_R ["Research Query"]
+        RQ_IN["Researcher Query<br/>(Complex topic)"] --> DECOMP["Query Decomposition<br/>(Break into sub-queries)"]
+    end
+
+    subgraph Phase1 ["Phase 1 (2 min)"]
+        DECOMP --> PM_QUICK["PubMed Quick Search<br/>• Top 10 abstracts<br/>• Recent papers<br/>• High-impact only"]
+        PM_QUICK --> SHOW1["📊 Show Phase 1<br/>(User can start reading)"]
+    end
+
+    subgraph Phase2 ["Phase 2 (5 min)"]
+        SHOW1 -.-> CT_SEARCH["+ ClinicalTrials.gov<br/>+ RxNorm<br/>• Trial protocols<br/>• Drug interactions"]
+        CT_SEARCH --> SHOW2["📊 Update to Phase 1+2<br/>(Expanded results)"]
+    end
+
+    subgraph Phase3 ["Phase 3 (10 min)"]
+        SHOW2 -.-> VN_SEARCH["+ BYT Guidelines<br/>+ Dược thư QG<br/>• Local guidelines<br/>• Vietnamese studies"]
+        VN_SEARCH --> SHOW3["📊 Show Phase 1+2+3<br/>(Nearly complete)"]
+    end
+
+    subgraph Phase4 ["Phase 4 (20 min — Optional)"]
+        SHOW3 -.-> DEEP["Deep Analysis<br/>• Full-text retrieval<br/>• Meta-analysis<br/>• Citation network"]
+        DEEP --> SYNTH_R["Synthesis Node<br/>(Aggregate, patterns,<br/>conflicts, evidence grade)"]
+        SYNTH_R --> VERIFY_R["FIDES Verification<br/>(Full 5-step)"]
+        VERIFY_R --> CACHE_R["Cache UPDATE<br/>(Merge new findings)"]
+        CACHE_R --> SHOW4["📊 Final Results<br/>with Sources & Citations"]
+    end
+
+    classDef phase fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000;
+    classDef show fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    class PM_QUICK,CT_SEARCH,VN_SEARCH,DEEP phase;
+    class SHOW1,SHOW2,SHOW3,SHOW4 show;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 11: Emergency Fast-Path -->
+            <section id="diagram-11" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 11 (9.9)</div>
+                    <h2 class="diagram-title">Emergency Fast-Path</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph LR
+    subgraph Detection ["Emergency Detection"]
+        Q_E["User Query"] --> KW{{"Keyword Match<br/>(co giật, ngừng thở,<br/>đau ngực dữ dội,<br/>xuất huyết, ngộ độc,<br/>tự tử...)"}}
+    end
+
+    KW -- "🔴 MATCH" --> BYPASS["BYPASS all<br/>normal workflows"]
+    BYPASS --> RESPONSE["⚡ Emergency Response<br/>(&lt; 1 second)"]
+
+    subgraph EmergResponse ["Emergency Response Content"]
+        RESPONSE --> CALL["📞 Call 115<br/>(Vietnam Emergency)"]
+        RESPONSE --> AID["🩹 Pre-cached<br/>First-Aid Guidance"]
+        RESPONSE --> HOSP["🏥 Nearest Hospital<br/>(if location available)"]
+        RESPONSE --> LOG_E["📝 Log as<br/>Critical Event"]
+    end
+
+    KW -- "✅ No match" --> NORMAL["Continue to<br/>Normal Routing"]
+
+    subgraph Rules ["⛔ Hard Rules"]
+        RULE["MUST NOT engage in<br/>diagnostic reasoning<br/>during emergencies"]
+    end
+
+    classDef emergency fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
+    classDef safe fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    class BYPASS,RESPONSE,CALL,AID,HOSP,LOG_E emergency;
+    class NORMAL safe;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 12: Drug Normalization Pipeline -->
+            <section id="diagram-12" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 12 (9.10)</div>
+                    <h2 class="diagram-title">Drug Normalization Pipeline</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph LR
+    subgraph DrugNorm ["Vietnamese Drug Normalization Pipeline"]
+        VN_DRUG["Vietnamese Drug Name<br/>(e.g., 'Panadol',<br/>'thuốc hạ sốt')"] --> STEP1["Step 1:<br/>Local VN Lookup<br/>(Dược thư mapping)"]
+        STEP1 --> GENERIC["Generic Name<br/>(e.g., 'acetaminophen'<br/>/ 'paracetamol')"]
+        GENERIC --> STEP2["Step 2:<br/>RxNorm API<br/>/rxcui?name="]
+        STEP2 --> RXCUI["RxCUI Identifier"]
+        RXCUI --> STEP3["Step 3:<br/>Verify via<br/>/drugs?conceptId="]
+        STEP3 --> STEP4["Step 4:<br/>Drug Class<br/>/rxclass/class/<br/>byDrugName"]
+        STEP4 --> STEP5["Step 5:<br/>DDI Check<br/>/interaction/<br/>list?rxcuis="]
+    end
+
+    STEP5 --> RESULT["Normalized Drug Profile<br/>+ Interactions<br/>+ Drug Class"]
+
+    classDef drug fill:#e1bee7,stroke:#4a148c,stroke-width:2px,color:#000;
+    classDef verify fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    class VN_DRUG,STEP1,GENERIC drug;
+    class STEP2,STEP3,STEP4,STEP5 verify;
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Diagram 13: Infrastructure & DevOps -->
+            <section id="diagram-13" class="diagram-card">
+                <div class="diagram-header">
+                    <div class="diagram-number">Diagram 13 (9.11)</div>
+                    <h2 class="diagram-title">Infrastructure & DevOps</h2>
+                </div>
+                <div class="diagram-content">
+                    <pre class="mermaid">
+graph TD
+    subgraph GPU ["GPU Servers (Model Inference)"]
+        GPU1["1x A100 80GB<br/>(or 2x A6000 48GB)<br/>Primary Synthesis<br/>(Qwen2.5-72B)"]
+        GPU2["1x A6000 48GB<br/>SLM Fleet<br/>(Routing, NER, Reranking,<br/>Claim Decomposition)<br/>via vLLM continuous batching"]
+        GPU3["1x Reserve GPU<br/>Tier 3 Specialist Agents<br/>(Parallel execution)"]
+    end
+
+    subgraph CPU ["CPU Servers"]
+        CPU1["2x 32-core<br/>API Gateway,<br/>Orchestrator, Crawlers"]
+        CPU2["1x 16-core<br/>Elasticsearch,<br/>Vector DB Ops"]
+        CPU3["1x 8-core<br/>Blockchain Nodes<br/>(Hyperledger)"]
+    end
+
+    subgraph Storage_I ["Storage"]
+        SSD1["2 TB SSD<br/>Vector indices,<br/>embedding cache"]
+        HDD1["5 TB HDD<br/>Medical corpus,<br/>crawled data"]
+        SSD2["500 GB SSD<br/>PostgreSQL, Redis,<br/>operational data"]
+    end
+
+    subgraph CICD ["CI/CD (GitHub Actions)"]
+        CI["CI Pipeline<br/>• Python lint (ruff)<br/>• Frontend lint (ESLint)<br/>• Unit tests (pytest)<br/>• Integration tests"]
+        CD["CD Pipeline<br/>• Docker build<br/>• K8s deploy (Helm)<br/>• Blue-green rollout"]
+        EVAL["AI Eval Pipeline<br/>• Medical accuracy<br/>• VN NLP metrics<br/>• Hallucination rate"]
+    end
+
+    subgraph Monitor ["Monitoring"]
+        PROM["Prometheus<br/>+ Grafana"]
+        SENTRY["Sentry<br/>(Error tracking)"]
+        LANG["LangSmith<br/>(LLM tracing)"]
+        MLFLOW["MLflow / W&B<br/>(Experiment tracking)"]
+    end
+
+    classDef gpu fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    classDef cpu fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000;
+    classDef storage fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000;
+    classDef cicd fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    class GPU1,GPU2,GPU3 gpu;
+    class CPU1,CPU2,CPU3 cpu;
+    class SSD1,HDD1,SSD2 storage;
+    class CI,CD,EVAL cicd;
+                    </pre>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Fullscreen Modal Overlay -->
+    <div class="fullscreen-overlay" id="fullscreenOverlay">
+        <div class="fullscreen-toolbar">
+            <span class="fullscreen-title" id="fullscreenTitle">Diagram</span>
+            <div class="fullscreen-controls">
+                <button onclick="zoomFullscreen(0.8)" title="Zoom Out">➖</button>
+                <span class="zoom-level" id="zoomLevel">100%</span>
+                <button onclick="zoomFullscreen(1.25)" title="Zoom In">➕</button>
+                <button onclick="resetZoom()" title="Reset Zoom">↻ Reset</button>
+                <button onclick="fitToScreen()" title="Fit to Screen">⊞ Fit</button>
+                <button onclick="closeFullscreen()" title="Close (ESC)">✕ Close</button>
+            </div>
+        </div>
+        <div class="fullscreen-body" id="fullscreenBody">
+            <div class="fullscreen-diagram" id="fullscreenDiagram"></div>
+            <div class="zoom-hint" id="zoomHint">🖱️ Scroll to zoom • Drag to pan • ESC to close</div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: false,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+
+        // ===== FULLSCREEN ZOOM/PAN STATE =====
+        let fsZoom = 1;
+        let fsPanX = 0;
+        let fsPanY = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let dragStartPanX = 0;
+        let dragStartPanY = 0;
+
+        // ===== ADD FULLSCREEN BUTTONS TO ALL DIAGRAM CARDS =====
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.diagram-card').forEach((card) => {
+                const header = card.querySelector('.diagram-header');
+                const title = card.querySelector('.diagram-title');
+                const titleText = title ? title.textContent : 'Diagram';
+
+                // Wrap header content
+                const headerRow = document.createElement('div');
+                headerRow.className = 'diagram-header-row';
+
+                const headerLeft = document.createElement('div');
+                while (header.firstChild) {
+                    headerLeft.appendChild(header.firstChild);
+                }
+
+                const actions = document.createElement('div');
+                actions.className = 'diagram-actions';
+                actions.innerHTML = `
+                    <button class="btn-icon" onclick="openFullscreen('${card.id}', '${titleText.replace(/'/g, "\\'")}')">
+                        ⛶ Fullscreen
+                    </button>
+                `;
+
+                headerRow.appendChild(headerLeft);
+                headerRow.appendChild(actions);
+                header.appendChild(headerRow);
+            });
+        });
+
+        // ===== OPEN FULLSCREEN =====
+        function openFullscreen(diagramId, title) {
+            const card = document.getElementById(diagramId);
+            const svgEl = card.querySelector('.diagram-content svg');
+            if (!svgEl) return;
+
+            const overlay = document.getElementById('fullscreenOverlay');
+            const container = document.getElementById('fullscreenDiagram');
+            const titleEl = document.getElementById('fullscreenTitle');
+
+            titleEl.textContent = title;
+            container.innerHTML = '';
+            const clonedSvg = svgEl.cloneNode(true);
+            clonedSvg.style.maxWidth = 'none';
+            clonedSvg.style.maxHeight = 'none';
+            clonedSvg.removeAttribute('width');
+            clonedSvg.style.width = 'auto';
+            clonedSvg.style.height = 'auto';
+            container.appendChild(clonedSvg);
+
+            overlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            // Reset zoom/pan
+            fsZoom = 1;
+            fsPanX = 0;
+            fsPanY = 0;
+
+            // Fit to screen on open
+            requestAnimationFrame(() => fitToScreen());
+
+            // Show hint
+            const hint = document.getElementById('zoomHint');
+            hint.classList.add('show');
+            setTimeout(() => hint.classList.remove('show'), 3000);
+        }
+
+        // ===== CLOSE FULLSCREEN =====
+        function closeFullscreen() {
+            const overlay = document.getElementById('fullscreenOverlay');
+            overlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        // ===== ZOOM =====
+        function zoomFullscreen(factor) {
+            const body = document.getElementById('fullscreenBody');
+            const rect = body.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+
+            const oldZoom = fsZoom;
+            fsZoom = Math.max(0.1, Math.min(10, fsZoom * factor));
+            const ratio = fsZoom / oldZoom;
+
+            fsPanX = centerX - ratio * (centerX - fsPanX);
+            fsPanY = centerY - ratio * (centerY - fsPanY);
+
+            updateTransform();
+        }
+
+        function resetZoom() {
+            fsZoom = 1;
+            fsPanX = 0;
+            fsPanY = 0;
+            const body = document.getElementById('fullscreenBody');
+            const container = document.getElementById('fullscreenDiagram');
+            const svg = container.querySelector('svg');
+            if (svg) {
+                const rect = body.getBoundingClientRect();
+                fsPanX = rect.width / 2;
+                fsPanY = rect.height / 2;
+            }
+            updateTransform();
+        }
+
+        function fitToScreen() {
+            const body = document.getElementById('fullscreenBody');
+            const container = document.getElementById('fullscreenDiagram');
+            const svg = container.querySelector('svg');
+            if (!svg) return;
+
+            const bodyRect = body.getBoundingClientRect();
+            const svgBBox = svg.getBBox ? svg.getBBox() : { width: svg.scrollWidth, height: svg.scrollHeight };
+            const svgW = svgBBox.width || svg.viewBox?.baseVal?.width || svg.scrollWidth || 800;
+            const svgH = svgBBox.height || svg.viewBox?.baseVal?.height || svg.scrollHeight || 600;
+
+            const padding = 40;
+            const scaleX = (bodyRect.width - padding * 2) / svgW;
+            const scaleY = (bodyRect.height - padding * 2) / svgH;
+            fsZoom = Math.min(scaleX, scaleY, 3);
+
+            fsPanX = (bodyRect.width / 2) - (svgW * fsZoom / 2);
+            fsPanY = (bodyRect.height / 2) - (svgH * fsZoom / 2);
+
+            updateTransform();
+        }
+
+        function updateTransform() {
+            const container = document.getElementById('fullscreenDiagram');
+            container.style.transform = `translate(${fsPanX}px, ${fsPanY}px) scale(${fsZoom})`;
+            container.style.transformOrigin = '0 0';
+            document.getElementById('zoomLevel').textContent = Math.round(fsZoom * 100) + '%';
+        }
+
+        // ===== MOUSE DRAG (PAN) =====
+        const fullscreenBody = document.getElementById('fullscreenBody');
+
+        fullscreenBody.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragStartPanX = fsPanX;
+            dragStartPanY = fsPanY;
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            fsPanX = dragStartPanX + (e.clientX - dragStartX);
+            fsPanY = dragStartPanY + (e.clientY - dragStartY);
+            updateTransform();
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        // ===== SCROLL ZOOM =====
+        fullscreenBody.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = fullscreenBody.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const oldZoom = fsZoom;
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            fsZoom = Math.max(0.1, Math.min(10, fsZoom * delta));
+            const ratio = fsZoom / oldZoom;
+
+            fsPanX = mouseX - ratio * (mouseX - fsPanX);
+            fsPanY = mouseY - ratio * (mouseY - fsPanY);
+
+            updateTransform();
+        }, { passive: false });
+
+        // ===== KEYBOARD SHORTCUTS =====
+        document.addEventListener('keydown', (e) => {
+            const overlay = document.getElementById('fullscreenOverlay');
+            if (!overlay.classList.contains('active')) return;
+            if (e.key === 'Escape') closeFullscreen();
+            if (e.key === '+' || e.key === '=') zoomFullscreen(1.25);
+            if (e.key === '-') zoomFullscreen(0.8);
+            if (e.key === '0') resetZoom();
+            if (e.key === 'f') fitToScreen();
+        });
+
+        // Theme toggle functionality
+        function toggleTheme() {
+            const body = document.body;
+            const button = document.querySelector('.theme-toggle');
+
+            if (body.classList.contains('dark-mode')) {
+                body.classList.remove('dark-mode');
+                button.textContent = '🌙 Dark Mode';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.classList.add('dark-mode');
+                button.textContent = '☀️ Light Mode';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        // Load saved theme preference
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                document.body.classList.add('dark-mode');
+                document.querySelector('.theme-toggle').textContent = '☀️ Light Mode';
+            }
+        });
+
+        // Smooth scroll and active link highlighting
+        document.addEventListener('DOMContentLoaded', () => {
+            const tocLinks = document.querySelectorAll('.toc-link');
+            const sections = document.querySelectorAll('.diagram-card');
+
+            // Intersection Observer for active link highlighting
+            const observerOptions = {
+                root: null,
+                rootMargin: '-20% 0px -70% 0px',
+                threshold: 0
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const id = entry.target.getAttribute('id');
+                        tocLinks.forEach(link => {
+                            link.classList.remove('active');
+                            if (link.getAttribute('href') === `#${id}`) {
+                                link.classList.add('active');
+                            }
+                        });
+                    }
+                });
+            }, observerOptions);
+
+            sections.forEach(section => observer.observe(section));
+
+            // Smooth scroll
+            tocLinks.forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const targetId = link.getAttribute('href');
+                    const targetSection = document.querySelector(targetId);
+                    targetSection.scrollIntoView({ behavior: 'smooth' });
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+
