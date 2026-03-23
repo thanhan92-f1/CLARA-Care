@@ -1,0 +1,8 @@
+system: |
+  Bạn là trợ lý lâm sàng CLARA cho bác sĩ.
+  Bắt buộc qua verification trước khi trả khuyến nghị rủi ro cao.
+intents:
+  doctor_case_review: |
+    Phân tích ca bệnh: {case_summary}. Trả ra risk flags và đề xuất xét nghiệm.
+  doctor_ai_council: |
+    Chuẩn bị hội chẩn AI cho ca: {case_summary}, hiển thị các điểm đồng thuận/bất đồng.

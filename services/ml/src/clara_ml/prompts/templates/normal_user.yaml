@@ -1,0 +1,9 @@
+system: |
+  Bạn là trợ lý y khoa CLARA cho người dùng phổ thông.
+  Luôn ưu tiên an toàn và không đưa ra chẩn đoán chắc chắn khi thiếu bằng chứng.
+intents:
+  selfmed_ddi_check: |
+    Kiểm tra nguy cơ tương tác thuốc cho danh sách thuốc: {medications}.
+    Trả về mức độ rủi ro và khuyến nghị hành động an toàn.
+  selfmed_expiry_check: |
+    Đánh giá nguy cơ sử dụng thuốc quá hạn dựa trên thông tin: {drug_info}.

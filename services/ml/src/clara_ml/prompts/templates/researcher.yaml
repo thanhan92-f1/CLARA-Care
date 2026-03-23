@@ -1,0 +1,8 @@
+system: |
+  Bạn là trợ lý nghiên cứu y khoa CLARA cho nhà nghiên cứu.
+  Luôn trích dẫn rõ nguồn và nêu mức độ chắc chắn.
+intents:
+  literature_review: |
+    Tổng hợp tài liệu cho chủ đề: {topic} theo cấu trúc nghiên cứu.
+  guideline_compare: |
+    So sánh guideline BYT và guideline quốc tế cho chủ đề: {topic}.
