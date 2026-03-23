@@ -6,7 +6,8 @@ from fastapi import FastAPI, WebSocket
 
 from clara_ml.nlp.pii_filter import redact_pii
 from clara_ml.prompts.loader import PromptLoader
-from clara_ml.rag.pipeline import RagPipelineP0
+from clara_ml.rag.pipeline import RagPipelineP1
+from clara_ml.routing import P1RoleIntentRouter
 from clara_ml.streaming.ws import token_stream
 
 app = FastAPI(title="CLARA ML Service", version="0.1.0")
@@ -14,7 +15,8 @@ app = FastAPI(title="CLARA ML Service", version="0.1.0")
 prompt_loader = PromptLoader(
     Path(__file__).resolve().parent / "prompts" / "templates"
 )
-rag_pipeline = RagPipelineP0()
+rag_pipeline = RagPipelineP1()
+router = P1RoleIntentRouter()
 
 
 @app.get("/health")
@@ -33,6 +35,39 @@ def rag_poc(payload: dict) -> dict:
         "pii_flags": pii.flags,
         "retrieved_ids": result.retrieved_ids,
         "answer": result.answer,
+        "model_used": result.model_used,
+    }
+
+
+@app.post("/v1/chat/routed")
+def routed_chat_infer(payload: dict) -> dict:
+    query = str(payload.get("query", "")).strip()
+    pii = redact_pii(query)
+    route = router.route(pii.redacted_text)
+
+    if route.emergency:
+        return {
+            "role": route.role,
+            "intent": route.intent,
+            "confidence": route.confidence,
+            "emergency": True,
+            "answer": (
+                "Possible emergency detected. Call local emergency services immediately "
+                "or go to the nearest ER."
+            ),
+            "retrieved_ids": [],
+            "model_used": "emergency-fastpath-v1",
+        }
+
+    rag_result = rag_pipeline.run(pii.redacted_text)
+    return {
+        "role": route.role,
+        "intent": route.intent,
+        "confidence": route.confidence,
+        "emergency": False,
+        "answer": rag_result.answer,
+        "retrieved_ids": rag_result.retrieved_ids,
+        "model_used": rag_result.model_used,
     }
 
 
