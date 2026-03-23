@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        name: ruff-lint
+        args: ["--fix"]
+      - id: ruff-format
+        name: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        name: mypy-services
+        args: ["services", "--ignore-missing-imports"]
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: pytest-check
+        entry: bash -lc 'targets=(); for d in services/api/tests services/ml/tests; do [ -d "$d" ] && targets+=("$d"); done; if [ ${#targets[@]} -gt 0 ]; then pytest -q "${targets[@]}"; else echo "No test targets found. Skip pytest-check."; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
