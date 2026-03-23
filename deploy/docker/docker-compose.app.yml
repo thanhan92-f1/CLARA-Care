@@ -1,0 +1,41 @@
+name: clara-app
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      ENV: ${ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://clara:clara_dev_password@postgres:5432/clara}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change_me_super_secret}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_MINUTES: ${REFRESH_TOKEN_EXPIRE_MINUTES:-43200}
+      GLOBAL_RATE_LIMIT_PER_MIN: ${GLOBAL_RATE_LIMIT_PER_MIN:-120}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      PUBMED_RATE_LIMIT_PER_SEC: ${PUBMED_RATE_LIMIT_PER_SEC:-10}
+    ports:
+      - "127.0.0.1:${APP_API_PORT:-8100}:8000"
+
+  ml:
+    build:
+      context: ../..
+      dockerfile: services/ml/Dockerfile
+    restart: unless-stopped
+    environment:
+      ENV: ${ENV:-production}
+    ports:
+      - "127.0.0.1:${APP_ML_PORT:-8110}:8010"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://clara.thiennn.icu/api/v1}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:${APP_WEB_PORT:-3100}:3000"

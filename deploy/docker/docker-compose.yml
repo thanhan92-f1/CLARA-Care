@@ -1,0 +1,125 @@
+name: clara-local
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: clara-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clara_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-clara}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clara} -d ${POSTGRES_DB:-clara}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: clara-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: clara-milvus-etcd
+    restart: unless-stopped
+    command: >-
+      etcd
+      -advertise-client-urls=http://milvus-etcd:2379
+      -listen-client-urls=http://0.0.0.0:2379
+      --data-dir /etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - milvus_etcd:/etcd
+
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: clara-milvus-minio
+    restart: unless-stopped
+    command: minio server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - milvus_minio:/data
+
+  milvus:
+    image: milvusdb/milvus:v2.4.12
+    container_name: clara-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+    depends_on:
+      - milvus-etcd
+      - milvus-minio
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: clara-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "${ELASTIC_PORT:-9200}:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+
+  neo4j:
+    image: neo4j:5.22
+    container_name: clara-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/clara_dev_password}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 512m
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+
+volumes:
+  postgres_data:
+  redis_data:
+  milvus_etcd:
+  milvus_minio:
+  milvus_data:
+  elastic_data:
+  neo4j_data:
+  neo4j_logs:
