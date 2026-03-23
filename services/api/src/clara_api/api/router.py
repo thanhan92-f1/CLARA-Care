@@ -1,6 +1,16 @@
 from fastapi import APIRouter
 
-from clara_api.api.v1.endpoints import auth, careguard, chat, council, health, research, scribe, search
+from clara_api.api.v1.endpoints import (
+    auth,
+    careguard,
+    chat,
+    council,
+    health,
+    research,
+    scribe,
+    search,
+    system,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router, tags=["health"])
@@ -11,3 +21,4 @@ api_router.include_router(research.router, prefix="/research", tags=["research"]
 api_router.include_router(careguard.router, prefix="/careguard", tags=["careguard"])
 api_router.include_router(council.router, prefix="/council", tags=["council"])
 api_router.include_router(scribe.router, prefix="/scribe", tags=["scribe"])
+api_router.include_router(system.router, prefix="/system", tags=["system"])

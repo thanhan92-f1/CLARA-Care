@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from clara_api.api.router import api_router
 from clara_api.core.config import get_settings
 from clara_api.core.exceptions import ClaraAPIError
+from clara_api.core.metrics import APIMetricsMiddleware
 from clara_api.core.rate_limit import RateLimiterMiddleware
 from clara_api.core.rbac import AuthContextMiddleware
 
@@ -22,6 +23,7 @@ app.add_middleware(
 )
 app.add_middleware(AuthContextMiddleware)
 app.add_middleware(RateLimiterMiddleware)
+app.add_middleware(APIMetricsMiddleware)
 
 
 @app.exception_handler(ClaraAPIError)
