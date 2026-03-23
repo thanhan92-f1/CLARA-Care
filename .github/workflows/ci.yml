@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Ruff + mypy + pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install quality tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff==0.6.9" "mypy==1.11.2" "pytest==8.3.2"
+
+      - name: Run Ruff
+        run: |
+          targets=()
+          for d in services/api/src services/api/tests services/ml/src services/ml/tests scripts; do
+            if [ -d "$d" ]; then
+              targets+=("$d")
+            fi
+          done
+          if [ "${#targets[@]}" -gt 0 ]; then
+            ruff check "${targets[@]}"
+          else
+            echo "No Python source directories found. Skip Ruff."
+          fi
+
+      - name: Run mypy
+        run: |
+          targets=()
+          for d in services/api/src services/ml/src; do
+            if [ -d "$d" ]; then
+              targets+=("$d")
+            fi
+          done
+          if [ "${#targets[@]}" -gt 0 ]; then
+            mypy "${targets[@]}" --ignore-missing-imports
+          else
+            echo "No mypy targets found. Skip mypy."
+          fi
+
+      - name: Run pytest
+        run: |
+          targets=()
+          for d in services/api/tests services/ml/tests; do
+            if [ -d "$d" ]; then
+              targets+=("$d")
+            fi
+          done
+          if [ "${#targets[@]}" -gt 0 ]; then
+            pytest -q "${targets[@]}"
+          else
+            echo "No pytest targets found. Skip pytest."
+          fi
