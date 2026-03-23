@@ -89,3 +89,64 @@ def test_scribe_soap_returns_structured_soap():
     assert isinstance(body["assessment"]["problems"], list)
     assert isinstance(body["plan"]["next_steps"], list)
     assert body["metadata"]["fallback_used"] is True
+
+
+def test_council_run_returns_expected_schema():
+    response = client.post(
+        "/v1/council/run",
+        json={
+            "symptoms": ["fatigue", "palpitations"],
+            "labs": {"egfr": 58, "glucose": 210},
+            "medications": ["metformin"],
+            "history": ["type 2 diabetes"],
+            "specialists": ["cardiology", "endocrinology", "nephrology"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["requested_specialists"] == ["cardiology", "endocrinology", "nephrology"]
+    assert isinstance(body["per_specialist_reasoning_logs"], list)
+    assert len(body["per_specialist_reasoning_logs"]) == 3
+    for item in body["per_specialist_reasoning_logs"]:
+        assert set(["specialist", "reasoning_log", "key_findings", "triage", "recommendation"]).issubset(
+            item.keys()
+        )
+        assert isinstance(item["reasoning_log"], list)
+        assert isinstance(item["key_findings"], list)
+        assert item["triage"] in {"routine_follow_up", "same_day_review", "emergency_escalation"}
+        assert isinstance(item["recommendation"], str)
+        assert item["recommendation"]
+
+    assert isinstance(body["conflict_list"], list)
+    assert isinstance(body["consensus_summary"], str)
+    assert body["consensus_summary"]
+    assert isinstance(body["divergence_notes"], list)
+    assert isinstance(body["final_recommendation"], str)
+    assert body["final_recommendation"]
+    assert isinstance(body["estimated_duration_minutes"], int)
+    assert body["estimated_duration_minutes"] > 0
+    assert body["emergency_escalation"]["triggered"] is False
+    assert body["emergency_escalation"]["action"] == "standard_multidisciplinary_pathway"
+
+
+def test_council_run_emergency_escalation_on_red_flags():
+    response = client.post(
+        "/v1/council/run",
+        json={
+            "symptoms": ["severe chest pain", "shortness of breath"],
+            "labs": {"troponin": 0.09},
+            "medications": ["warfarin"],
+            "history": "hypertension",
+            "specialists": ["cardiology", "neurology"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["emergency_escalation"]["triggered"] is True
+    assert isinstance(body["emergency_escalation"]["red_flags"], list)
+    assert len(body["emergency_escalation"]["red_flags"]) >= 1
+    assert body["emergency_escalation"]["action"] == "immediate_emergency_referral"
+    assert body["estimated_duration_minutes"] == 5
+    assert "Emergency escalation triggered" in body["final_recommendation"]

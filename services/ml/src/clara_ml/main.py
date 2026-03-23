@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket
 
 from clara_ml.agents.careguard import run_careguard_analyze
+from clara_ml.agents.council import run_council
 from clara_ml.agents.research_tier2 import run_research_tier2
 from clara_ml.agents.scribe_soap import run_scribe_soap
 from clara_ml.nlp.pii_filter import redact_pii
@@ -90,6 +91,11 @@ def careguard_analyze(payload: dict) -> dict:
 def scribe_soap(payload: dict) -> dict:
     transcript = str(payload.get("transcript", "")).strip()
     return run_scribe_soap(transcript)
+
+
+@app.post("/v1/council/run")
+def council_run(payload: dict) -> dict:
+    return run_council(payload)
 
 
 @app.get("/v1/prompts/{role}/{intent}")
