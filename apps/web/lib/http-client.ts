@@ -3,8 +3,12 @@ import { clearTokens, getAccessToken, getRefreshToken, setAccessToken } from "@/
 
 type RetryableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
+const fallbackBaseUrl =
+  typeof window !== "undefined" ? `${window.location.origin}/api/v1` : "http://localhost:8100/api/v1";
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? fallbackBaseUrl;
+
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8100/api/v1",
+  baseURL: apiBaseUrl,
   timeout: 15000
 });
 
@@ -32,7 +36,7 @@ api.interceptors.response.use(
 
       try {
         const refreshResponse = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8100/api/v1"}/auth/refresh`,
+          `${apiBaseUrl}/auth/refresh`,
           { refresh_token: refreshToken },
           { timeout: 10000 }
         );
