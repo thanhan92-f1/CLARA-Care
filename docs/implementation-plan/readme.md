@@ -25,9 +25,10 @@ Bộ tài liệu này là kế hoạch triển khai chính thức cho CLARA vớ
 2. `workstream-clara-research.md`
 3. `workstream-clara-self-med.md`
 4. `frontend-web-mobile-flutter-plan.md`
-5. `backend-rust-plan.md`
-6. `metrics-gates-and-operating-model.md`
-7. `system-control-tower-dashboard-plan.md`
+5. `frontend-web-ux-revamp-plan.md`
+6. `backend-rust-plan.md`
+7. `metrics-gates-and-operating-model.md`
+8. `system-control-tower-dashboard-plan.md`
 
 ## 4. KPI runtime theo role
 
@@ -40,7 +41,7 @@ Bộ tài liệu này là kế hoạch triển khai chính thức cho CLARA vớ
 1. Đọc `phase-00-to-06-master-plan.md` để nắm roadmap tổng thể.
 2. Đọc hai workstream để tách phạm vi Research và Self-Med.
 3. Đọc `system-control-tower-dashboard-plan.md` để triển khai control-plane quản trị.
-4. Triển khai giao diện theo `frontend-web-mobile-flutter-plan.md`.
+4. Triển khai giao diện theo `frontend-web-mobile-flutter-plan.md` và `frontend-web-ux-revamp-plan.md`.
 5. Triển khai backend theo `backend-rust-plan.md`.
 6. Vận hành bằng `metrics-gates-and-operating-model.md`.
 
