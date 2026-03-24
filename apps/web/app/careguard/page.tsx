@@ -72,7 +72,7 @@ export default function CareguardPage() {
   };
 
   return (
-    <PageShell title="CareGuard">
+    <PageShell title="Kiểm tra an toàn thuốc">
       <div className="space-y-4">
         <p className="text-sm text-slate-600">
           Nhập dữ liệu bệnh nhân (mỗi mục cách nhau bằng dấu phẩy hoặc xuống dòng) để nhận đánh giá rủi ro nhanh.
@@ -81,7 +81,7 @@ export default function CareguardPage() {
         <form className="space-y-3" onSubmit={onSubmit}>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Symptoms</span>
+              <span className="text-sm font-medium text-slate-700">Triệu chứng</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Sốt, ho kéo dài, khó thở..."
@@ -92,7 +92,7 @@ export default function CareguardPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Labs</span>
+              <span className="text-sm font-medium text-slate-700">Chỉ số xét nghiệm</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="CRP tăng, AST/ALT..."
@@ -103,7 +103,7 @@ export default function CareguardPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Medications</span>
+              <span className="text-sm font-medium text-slate-700">Thuốc đang dùng</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Warfarin, Clarithromycin..."
@@ -114,7 +114,7 @@ export default function CareguardPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Allergies</span>
+              <span className="text-sm font-medium text-slate-700">Tiền sử dị ứng</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Penicillin, NSAIDs..."
@@ -128,9 +128,9 @@ export default function CareguardPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="rounded bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isSubmitting ? "Đang phân tích..." : "Phân tích CareGuard"}
+              className="rounded bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+            {isSubmitting ? "Đang phân tích..." : "Phân tích an toàn thuốc"}
           </button>
         </form>
 
@@ -141,20 +141,20 @@ export default function CareguardPage() {
         {result ? (
           <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium text-slate-700">Risk tier</p>
+              <p className="text-sm font-medium text-slate-700">Mức độ rủi ro</p>
               <span className={`rounded-full border px-2 py-1 text-xs font-semibold uppercase ${riskClass}`}>
-                {result.riskTier ?? "Unknown"}
+                {result.riskTier ?? "Không xác định"}
               </span>
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-700">DDI Alerts</p>
+              <p className="text-sm font-semibold text-slate-700">Cảnh báo tương tác thuốc (DDI)</p>
               {result.ddiAlerts.length ? (
                 <ul className="space-y-2">
                   {result.ddiAlerts.map((alert, index) => (
                     <li key={`${alert.title}-${index}`} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
                       <p className="font-medium text-slate-800">{alert.title}</p>
-                      {alert.severity ? <p className="text-xs uppercase text-slate-500">Severity: {alert.severity}</p> : null}
+                      {alert.severity ? <p className="text-xs uppercase text-slate-500">Mức độ: {alert.severity}</p> : null}
                       {alert.details ? <p className="mt-1 text-slate-600">{alert.details}</p> : null}
                     </li>
                   ))}
@@ -165,7 +165,7 @@ export default function CareguardPage() {
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-700">Recommendations</p>
+              <p className="text-sm font-semibold text-slate-700">Khuyến nghị</p>
               {result.recommendations.length ? (
                 <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {result.recommendations.map((item, index) => (

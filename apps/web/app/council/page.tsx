@@ -11,11 +11,11 @@ type SpecialistOption = {
 };
 
 const SPECIALIST_OPTIONS: SpecialistOption[] = [
-  { id: "cardiology", label: "Cardiology" },
-  { id: "neurology", label: "Neurology" },
-  { id: "endocrinology", label: "Endocrinology" },
-  { id: "pharmacology", label: "Pharmacology" },
-  { id: "nephrology", label: "Nephrology" }
+  { id: "cardiology", label: "Tim mạch" },
+  { id: "neurology", label: "Thần kinh" },
+  { id: "endocrinology", label: "Nội tiết" },
+  { id: "pharmacology", label: "Dược lâm sàng" },
+  { id: "nephrology", label: "Thận học" }
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -83,7 +83,7 @@ export default function CouncilPage() {
       payload.medications.length === 0 &&
       !payload.history
     ) {
-      setError("Vui lòng nhập dữ liệu ca bệnh trước khi chạy AI Council.");
+      setError("Vui lòng nhập dữ liệu ca bệnh trước khi chạy Hội chẩn AI.");
       return;
     }
 
@@ -100,7 +100,7 @@ export default function CouncilPage() {
       const response = await runCouncil(payload);
       setResult(normalizeCouncilRunResult(response));
     } catch (submitError) {
-      const fallbackMessage = "Không thể chạy AI Council. Vui lòng thử lại.";
+      const fallbackMessage = "Không thể chạy Hội chẩn AI. Vui lòng thử lại.";
       if (submitError instanceof Error && submitError.message) {
         setError(submitError.message);
       } else {
@@ -112,7 +112,7 @@ export default function CouncilPage() {
   };
 
   return (
-    <PageShell title="AI Council">
+    <PageShell title="Hội chẩn AI">
       <div className="space-y-4">
         <p className="text-sm text-slate-600">
           Nhập hồ sơ ca bệnh để chạy hội chẩn đa chuyên khoa và nhận tổng hợp reasoning, xung đột, đồng thuận và khuyến
@@ -122,7 +122,7 @@ export default function CouncilPage() {
         <form className="space-y-3" onSubmit={onSubmit}>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Symptoms</span>
+              <span className="text-sm font-medium text-slate-700">Triệu chứng</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Đau ngực, khó thở, sốt..."
@@ -133,7 +133,7 @@ export default function CouncilPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Labs</span>
+              <span className="text-sm font-medium text-slate-700">Chỉ số xét nghiệm</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="troponin=1.2, CRP=45, creatinine=2.0"
@@ -144,7 +144,7 @@ export default function CouncilPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">Medications</span>
+              <span className="text-sm font-medium text-slate-700">Thuốc đang dùng</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Warfarin, Metformin..."
@@ -155,7 +155,7 @@ export default function CouncilPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-sm font-medium text-slate-700">History</span>
+              <span className="text-sm font-medium text-slate-700">Bệnh sử</span>
               <textarea
                 className="h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 placeholder="Tiền sử tăng huyết áp, đái tháo đường type 2..."
@@ -169,7 +169,7 @@ export default function CouncilPage() {
           <section className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
             <div className="grid gap-2 md:grid-cols-[180px_1fr] md:items-center">
               <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Specialists Count</span>
+                <span className="text-sm font-medium text-slate-700">Số chuyên khoa hội chẩn</span>
                 <input
                   type="number"
                   min={2}
@@ -218,7 +218,7 @@ export default function CouncilPage() {
             disabled={isSubmitting}
             className="rounded bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {isSubmitting ? "Đang chạy AI Council..." : "Run AI Council"}
+            {isSubmitting ? "Đang chạy Hội chẩn AI..." : "Chạy Hội chẩn AI"}
           </button>
         </form>
 
@@ -229,15 +229,15 @@ export default function CouncilPage() {
         {result ? (
           <section className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium text-slate-700">Emergency Status</p>
+              <p className="text-sm font-medium text-slate-700">Trạng thái khẩn cấp</p>
               <span className={`rounded-full border px-2 py-1 text-xs font-semibold uppercase ${emergencyClass}`}>
-                {result.isEmergency ? "Escalated" : "Stable"}
+                {result.isEmergency ? "Cần leo thang" : "Ổn định"}
               </span>
             </div>
             {result.escalationReason ? <p className="text-sm text-slate-700">{result.escalationReason}</p> : null}
 
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-700">Specialist Reasoning Logs</p>
+              <p className="text-sm font-semibold text-slate-700">Nhật ký phân tích theo chuyên khoa</p>
               {result.specialistReasoningLogs.length ? (
                 <ul className="space-y-2">
                   {result.specialistReasoningLogs.map((log, index) => (
@@ -246,26 +246,26 @@ export default function CouncilPage() {
                         <p className="font-semibold text-slate-800">{log.specialist}</p>
                         {log.confidence ? (
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
-                            confidence: {log.confidence}
+                            độ tin cậy: {log.confidence}
                           </span>
                         ) : null}
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-slate-700">{log.reasoning}</p>
                       {log.recommendation ? (
                         <p className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700">
-                          Recommendation: {log.recommendation}
+                          Khuyến nghị: {log.recommendation}
                         </p>
                       ) : null}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-slate-600">Không có reasoning logs trong phản hồi hiện tại.</p>
+                <p className="text-sm text-slate-600">Không có nhật ký phân tích trong phản hồi hiện tại.</p>
               )}
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-700">Conflicts</p>
+              <p className="text-sm font-semibold text-slate-700">Điểm xung đột</p>
               {result.conflicts.length ? (
                 <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {result.conflicts.map((item, index) => (
@@ -279,14 +279,14 @@ export default function CouncilPage() {
 
             <div className="grid gap-3 md:grid-cols-2">
               <article className="rounded-md border border-slate-200 bg-white p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consensus</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Điểm đồng thuận</p>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
                   {result.consensus || "Không có mô tả đồng thuận."}
                 </p>
               </article>
 
               <article className="rounded-md border border-slate-200 bg-white p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Divergence</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Điểm bất đồng</p>
                 {result.divergence.length ? (
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-800">
                     {result.divergence.map((item, index) => (
@@ -300,7 +300,7 @@ export default function CouncilPage() {
             </div>
 
             <article className="rounded-md border border-slate-200 bg-white p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Final Recommendation</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Khuyến nghị cuối cùng</p>
               <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">
                 {result.finalRecommendation || "Không có khuyến nghị cuối trong phản hồi."}
               </p>

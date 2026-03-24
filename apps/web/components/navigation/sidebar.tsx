@@ -9,7 +9,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
 
   return (
     <aside className="w-64 border-r border-slate-200 bg-white p-4">
-      <h2 className="mb-4 text-lg font-semibold">CLARA ({role})</h2>
+      <h2 className="mb-4 text-lg font-semibold">CLARA (vai trò: {role})</h2>
       <nav className="space-y-2">
         {items.map((item) => (
           <Link

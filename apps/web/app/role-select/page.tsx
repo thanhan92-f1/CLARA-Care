@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { UserRole, setRole } from "@/lib/auth-store";
 
 const roles: Array<{ value: UserRole; label: string; description: string }> = [
-  { value: "normal", label: "Normal User", description: "Tra cứu thông tin cơ bản và quản lý sức khỏe cá nhân." },
-  { value: "researcher", label: "Researcher", description: "Workflow nghiên cứu chuyên sâu, progressive response." },
-  { value: "doctor", label: "Doctor", description: "Luồng chuyên biệt lâm sàng và AI Council." }
+  { value: "normal", label: "Người dùng cá nhân", description: "Tra cứu thông tin cơ bản và quản lý sức khỏe cá nhân." },
+  { value: "researcher", label: "Nhà nghiên cứu", description: "Luồng nghiên cứu chuyên sâu, phản hồi có dẫn chứng." },
+  { value: "doctor", label: "Bác sĩ", description: "Luồng lâm sàng chuyên biệt và hội chẩn AI." }
 ];
 
 export default function RoleSelectionPage() {

@@ -14,9 +14,9 @@ import {
 } from "@/lib/research";
 
 const ROLE_LABELS: Record<UserRole, string> = {
-  normal: "Normal",
-  researcher: "Researcher",
-  doctor: "Doctor"
+  normal: "Người dùng cá nhân",
+  researcher: "Nhà nghiên cứu",
+  doctor: "Bác sĩ"
 };
 
 type Tier1Result = {
@@ -47,7 +47,7 @@ export default function ResearchPage() {
     setRole(getRole());
   }, []);
 
-  const roleLabel = useMemo(() => ROLE_LABELS[role] ?? "Normal", [role]);
+  const roleLabel = useMemo(() => ROLE_LABELS[role] ?? "Người dùng cá nhân", [role]);
   const isDev = process.env.NODE_ENV !== "production";
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -104,19 +104,19 @@ export default function ResearchPage() {
   };
 
   return (
-    <PageShell title="Research Workspace">
+    <PageShell title="Không gian hỏi đáp nghiên cứu">
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-slate-600">
-            Tier1 dùng luồng chat hiện tại, Tier2 dùng workflow mới có bước xử lý và citations.
+            Chế độ nhanh trả lời trực tiếp; chế độ chuyên sâu trả lời kèm nguồn tham chiếu và các bước phân tích.
           </p>
           <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-            Role: {roleLabel}
+            Vai trò: {roleLabel}
           </span>
         </div>
 
         <fieldset className="space-y-2">
-          <legend className="text-sm font-medium text-slate-700">Response Tier</legend>
+          <legend className="text-sm font-medium text-slate-700">Mức độ phản hồi</legend>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -128,7 +128,7 @@ export default function ResearchPage() {
               onClick={() => setSelectedTier("tier1")}
               disabled={isSubmitting}
             >
-              Tier1
+              Nhanh
             </button>
             <button
               type="button"
@@ -140,7 +140,7 @@ export default function ResearchPage() {
               onClick={() => setSelectedTier("tier2")}
               disabled={isSubmitting}
             >
-              Tier2
+              Chuyên sâu
             </button>
           </div>
         </fieldset>
@@ -158,7 +158,7 @@ export default function ResearchPage() {
             disabled={isSubmitting || !query.trim()}
             className="rounded bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {isSubmitting ? "Đang xử lý..." : `Gửi câu hỏi (${selectedTier.toUpperCase()})`}
+            {isSubmitting ? "Đang xử lý..." : selectedTier === "tier1" ? "Gửi câu hỏi (Nhanh)" : "Gửi câu hỏi (Chuyên sâu)"}
           </button>
         </form>
 
@@ -176,78 +176,86 @@ export default function ResearchPage() {
           <article className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Q</p>
             <p className="text-sm text-slate-700">{lastQuery}</p>
-            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">A (Tier1)</p>
+            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">A (Nhanh)</p>
             <p className="whitespace-pre-wrap text-sm text-slate-900">{result.answer}</p>
           </article>
         ) : null}
 
         {result?.tier === "tier2" ? (
-          <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Q</p>
-            <p className="text-sm text-slate-700">{lastQuery}</p>
-            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">A (Tier2)</p>
-            <p className="whitespace-pre-wrap text-sm text-slate-900">{result.answer || "N/A"}</p>
+          <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+              <article className="space-y-3 rounded-md border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Câu hỏi</p>
+                <p className="text-sm leading-7 text-slate-700">{lastQuery}</p>
+                <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Trả lời chuyên sâu</p>
+                <p className="whitespace-pre-wrap text-sm leading-7 text-slate-900">
+                  {result.answer || "Chưa có nội dung trả lời."}
+                </p>
+              </article>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Citations</p>
-              {result.citations.length ? (
-                <ul className="space-y-2">
-                  {result.citations.map((citation, index) => (
-                    <li key={`${citation.title}-${index}`} className="rounded-md border border-slate-200 bg-white p-3 text-sm">
-                      <p className="font-medium text-slate-800">{citation.title}</p>
-                      {citation.source || citation.year ? (
-                        <p className="mt-1 text-xs text-slate-500">
-                          {[citation.source, citation.year].filter(Boolean).join(" | ")}
-                        </p>
-                      ) : null}
-                      {citation.snippet ? <p className="mt-1 text-slate-600">{citation.snippet}</p> : null}
-                      {citation.url ? (
-                        <a
-                          href={citation.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-block text-xs font-medium text-blue-600 hover:underline"
-                        >
-                          Open source
-                        </a>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-600">Tier2 chưa trả về citation.</p>
-              )}
-            </div>
+              <aside className="space-y-3">
+                <div className="rounded-md border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nguồn tham chiếu</p>
+                  {result.citations.length ? (
+                    <ul className="mt-2 space-y-2">
+                      {result.citations.map((citation, index) => (
+                        <li key={`${citation.title}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                          <p className="font-medium text-slate-800">{citation.title}</p>
+                          {citation.source || citation.year ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              {[citation.source, citation.year].filter(Boolean).join(" | ")}
+                            </p>
+                          ) : null}
+                          {citation.snippet ? <p className="mt-1 text-slate-600">{citation.snippet}</p> : null}
+                          {citation.url ? (
+                            <a
+                              href={citation.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-xs font-medium text-blue-600 hover:underline"
+                            >
+                              Mở nguồn tham chiếu
+                            </a>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-600">Chưa có nguồn tham chiếu trong phản hồi hiện tại.</p>
+                  )}
+                </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Workflow Steps</p>
-              {result.steps.length ? (
-                <ol className="space-y-2">
-                  {result.steps.map((step, index) => (
-                    <li key={`${step.title}-${index}`} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
-                      <p className="font-medium text-slate-800">
-                        {index + 1}. {step.title}
-                      </p>
-                      {step.detail ? <p className="mt-1 text-slate-600">{step.detail}</p> : null}
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="text-sm text-slate-600">Tier2 chưa trả về workflow steps.</p>
-              )}
+                <div className="rounded-md border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Các bước phân tích</p>
+                  {result.steps.length ? (
+                    <ol className="mt-2 space-y-2">
+                      {result.steps.map((step, index) => (
+                        <li key={`${step.title}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                          <p className="font-medium text-slate-800">
+                            {index + 1}. {step.title}
+                          </p>
+                          {step.detail ? <p className="mt-1 text-slate-600">{step.detail}</p> : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-600">Chưa có chi tiết các bước phân tích.</p>
+                  )}
+                </div>
+              </aside>
             </div>
           </section>
         ) : null}
 
         {isDev && result?.tier === "tier1" ? (
           <section className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Intent Debug (dev only)</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Intent Debug (chỉ môi trường dev)</p>
             <div className="mt-2 grid gap-1 text-sm text-slate-700">
-              <p>role: {result.debug?.role ?? "N/A"}</p>
+              <p>vai trò: {result.debug?.role ?? "N/A"}</p>
               <p>intent: {result.debug?.intent ?? "N/A"}</p>
-              <p>confidence: {result.debug?.confidence ?? "N/A"}</p>
-              <p>emergency: {result.debug?.emergency === undefined ? "N/A" : String(result.debug.emergency)}</p>
-              <p>model_used: {result.debug?.model_used ?? "N/A"}</p>
+              <p>độ tin cậy: {result.debug?.confidence ?? "N/A"}</p>
+              <p>khẩn cấp: {result.debug?.emergency === undefined ? "N/A" : String(result.debug.emergency)}</p>
+              <p>mô hình: {result.debug?.model_used ?? "N/A"}</p>
             </div>
           </section>
         ) : null}

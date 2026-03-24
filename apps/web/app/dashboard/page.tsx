@@ -14,20 +14,20 @@ import {
 } from "@/lib/system";
 
 const ROLE_LABELS: Record<UserRole, string> = {
-  normal: "Normal",
-  researcher: "Researcher",
-  doctor: "Doctor"
+  normal: "Người dùng cá nhân",
+  researcher: "Nhà nghiên cứu",
+  doctor: "Bác sĩ"
 };
 
 const MODULE_LINKS = [
-  { href: "/careguard", label: "CareGuard", description: "Triaging nhanh theo triệu chứng, thuốc, dị ứng." },
-  { href: "/scribe", label: "Medical Scribe", description: "Tạo SOAP note từ transcript buổi khám." },
-  { href: "/research", label: "Research Workspace", description: "Tier1/Tier2 nghiên cứu có citations và steps." },
-  { href: "/council", label: "AI Council", description: "Điểm truy cập workflow hội chẩn." },
+  { href: "/careguard", label: "Kiểm tra an toàn thuốc", description: "Đánh giá nhanh triệu chứng, thuốc và dị ứng." },
+  { href: "/scribe", label: "Trợ lý ghi chép y khoa", description: "Tạo SOAP note từ transcript buổi khám." },
+  { href: "/research", label: "Không gian hỏi đáp nghiên cứu", description: "Hỏi đáp chuyên sâu với nguồn tham chiếu." },
+  { href: "/council", label: "Hội chẩn AI", description: "Điểm truy cập luồng hội chẩn đa chuyên khoa." },
   {
     href: "/dashboard/ecosystem",
-    label: "Ecosystem Center",
-    description: "Theo dõi partner health, trust score và federation alerts (doctor-only API)."
+    label: "Trung tâm hệ sinh thái",
+    description: "Theo dõi tình trạng đối tác, điểm tin cậy dữ liệu và cảnh báo liên thông."
   }
 ];
 
@@ -65,7 +65,7 @@ export default function DashboardPage() {
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const roleLabel = useMemo(() => ROLE_LABELS[role] ?? "Normal", [role]);
+  const roleLabel = useMemo(() => ROLE_LABELS[role] ?? "Người dùng cá nhân", [role]);
 
   const onRefreshSystem = useCallback(async () => {
     setIsRefreshing(true);
@@ -85,7 +85,7 @@ export default function DashboardPage() {
         setHealthStatus(health.status);
         setHealthMessage(health.message);
       } else {
-        setHealthError(getErrorText(healthResult.reason, "Không thể lấy API health status."));
+        setHealthError(getErrorText(healthResult.reason, "Không thể lấy trạng thái sức khỏe API."));
       }
 
       if (metricsResult.status === "fulfilled") {
@@ -94,7 +94,7 @@ export default function DashboardPage() {
         setErrorCount(metrics.errorCount);
         setAvgLatencyMs(metrics.avgLatencyMs);
       } else {
-        setMetricsError(getErrorText(metricsResult.reason, "Không thể lấy API metrics."));
+        setMetricsError(getErrorText(metricsResult.reason, "Không thể lấy số liệu hệ thống."));
       }
 
       if (dependenciesResult.status === "fulfilled") {
@@ -102,7 +102,7 @@ export default function DashboardPage() {
         setMlStatus(dependencies.mlStatus);
         setMlReachable(dependencies.mlReachable);
       } else {
-        setDependenciesError(getErrorText(dependenciesResult.reason, "Không thể lấy dependency status."));
+        setDependenciesError(getErrorText(dependenciesResult.reason, "Không thể lấy trạng thái phụ thuộc hệ thống."));
       }
 
       setCheckedAt(new Date().toLocaleString("vi-VN"));
@@ -117,7 +117,7 @@ export default function DashboardPage() {
   }, [onRefreshSystem]);
 
   const mlStatusLabel =
-    mlReachable === true ? "Reachable" : mlReachable === false ? "Unreachable" : mlStatus || "Unknown";
+    mlReachable === true ? "Có thể kết nối" : mlReachable === false ? "Mất kết nối" : mlStatus || "Không xác định";
 
   const mlStatusColor =
     mlReachable === true
@@ -127,33 +127,33 @@ export default function DashboardPage() {
         : "text-slate-700";
 
   return (
-    <PageShell title="Dashboard">
+    <PageShell title="Bảng điều khiển">
       <div className="grid gap-4 md:grid-cols-2">
         <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Auth Role</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vai trò truy cập</p>
           <p className="text-xl font-semibold text-slate-900">{roleLabel}</p>
-          <p className="text-sm text-slate-600">Role hiện tại quyết định menu và khả năng truy cập module.</p>
+          <p className="text-sm text-slate-600">Vai trò hiện tại quyết định menu và quyền truy cập tính năng.</p>
           <Link href="/role-select" className="inline-block text-sm font-medium text-blue-600 hover:underline">
             Đổi vai trò
           </Link>
         </section>
 
         <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">System Monitor</p>
-          <p className="text-sm text-slate-600">Theo dõi nhanh trạng thái API, metrics và dependency ML.</p>
-          {checkedAt ? <p className="text-xs text-slate-500">Last update: {checkedAt}</p> : null}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Giám sát hệ thống</p>
+          <p className="text-sm text-slate-600">Theo dõi nhanh trạng thái API, số liệu vận hành và phụ thuộc ML.</p>
+          {checkedAt ? <p className="text-xs text-slate-500">Cập nhật gần nhất: {checkedAt}</p> : null}
           <button
             type="button"
             className="rounded bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
             onClick={onRefreshSystem}
             disabled={isRefreshing}
           >
-            {isRefreshing ? "Đang làm mới..." : "Refresh"}
+            {isRefreshing ? "Đang làm mới..." : "Làm mới"}
           </button>
         </section>
 
         <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">API Health Status</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trạng thái sức khỏe API</p>
           <p className="text-lg font-semibold text-slate-900">{healthStatus}</p>
           <p className="text-sm text-slate-600">{healthMessage}</p>
           {healthError ? (
@@ -162,18 +162,18 @@ export default function DashboardPage() {
         </section>
 
         <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">API Metrics Summary</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tóm tắt số liệu hệ thống</p>
           <div className="grid gap-2 sm:grid-cols-3">
             <div className="rounded-md border border-slate-200 bg-white p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Request Count</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Số yêu cầu</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">{formatCount(requestCount)}</p>
             </div>
             <div className="rounded-md border border-slate-200 bg-white p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Error Count</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Số lỗi</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">{formatCount(errorCount)}</p>
             </div>
             <div className="rounded-md border border-slate-200 bg-white p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Avg Latency</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Độ trễ trung bình</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">{formatLatencyMs(avgLatencyMs)}</p>
             </div>
           </div>
@@ -183,9 +183,9 @@ export default function DashboardPage() {
         </section>
 
         <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dependency Status</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trạng thái phụ thuộc hệ thống</p>
           <div className="rounded-md border border-slate-200 bg-white p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">ML Service</p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Dịch vụ ML</p>
             <p className={`mt-1 text-lg font-semibold ${mlStatusColor}`}>{mlStatusLabel}</p>
           </div>
           {dependenciesError ? (
@@ -196,7 +196,7 @@ export default function DashboardPage() {
         </section>
 
         <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Modules</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tính năng</p>
           <div className="grid gap-2 md:grid-cols-2">
             {MODULE_LINKS.map((module) => (
               <Link

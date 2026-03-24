@@ -67,10 +67,10 @@ export default function EcosystemCenterPage() {
 
   const summaryCards = useMemo(
     () => [
-      { label: "Partners Total", value: formatCount(snapshot.summary.partnersTotal) },
-      { label: "Partners Down", value: formatCount(snapshot.summary.partnersDown) },
-      { label: "Trust Low Count", value: formatCount(snapshot.summary.trustLowCount) },
-      { label: "Critical Alert Count", value: formatCount(snapshot.summary.criticalAlertCount) }
+      { label: "Tổng đối tác", value: formatCount(snapshot.summary.partnersTotal) },
+      { label: "Đối tác đang lỗi", value: formatCount(snapshot.summary.partnersDown) },
+      { label: "Nguồn dữ liệu độ tin cậy thấp", value: formatCount(snapshot.summary.trustLowCount) },
+      { label: "Cảnh báo nghiêm trọng", value: formatCount(snapshot.summary.criticalAlertCount) }
     ],
     [
       snapshot.summary.criticalAlertCount,
@@ -94,7 +94,7 @@ export default function EcosystemCenterPage() {
       } else if (refreshError instanceof Error && refreshError.message.trim()) {
         setError(refreshError.message);
       } else {
-        setError("Khong the tai ecosystem center. Vui long thu lai.");
+        setError("Không thể tải trung tâm hệ sinh thái. Vui lòng thử lại.");
       }
     } finally {
       setIsLoading(false);
@@ -107,15 +107,15 @@ export default function EcosystemCenterPage() {
   }, [onRefresh]);
 
   return (
-    <PageShell title="Ecosystem Center">
+    <PageShell title="Trung tâm hệ sinh thái">
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-slate-600">
-            Tong hop suc khoe partner, data trust score va federation alerts cho he sinh thai lien thong.
+            Tổng hợp tình trạng đối tác, điểm tin cậy dữ liệu và cảnh báo liên thông cho toàn hệ thống.
           </p>
           <div className="flex items-center gap-2">
             <Link href="/dashboard" className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">
-              Ve Dashboard
+              Về bảng điều khiển
             </Link>
             <button
               type="button"
@@ -123,24 +123,24 @@ export default function EcosystemCenterPage() {
               disabled={isRefreshing}
               className="rounded bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isRefreshing ? "Dang lam moi..." : "Refresh"}
+              {isRefreshing ? "Đang làm mới..." : "Làm mới"}
             </button>
           </div>
         </div>
 
         {snapshot.generatedAt ? (
-          <p className="text-xs text-slate-500">Generated at: {formatDateTime(snapshot.generatedAt)}</p>
+          <p className="text-xs text-slate-500">Cập nhật lúc: {formatDateTime(snapshot.generatedAt)}</p>
         ) : null}
 
         {isLoading ? (
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            Dang tai ecosystem center...
+            Đang tải trung tâm hệ sinh thái...
           </div>
         ) : null}
 
         {forbidden ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Ban khong du quyen truy cap Ecosystem Center. Endpoint nay chi cho role doctor (403).
+            Bạn không đủ quyền truy cập Trung tâm hệ sinh thái. Tính năng này chỉ dành cho vai trò bác sĩ (403).
           </div>
         ) : null}
 
@@ -160,17 +160,17 @@ export default function EcosystemCenterPage() {
             </section>
 
             <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Partner Health</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tình trạng đối tác</p>
               {snapshot.partnerHealth.length ? (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2">Partner</th>
-                        <th className="px-3 py-2">Status</th>
-                        <th className="px-3 py-2">Latency</th>
-                        <th className="px-3 py-2">Error Rate</th>
-                        <th className="px-3 py-2">Last Check</th>
+                        <th className="px-3 py-2">Đối tác</th>
+                        <th className="px-3 py-2">Trạng thái</th>
+                        <th className="px-3 py-2">Độ trễ</th>
+                        <th className="px-3 py-2">Tỷ lệ lỗi</th>
+                        <th className="px-3 py-2">Kiểm tra gần nhất</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
@@ -191,22 +191,22 @@ export default function EcosystemCenterPage() {
                   </table>
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">Khong co du lieu partner health.</p>
+                <p className="text-sm text-slate-600">Chưa có dữ liệu tình trạng đối tác.</p>
               )}
             </section>
 
             <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data Trust Score</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Điểm tin cậy dữ liệu</p>
               {snapshot.dataTrustScores.length ? (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2">Source</th>
-                        <th className="px-3 py-2">Trust Score</th>
-                        <th className="px-3 py-2">Freshness</th>
-                        <th className="px-3 py-2">Drift Risk</th>
-                        <th className="px-3 py-2">Last Refresh</th>
+                        <th className="px-3 py-2">Nguồn dữ liệu</th>
+                        <th className="px-3 py-2">Điểm tin cậy</th>
+                        <th className="px-3 py-2">Độ mới dữ liệu</th>
+                        <th className="px-3 py-2">Rủi ro lệch dữ liệu</th>
+                        <th className="px-3 py-2">Làm mới gần nhất</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
@@ -227,12 +227,12 @@ export default function EcosystemCenterPage() {
                   </table>
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">Khong co du lieu data trust score.</p>
+                <p className="text-sm text-slate-600">Chưa có dữ liệu điểm tin cậy.</p>
               )}
             </section>
 
             <section className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Federation Alerts</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cảnh báo liên thông</p>
               {snapshot.federationAlerts.length ? (
                 <ul className="space-y-2">
                   {snapshot.federationAlerts.map((alert) => (
@@ -246,13 +246,13 @@ export default function EcosystemCenterPage() {
                       </div>
                       <p className="mt-2 text-sm text-slate-700">{alert.message}</p>
                       <p className="mt-1 text-xs text-slate-500">
-                        source: {alert.source} | acknowledged: {alert.acknowledged === null ? "--" : alert.acknowledged ? "yes" : "no"}
+                        nguồn: {alert.source} | xác nhận: {alert.acknowledged === null ? "--" : alert.acknowledged ? "có" : "chưa"}
                       </p>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-slate-600">Khong co federation alerts.</p>
+                <p className="text-sm text-slate-600">Chưa có cảnh báo liên thông.</p>
               )}
             </section>
           </>

@@ -13,21 +13,21 @@ type NavItem = {
 
 const NAV_BY_ROLE: Record<"normal" | "researcher" | "doctor", NavItem[]> = {
   normal: [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/careguard", label: "CareGuard" },
-    { href: "/scribe", label: "Scribe" }
+    { href: "/dashboard", label: "Bảng điều khiển" },
+    { href: "/careguard", label: "Kiểm tra an toàn thuốc" },
+    { href: "/research", label: "Không gian hỏi đáp" }
   ],
   researcher: [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/research", label: "Research" },
-    { href: "/careguard", label: "CareGuard" }
+    { href: "/dashboard", label: "Bảng điều khiển" },
+    { href: "/research", label: "Không gian hỏi đáp nghiên cứu" },
+    { href: "/careguard", label: "Kiểm tra an toàn thuốc" }
   ],
   doctor: [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/council", label: "AI Council" },
-    { href: "/scribe", label: "Scribe" },
-    { href: "/careguard", label: "CareGuard" },
-    { href: "/research", label: "Research" }
+    { href: "/dashboard", label: "Bảng điều khiển" },
+    { href: "/council", label: "Hội chẩn AI" },
+    { href: "/scribe", label: "Trợ lý ghi chép y khoa" },
+    { href: "/careguard", label: "Kiểm tra an toàn thuốc" },
+    { href: "/research", label: "Không gian hỏi đáp nghiên cứu" }
   ]
 };
 
@@ -44,8 +44,8 @@ export default function SidebarNav() {
   return (
     <aside className="w-72 border-r border-slate-200 bg-white p-4">
       <div className="mb-6 rounded-lg bg-slate-900 px-3 py-2 text-white">
-        <p className="text-xs uppercase tracking-wide text-slate-300">CLARA P0</p>
-        <p className="text-lg font-semibold">Role: {role}</p>
+        <p className="text-xs uppercase tracking-wide text-slate-300">CLARA</p>
+        <p className="text-lg font-semibold">Vai trò: {role}</p>
       </div>
 
       <nav className="space-y-1">
@@ -66,7 +66,10 @@ export default function SidebarNav() {
       </nav>
 
       <div className="mt-6 border-t border-slate-200 pt-4">
-        <Link href="/role-select" className="text-sm text-blue-600 hover:underline">
+        <Link href="/huong-dan" className="block text-sm text-slate-700 hover:underline">
+          Hướng dẫn sử dụng
+        </Link>
+        <Link href="/role-select" className="mt-2 block text-sm text-blue-600 hover:underline">
           Đổi vai trò người dùng
         </Link>
       </div>

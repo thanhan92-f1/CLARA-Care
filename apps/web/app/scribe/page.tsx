@@ -6,10 +6,10 @@ import { SoapSections, createSoap, normalizeSoapSections } from "@/lib/scribe";
 
 function joinSoap(sections: SoapSections): string {
   return [
-    `S: ${sections.subjective || "N/A"}`,
-    `O: ${sections.objective || "N/A"}`,
-    `A: ${sections.assessment || "N/A"}`,
-    `P: ${sections.plan || "N/A"}`
+    `S: ${sections.subjective || "Chưa có dữ liệu"}`,
+    `O: ${sections.objective || "Chưa có dữ liệu"}`,
+    `A: ${sections.assessment || "Chưa có dữ liệu"}`,
+    `P: ${sections.plan || "Chưa có dữ liệu"}`
   ].join("\n\n");
 }
 
@@ -52,16 +52,16 @@ export default function ScribePage() {
 
   const onCopyPlaceholder = () => {
     if (!sections) return;
-    setPlaceholderNotice("Copy placeholder: kết nối clipboard sẽ được bổ sung ở phase sau.");
+    setPlaceholderNotice("Tính năng sao chép sẽ được bổ sung ở phase sau.");
   };
 
   const onExportPlaceholder = () => {
     if (!sections) return;
-    setPlaceholderNotice("Export placeholder: xuất file sẽ được bổ sung ở phase sau.");
+    setPlaceholderNotice("Tính năng xuất file sẽ được bổ sung ở phase sau.");
   };
 
   return (
-    <PageShell title="Medical Scribe">
+    <PageShell title="Trợ lý ghi chép y khoa">
       <div className="space-y-4">
         <p className="text-sm text-slate-600">Dán transcript buổi khám để tạo nhanh SOAP draft (S/O/A/P).</p>
 
@@ -95,7 +95,7 @@ export default function ScribePage() {
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!hasSoapContent}
               >
-                Copy (placeholder)
+                Sao chép (placeholder)
               </button>
               <button
                 type="button"
@@ -103,7 +103,7 @@ export default function ScribePage() {
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!hasSoapContent}
               >
-                Export (placeholder)
+                Xuất file (placeholder)
               </button>
             </div>
 
@@ -114,28 +114,28 @@ export default function ScribePage() {
             <div className="grid gap-3 md:grid-cols-2">
               <article className="rounded-md border border-slate-200 bg-white p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">S - Subjective</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.subjective || "N/A"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.subjective || "Chưa có dữ liệu"}</p>
               </article>
 
               <article className="rounded-md border border-slate-200 bg-white p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">O - Objective</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.objective || "N/A"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.objective || "Chưa có dữ liệu"}</p>
               </article>
 
               <article className="rounded-md border border-slate-200 bg-white p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">A - Assessment</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.assessment || "N/A"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.assessment || "Chưa có dữ liệu"}</p>
               </article>
 
               <article className="rounded-md border border-slate-200 bg-white p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">P - Plan</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.plan || "N/A"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{sections.plan || "Chưa có dữ liệu"}</p>
               </article>
             </div>
 
             <details className="rounded-md border border-dashed border-slate-300 bg-white p-3">
               <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
-                SOAP Combined View
+                Xem tổng hợp SOAP
               </summary>
               <pre className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{joinSoap(sections)}</pre>
             </details>

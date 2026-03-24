@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import api from "@/lib/http-client";
 import { setAccessToken, setRefreshToken, setRole as setStoredRole } from "@/lib/auth-store";
@@ -49,6 +50,13 @@ export default function LoginPage() {
   return (
     <main className="mx-auto mt-20 max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <h1 className="mb-4 text-2xl font-semibold">Đăng nhập</h1>
+      <p className="mb-3 text-sm text-slate-600">
+        Nếu bạn mới sử dụng, hãy xem{" "}
+        <Link href="/huong-dan" className="font-medium text-blue-600 hover:underline">
+          hướng dẫn sử dụng
+        </Link>{" "}
+        trước khi bắt đầu.
+      </p>
       <form className="space-y-3" onSubmit={onSubmit}>
         <input
           className="w-full rounded border p-2"
@@ -70,9 +78,9 @@ export default function LoginPage() {
           value={role}
           onChange={(e) => setRole(e.target.value as UserRole)}
         >
-          <option value="normal">Normal User</option>
-          <option value="researcher">Researcher</option>
-          <option value="doctor">Doctor</option>
+          <option value="normal">Người dùng cá nhân</option>
+          <option value="researcher">Nhà nghiên cứu</option>
+          <option value="doctor">Bác sĩ</option>
         </select>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
