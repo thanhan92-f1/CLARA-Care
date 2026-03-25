@@ -5,13 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import api from "@/lib/http-client";
 import { setAccessToken, setRefreshToken, setRole as setStoredRole } from "@/lib/auth-store";
-import { UserRole } from "@/lib/auth/roles";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>("normal");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -24,13 +22,13 @@ export default function LoginPage() {
       const response = await api.post("/auth/login", { email, password });
       const accessToken = response.data?.access_token as string | undefined;
       const refreshToken = response.data?.refresh_token as string | undefined;
-      const serverRole = response.data?.role as UserRole | undefined;
+      const serverRole = response.data?.role as "normal" | "researcher" | "doctor" | undefined;
 
       if (!accessToken || !refreshToken) {
         throw new Error("Phản hồi đăng nhập thiếu token.");
       }
 
-      const nextRole = serverRole ?? role;
+      const nextRole = serverRole ?? "normal";
       setAccessToken(accessToken);
       setRefreshToken(refreshToken);
       setStoredRole(nextRole);
@@ -73,19 +71,18 @@ export default function LoginPage() {
           onChange={(event) => setPassword(event.target.value)}
           required
         />
-        <select
-          className="w-full rounded border p-2"
-          value={role}
-          onChange={(e) => setRole(e.target.value as UserRole)}
-        >
-          <option value="normal">Người dùng cá nhân</option>
-          <option value="researcher">Nhà nghiên cứu</option>
-          <option value="doctor">Bác sĩ</option>
-        </select>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Đang đăng nhập..." : "Đăng nhập"}
         </button>
+        <div className="flex justify-between text-sm">
+          <Link href="/register" className="text-blue-600 hover:underline">
+            Tạo tài khoản
+          </Link>
+          <Link href="/forgot-password" className="text-slate-600 hover:underline">
+            Quên mật khẩu?
+          </Link>
+        </div>
       </form>
     </main>
   );
