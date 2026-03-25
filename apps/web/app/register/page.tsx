@@ -30,12 +30,19 @@ export default function RegisterPage() {
         role
       });
       const tokenPreview = response.data?.verification_token_preview as string | undefined;
-      if (tokenPreview) {
-        setNotice(`Đăng ký thành công. Token xác thực (dev): ${tokenPreview}`);
-      } else {
+      const isVerified = Boolean(response.data?.is_email_verified);
+      const deliveryStatus = (response.data?.email_delivery_status as string | undefined) ?? "";
+
+      if (isVerified) {
         setNotice("Đăng ký thành công. Bạn có thể đăng nhập ngay.");
+        setTimeout(() => router.push("/login"), 1000);
+      } else if (tokenPreview) {
+        setNotice(`Đăng ký thành công. Token xác thực (dev): ${tokenPreview}`);
+      } else if (deliveryStatus === "sent") {
+        setNotice("Đăng ký thành công. Hệ thống đã gửi email xác thực, vui lòng kiểm tra hộp thư.");
+      } else {
+        setNotice("Đăng ký thành công. Vui lòng xác thực email trước khi đăng nhập.");
       }
-      setTimeout(() => router.push("/login"), 1000);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể tạo tài khoản.");
     } finally {
@@ -82,7 +89,16 @@ export default function RegisterPage() {
           <option value="researcher">Nhà nghiên cứu</option>
           <option value="doctor">Bác sĩ</option>
         </select>
-        {notice ? <p className="text-sm text-emerald-700">{notice}</p> : null}
+        {notice ? (
+          <p className="text-sm text-emerald-700">
+            {notice}{" "}
+            {notice.includes("xác thực") ? (
+              <Link href={`/verify-email?email=${encodeURIComponent(email)}`} className="font-medium text-blue-700 hover:underline">
+                Đi đến trang xác thực
+              </Link>
+            ) : null}
+          </p>
+        ) : null}
         {error ? <p className="text-sm text-red-700">{error}</p> : null}
         <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Đang xử lý..." : "Tạo tài khoản"}

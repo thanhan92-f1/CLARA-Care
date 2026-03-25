@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const shouldShowVerifyLink = error.toLowerCase().includes("xác thực");
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -71,7 +72,16 @@ export default function LoginPage() {
           onChange={(event) => setPassword(event.target.value)}
           required
         />
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? (
+          <p className="text-sm text-red-600">
+            {error}{" "}
+            {shouldShowVerifyLink ? (
+              <Link href={`/verify-email?email=${encodeURIComponent(email)}`} className="font-medium text-blue-700 hover:underline">
+                Xác thực email
+              </Link>
+            ) : null}
+          </p>
+        ) : null}
         <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Đang đăng nhập..." : "Đăng nhập"}
         </button>

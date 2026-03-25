@@ -20,9 +20,12 @@ export default function ForgotPasswordPage() {
     try {
       const response = await api.post("/auth/forgot-password", { email });
       const token = response.data?.reset_token_preview as string | undefined;
+      const deliveryStatus = (response.data?.email_delivery_status as string | undefined) ?? "";
       if (token) {
         setTokenPreview(token);
         setNotice("Yêu cầu đặt lại mật khẩu đã được tạo (chế độ dev).");
+      } else if (deliveryStatus === "sent") {
+        setNotice("Hệ thống đã gửi email đặt lại mật khẩu. Vui lòng kiểm tra hộp thư.");
       } else {
         setNotice("Nếu email tồn tại, hệ thống đã gửi hướng dẫn đặt lại mật khẩu.");
       }
