@@ -20,6 +20,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 const MODULE_LINKS = [
+  { href: "/selfmed", label: "Tủ thuốc cá nhân", description: "Quản lý tủ thuốc permanent, OCR hóa đơn và auto DDI." },
   { href: "/careguard", label: "Kiểm tra an toàn thuốc", description: "Đánh giá nhanh triệu chứng, thuốc và dị ứng." },
   { href: "/scribe", label: "Trợ lý ghi chép y khoa", description: "Tạo SOAP note từ transcript buổi khám." },
   { href: "/research", label: "Không gian hỏi đáp nghiên cứu", description: "Hỏi đáp chuyên sâu với nguồn tham chiếu." },
@@ -28,7 +29,17 @@ const MODULE_LINKS = [
     href: "/dashboard/ecosystem",
     label: "Trung tâm hệ sinh thái",
     description: "Theo dõi tình trạng đối tác, điểm tin cậy dữ liệu và cảnh báo liên thông."
-  }
+  },
+  {
+    href: "/dashboard/control-tower",
+    label: "Control Tower RAG",
+    description: "Quản trị nguồn RAG, bật/tắt fallback DeepSeek và cấu hình flow trả lời."
+  },
+  {
+    href: "/admin/overview",
+    label: "Admin Dashboard",
+    description: "Dashboard riêng cho quản trị kỹ thuật: RAG sources, answer flow, observability."
+  },
 ];
 
 function formatCount(value: number | null): string {

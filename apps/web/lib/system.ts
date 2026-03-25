@@ -89,6 +89,27 @@ export type SystemEcosystemSnapshot = {
   federationAlerts: EcosystemAlertRow[];
 };
 
+export type ControlTowerRagSource = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  category: string;
+};
+
+export type ControlTowerRagFlow = {
+  role_router_enabled: boolean;
+  intent_router_enabled: boolean;
+  verification_enabled: boolean;
+  deepseek_fallback_enabled: boolean;
+  low_context_threshold: number;
+};
+
+export type ControlTowerConfig = {
+  rag_sources: ControlTowerRagSource[];
+  rag_flow: ControlTowerRagFlow;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -203,6 +224,16 @@ export async function getSystemDependencies(): Promise<SystemDependenciesRawResp
 
 export async function getSystemEcosystem(): Promise<SystemEcosystemRawResponse> {
   const response = await api.get<SystemEcosystemRawResponse>("/system/ecosystem");
+  return response.data;
+}
+
+export async function getControlTowerConfig(): Promise<ControlTowerConfig> {
+  const response = await api.get<ControlTowerConfig>("/system/control-tower/config");
+  return response.data;
+}
+
+export async function updateControlTowerConfig(payload: ControlTowerConfig): Promise<ControlTowerConfig> {
+  const response = await api.put<ControlTowerConfig>("/system/control-tower/config", payload);
   return response.data;
 }
 
