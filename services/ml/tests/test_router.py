@@ -26,3 +26,14 @@ def test_router_emergency_fast_path():
     assert result.intent == "emergency_triage"
     assert result.emergency is True
     assert result.confidence >= 0.99
+
+
+def test_router_detects_comparative_normal_query_as_lifestyle():
+    router = P1RoleIntentRouter()
+    result = router.route(
+        "So sanh DASH va Mediterranean cho benh tim mach",
+        role_hint="normal",
+    )
+    assert result.role == "normal"
+    assert result.intent == "lifestyle_guidance"
+    assert result.emergency is False

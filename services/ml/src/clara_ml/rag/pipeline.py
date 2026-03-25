@@ -108,7 +108,9 @@ class RagPipelineP1:
             "Retrieved context is empty or irrelevant.\n"
             "Provide a useful, concise, safety-first answer in Vietnamese.\n"
             "Do not claim you cannot answer due to missing context.\n"
-            "Include: practical next steps, warning signs to seek urgent care, and suggest consulting clinician when needed.\n"
+            "If the query is comparative (e.g., compares diets/treatments), provide a balanced comparison and practical decision criteria.\n"
+            "Only include urgent warning signs when the query is about symptoms or acute risk.\n"
+            "Suggest consulting a clinician when needed.\n"
             f"User query: {query}"
         )
 

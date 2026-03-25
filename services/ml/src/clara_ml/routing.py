@@ -84,6 +84,17 @@ class P1RoleIntentRouter:
         "doctor": ("doctor_ddi_check", "doctor_case_review", "doctor_treatment_plan"),
     }
 
+    COMPARATIVE_NORMAL_HINTS = (
+        "so sanh",
+        "khac nhau",
+        "hieu qua",
+        "vs",
+        "versus",
+        "dash",
+        "mediterranean",
+        "che do an",
+    )
+
     def route(self, query: str, role_hint: str | None = None) -> RouteResult:
         normalized = self._normalize(query)
         if self._contains_any(normalized, self.EMERGENCY_KEYWORDS):
@@ -132,6 +143,9 @@ class P1RoleIntentRouter:
         return role, min(0.95, 0.62 + 0.11 * hits)
 
     def _classify_intent(self, role: str, normalized_query: str) -> tuple[str, float]:
+        if role == "normal" and self._contains_any(normalized_query, self.COMPARATIVE_NORMAL_HINTS):
+            return "lifestyle_guidance", 0.74
+
         intents = self.INTENT_KEYWORDS[role]
         intent_scores = {
             intent: self._count_hits(normalized_query, keywords)
