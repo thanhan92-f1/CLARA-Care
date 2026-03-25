@@ -95,6 +95,7 @@ class DrugSourceClient:
                 client,
                 f"{_RXNAV_BASE_URL}/interaction/list.json",
                 params={"rxcuis": "+".join(sorted(set(rxnorm_map.values())))},
+                allow_not_found=True,
             )
             if error:
                 errors.add(error)

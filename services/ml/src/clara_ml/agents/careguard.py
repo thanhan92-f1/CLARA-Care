@@ -269,6 +269,8 @@ def _risk_from_signals(
 
     if severe_bleeding and has_high_risk_ddi:
         return max(score, 9), "critical"
+    if has_high_risk_ddi and score >= 3:
+        return max(score, 5), "high"
     if score >= 9:
         return score, "critical"
     if score >= 5:
