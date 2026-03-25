@@ -69,7 +69,7 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
     assert float(captured["timeout"]) > 0
 
 
-def test_chat_returns_502_when_ml_unavailable(monkeypatch) -> None:
+def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
     token = _login("dr@doctor.clara")
 
     def _fake_post(_url: str, *, json: dict[str, object], timeout: float) -> object:
@@ -83,5 +83,9 @@ def test_chat_returns_502_when_ml_unavailable(monkeypatch) -> None:
         json={"message": "test"},
     )
 
-    assert response.status_code == 502
-    assert "ML service unavailable" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "doctor"
+    assert body["model_used"] == "api-safe-fallback-v1"
+    assert "quá tải tạm thời" in body["reply"]
+    assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")

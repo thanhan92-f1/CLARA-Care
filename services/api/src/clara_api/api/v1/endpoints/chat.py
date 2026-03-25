@@ -1,7 +1,7 @@
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +26,24 @@ DEFAULT_RAG_FLOW = RagFlowConfig(
 
 class ChatRequest(BaseModel):
     message: str
+
+
+def _safe_chat_fallback(message: str, role: str, reason: str) -> dict[str, Any]:
+    return {
+        "role": role,
+        "intent": "general_guidance",
+        "confidence": 0.35,
+        "emergency": False,
+        "answer": (
+            "Hệ thống đang quá tải tạm thời nên câu trả lời chi tiết chưa sẵn sàng. "
+            "Bạn có thể thử lại sau ít phút. Trong thời gian chờ, hãy ưu tiên nguồn chính thống "
+            "và liên hệ chuyên gia y tế nếu có dấu hiệu nặng hoặc bất thường."
+        ),
+        "retrieved_ids": [],
+        "model_used": "api-safe-fallback-v1",
+        "fallback_reason": reason,
+        "query_echo": message,
+    }
 
 
 def _load_rag_flow(db: Session) -> RagFlowConfig:
@@ -53,45 +71,28 @@ def _call_ml_service(message: str, role: str, rag_flow: RagFlowConfig) -> dict[s
     try:
         response = httpx.post(url, json=request_payload, timeout=settings.ml_service_timeout_seconds)
     except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ML service unavailable: {exc.__class__.__name__}",
-        ) from exc
+        return _safe_chat_fallback(message, role, reason=f"ml_unavailable:{exc.__class__.__name__}")
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ML service unavailable: {exc}",
-        ) from exc
+        return _safe_chat_fallback(message, role, reason=f"ml_http_error:{exc.__class__.__name__}")
 
     if response.status_code >= 500:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ML service upstream error: status={response.status_code}",
-        )
+        return _safe_chat_fallback(message, role, reason=f"ml_upstream_5xx:{response.status_code}")
     if response.status_code >= 400:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"ML service rejected request: status={response.status_code}",
-        )
+        return _safe_chat_fallback(message, role, reason=f"ml_upstream_4xx:{response.status_code}")
 
     try:
         data = response.json()
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="ML service returned invalid JSON",
-        ) from exc
+        return _safe_chat_fallback(message, role, reason=f"ml_invalid_json:{exc.__class__.__name__}")
 
     if not isinstance(data, dict):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="ML service returned unexpected payload format",
-        )
+        return _safe_chat_fallback(message, role, reason="ml_unexpected_payload")
 
     return data
 
 
 @router.post("/")
+@router.post("")
 def chat_placeholder(
     payload: ChatRequest,
     token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
