@@ -1,17 +1,9 @@
-export type UserRole = "normal" | "researcher" | "doctor";
+import { getNavItemsByRole, type UserRole } from "@/lib/navigation.config";
+
+export type { UserRole };
 
 export const roleMenus: Record<UserRole, { label: string; href: string }[]> = {
-  normal: [
-    { label: "Bảng điều khiển", href: "/dashboard" },
-    { label: "Kiểm tra an toàn thuốc", href: "/careguard" }
-  ],
-  researcher: [
-    { label: "Không gian hỏi đáp nghiên cứu", href: "/research" },
-    { label: "Bảng điều khiển", href: "/dashboard" }
-  ],
-  doctor: [
-    { label: "Hội chẩn AI", href: "/council" },
-    { label: "Trợ lý ghi chép y khoa", href: "/scribe" },
-    { label: "Kiểm tra an toàn thuốc", href: "/careguard" }
-  ]
+  normal: getNavItemsByRole("normal").map((item) => ({ label: item.label, href: item.href })),
+  researcher: getNavItemsByRole("researcher").map((item) => ({ label: item.label, href: item.href })),
+  doctor: getNavItemsByRole("doctor").map((item) => ({ label: item.label, href: item.href }))
 };
