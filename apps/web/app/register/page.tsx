@@ -4,6 +4,9 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/http-client";
+import AuthFormShell from "@/components/auth-form-shell";
+import AuthField from "@/components/auth/auth-field";
+import AuthFeedback from "@/components/auth/auth-feedback";
 
 type UserRole = "normal" | "researcher" | "doctor";
 
@@ -37,7 +40,7 @@ export default function RegisterPage() {
         setNotice("Đăng ký thành công. Bạn có thể đăng nhập ngay.");
         setTimeout(() => router.push("/login"), 1000);
       } else if (tokenPreview) {
-        setNotice(`Đăng ký thành công. Token xác thực (dev): ${tokenPreview}`);
+        setNotice(`Đăng ký thành công. Mã xác thực (dev): ${tokenPreview}`);
       } else if (deliveryStatus === "sent") {
         setNotice("Đăng ký thành công. Hệ thống đã gửi email xác thực, vui lòng kiểm tra hộp thư.");
       } else {
@@ -51,59 +54,71 @@ export default function RegisterPage() {
   };
 
   return (
-    <main className="mx-auto mt-20 max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="mb-4 text-2xl font-semibold">Đăng ký tài khoản</h1>
-      <p className="mb-3 text-sm text-slate-600">
-        Đã có tài khoản?{" "}
-        <Link href="/login" className="font-medium text-blue-600 hover:underline">
-          Đăng nhập
-        </Link>
-      </p>
-      <form className="space-y-3" onSubmit={onSubmit}>
-        <input
-          className="w-full rounded border p-2"
-          placeholder="Họ và tên"
+    <AuthFormShell title="Tạo tài khoản" subtitle="Khởi tạo tài khoản CLARA và chọn vai trò phù hợp nhu cầu của bạn.">
+      <form className="space-y-4" onSubmit={onSubmit}>
+        <AuthField
+          id="register-full-name"
+          label="Họ và tên"
           value={fullName}
-          onChange={(event) => setFullName(event.target.value)}
+          onChange={setFullName}
+          placeholder="Nguyễn Văn A"
           required
         />
-        <input
-          className="w-full rounded border p-2"
-          placeholder="Email"
+        <AuthField
+          id="register-email"
+          label="Email"
           type="email"
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={setEmail}
+          placeholder="name@example.com"
           required
         />
-        <input
-          className="w-full rounded border p-2"
+        <AuthField
+          id="register-password"
+          label="Mật khẩu"
           type="password"
-          placeholder="Mật khẩu (>= 8 ký tự)"
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          onChange={setPassword}
+          placeholder="Tối thiểu 8 ký tự"
           minLength={8}
           required
         />
-        <select className="w-full rounded border p-2" value={role} onChange={(event) => setRole(event.target.value as UserRole)}>
-          <option value="normal">Người dùng cá nhân</option>
-          <option value="researcher">Nhà nghiên cứu</option>
-          <option value="doctor">Bác sĩ</option>
-        </select>
-        {notice ? (
-          <p className="text-sm text-emerald-700">
-            {notice}{" "}
-            {notice.includes("xác thực") ? (
-              <Link href={`/verify-email?email=${encodeURIComponent(email)}`} className="font-medium text-blue-700 hover:underline">
-                Đi đến trang xác thực
-              </Link>
-            ) : null}
-          </p>
+
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-slate-800" htmlFor="register-role">
+            Vai trò sử dụng
+          </label>
+          <select
+            id="register-role"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+            value={role}
+            onChange={(event) => setRole(event.target.value as UserRole)}
+          >
+            <option value="normal">Người dùng cá nhân</option>
+            <option value="researcher">Nhà nghiên cứu</option>
+            <option value="doctor">Bác sĩ</option>
+          </select>
+        </div>
+
+        <AuthFeedback notice={notice} error={error} />
+
+        {notice.includes("xác thực") ? (
+          <Link href={`/verify-email?email=${encodeURIComponent(email)}`} className="text-sm font-medium text-blue-700 hover:underline">
+            Đi đến trang xác thực email
+          </Link>
         ) : null}
-        {error ? <p className="text-sm text-red-700">{error}</p> : null}
-        <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
+
+        <button className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-70" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Đang xử lý..." : "Tạo tài khoản"}
         </button>
+
+        <p className="text-sm text-slate-600">
+          Đã có tài khoản?{" "}
+          <Link href="/login" className="font-medium text-blue-700 hover:underline">
+            Đăng nhập
+          </Link>
+        </p>
       </form>
-    </main>
+    </AuthFormShell>
   );
 }

@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import api from "@/lib/http-client";
+import AuthFormShell from "@/components/auth-form-shell";
+import AuthField from "@/components/auth/auth-field";
+import AuthFeedback from "@/components/auth/auth-feedback";
 
 export default function ResetPasswordPage() {
   const [token, setToken] = useState("");
@@ -34,38 +37,42 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <main className="mx-auto mt-20 max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-semibold text-slate-900">Đặt lại mật khẩu</h1>
-      <form className="mt-4 space-y-3" onSubmit={onSubmit}>
-        <textarea
-          className="min-h-[84px] w-full rounded border p-2"
-          placeholder="Token reset"
+    <AuthFormShell title="Đặt lại mật khẩu" subtitle="Nhập mã đặt lại và mật khẩu mới để tiếp tục sử dụng tài khoản.">
+      <form className="space-y-4" onSubmit={onSubmit}>
+        <AuthField
+          id="reset-token"
+          label="Mã đặt lại mật khẩu"
+          as="textarea"
+          rows={3}
           value={token}
-          onChange={(event) => setToken(event.target.value)}
+          onChange={setToken}
+          placeholder="Dán mã đặt lại tại đây"
           required
         />
-        <input
-          className="w-full rounded border p-2"
+
+        <AuthField
+          id="reset-new-password"
+          label="Mật khẩu mới"
           type="password"
-          placeholder="Mật khẩu mới"
-          minLength={8}
           value={newPassword}
-          onChange={(event) => setNewPassword(event.target.value)}
+          onChange={setNewPassword}
+          placeholder="Tối thiểu 8 ký tự"
+          minLength={8}
           required
         />
+
+        <AuthFeedback notice={notice} error={error} />
+
         {notice ? (
-          <p className="text-sm text-emerald-700">
-            {notice}{" "}
-            <Link href="/login" className="text-blue-600 hover:underline">
-              Đi đến đăng nhập
-            </Link>
-          </p>
+          <Link href="/login" className="inline-block text-sm font-medium text-blue-700 hover:underline">
+            Đi đến đăng nhập
+          </Link>
         ) : null}
-        {error ? <p className="text-sm text-red-700">{error}</p> : null}
-        <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" type="submit" disabled={isSubmitting}>
+
+        <button className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-70" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Đang xử lý..." : "Đặt lại mật khẩu"}
         </button>
       </form>
-    </main>
+    </AuthFormShell>
   );
 }

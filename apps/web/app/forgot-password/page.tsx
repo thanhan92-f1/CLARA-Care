@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import api from "@/lib/http-client";
+import AuthFormShell from "@/components/auth-form-shell";
+import AuthField from "@/components/auth/auth-field";
+import AuthFeedback from "@/components/auth/auth-feedback";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -37,32 +40,37 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <main className="mx-auto mt-20 max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-semibold text-slate-900">Quên mật khẩu</h1>
-      <p className="mt-2 text-sm text-slate-600">Nhập email để nhận liên kết đặt lại mật khẩu.</p>
-      <form className="mt-4 space-y-3" onSubmit={onSubmit}>
-        <input
-          className="w-full rounded border p-2"
+    <AuthFormShell title="Quên mật khẩu" subtitle="Nhập email tài khoản để nhận hướng dẫn đặt lại mật khẩu.">
+      <form className="space-y-4" onSubmit={onSubmit}>
+        <AuthField
+          id="forgot-email"
+          label="Email"
           type="email"
-          placeholder="Email"
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={setEmail}
+          placeholder="name@example.com"
           required
         />
-        {notice ? <p className="text-sm text-emerald-700">{notice}</p> : null}
-        {error ? <p className="text-sm text-red-700">{error}</p> : null}
+
+        <AuthFeedback notice={notice} error={error} />
+
         {tokenPreview ? (
-          <p className="text-sm text-slate-700">
-            Token dev: <code>{tokenPreview}</code>{" "}
-            <Link href={`/reset-password?token=${encodeURIComponent(tokenPreview)}`} className="text-blue-600 hover:underline">
+          <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            Mã reset (dev): <code className="font-mono text-xs">{tokenPreview}</code>{" "}
+            <Link href={`/reset-password?token=${encodeURIComponent(tokenPreview)}`} className="font-medium text-blue-700 hover:underline">
               Mở trang đặt lại
             </Link>
           </p>
         ) : null}
-        <button className="w-full rounded bg-primary px-4 py-2 text-white disabled:opacity-70" type="submit" disabled={isSubmitting}>
+
+        <button className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-70" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Đang gửi..." : "Gửi yêu cầu"}
         </button>
+
+        <Link href="/login" className="inline-block text-sm text-slate-600 hover:underline">
+          Quay lại đăng nhập
+        </Link>
       </form>
-    </main>
+    </AuthFormShell>
   );
 }
