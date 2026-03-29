@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import re
+from typing import Any, Sequence
+
+from .domain import Document, TRUST_TIER_FACTOR
+
+
+def safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_weight(value: Any, default: float = 1.0) -> float:
+    return max(0.0, min(2.0, safe_float(value, default)))
+
+
+def normalize_tags(tags: Any) -> list[str]:
+    if isinstance(tags, str):
+        normalized = [tag.strip().lower() for tag in re.split(r"[,;|]", tags) if tag.strip()]
+        return list(dict.fromkeys(normalized))
+    if isinstance(tags, list):
+        normalized = [str(tag).strip().lower() for tag in tags if str(tag).strip()]
+        return list(dict.fromkeys(normalized))
+    return []
+
+
+def normalize_trust_tier(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_")
+    if not raw:
+        return "tier_3"
+    aliases = {
+        "1": "tier_1",
+        "t1": "tier_1",
+        "a": "tier_1",
+        "official": "tier_1",
+        "gov": "tier_1",
+        "government": "tier_1",
+        "2": "tier_2",
+        "t2": "tier_2",
+        "b": "tier_2",
+        "clinical": "tier_2",
+        "3": "tier_3",
+        "t3": "tier_3",
+        "c": "tier_3",
+        "community": "tier_3",
+        "4": "tier_4",
+        "t4": "tier_4",
+        "d": "tier_4",
+        "low": "tier_4",
+    }
+    normalized = aliases.get(raw, raw)
+    if normalized not in TRUST_TIER_FACTOR:
+        return "tier_3"
+    return normalized
+
+
+def trust_tier_factor(trust_tier: Any) -> float:
+    normalized = normalize_trust_tier(trust_tier)
+    return TRUST_TIER_FACTOR.get(normalized, 1.0)
+
+
+def clean_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def first_text(*values: Any) -> str:
+    for value in values:
+        text = clean_text(value)
+        if text:
+            return text
+    return ""
+
+
+def query_terms(query: str) -> list[str]:
+    tokens = re.findall(r"[0-9a-zA-ZÀ-ỹ]{3,}", query.lower())
+    stopwords = {
+        "cho",
+        "cua",
+        "voi",
+        "nhung",
+        "benh",
+        "tim",
+        "mach",
+        "dieu",
+        "tri",
+        "nguoi",
+        "sanh",
+    }
+    filtered = [token for token in tokens if token not in stopwords]
+    filtered.sort(key=len, reverse=True)
+    return filtered[:3]
+
+
+def tag_relevance_factor(query: str, tags: Any) -> float:
+    tag_values = normalize_tags(tags)
+    if not tag_values:
+        return 1.0
+    query_tokens = set(query_terms(query))
+    if not query_tokens:
+        return 1.0
+
+    matches = 0
+    for tag in tag_values:
+        tag_tokens = {token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]{3,}", tag)}
+        if query_tokens.intersection(tag_tokens):
+            matches += 1
+
+    if matches == 0:
+        return 1.0
+    return min(1.2, 1.0 + (0.06 * matches))
+
+
+def dedupe_documents(documents: Sequence[Document]) -> list[Document]:
+    deduped: list[Document] = []
+    seen: set[str] = set()
+    for doc in documents:
+        if doc.id in seen:
+            continue
+        deduped.append(doc)
+        seen.add(doc.id)
+    return deduped

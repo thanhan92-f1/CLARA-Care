@@ -2,116 +2,18 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from clara_api.core.config import get_settings
+from clara_api.core.control_tower import get_control_tower_config_service
+from clara_api.core.flow import FLOW_EVENTS_DEFAULT_LIMIT, get_flow_event_stream_service
 from clara_api.core.metrics import get_api_metrics_store
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
-from clara_api.db.models import SystemSetting
 from clara_api.db.session import get_db
-from clara_api.schemas import RagFlowConfig, RagSourceEntry, SystemControlTowerConfig
+from clara_api.schemas import SystemControlTowerConfig
 
 router = APIRouter()
-
-CONTROL_TOWER_KEY = "control_tower_config_v1"
-
-DEFAULT_CONTROL_TOWER_CONFIG = SystemControlTowerConfig(
-    rag_sources=[
-        RagSourceEntry(
-            id="pubmed",
-            name="PubMed",
-            enabled=True,
-            priority=1,
-            weight=1.0,
-            category="literature",
-        ),
-        RagSourceEntry(
-            id="europepmc",
-            name="Europe PMC",
-            enabled=True,
-            priority=2,
-            weight=1.0,
-            category="literature",
-        ),
-        RagSourceEntry(
-            id="openalex",
-            name="OpenAlex",
-            enabled=True,
-            priority=3,
-            weight=1.0,
-            category="literature",
-        ),
-        RagSourceEntry(
-            id="crossref",
-            name="Crossref",
-            enabled=True,
-            priority=4,
-            weight=1.0,
-            category="literature",
-        ),
-        RagSourceEntry(
-            id="clinicaltrials",
-            name="ClinicalTrials.gov",
-            enabled=True,
-            priority=5,
-            weight=1.0,
-            category="clinical_trials",
-        ),
-        RagSourceEntry(
-            id="openfda",
-            name="openFDA",
-            enabled=True,
-            priority=6,
-            weight=1.0,
-            category="drug_safety",
-        ),
-        RagSourceEntry(
-            id="dailymed",
-            name="DailyMed",
-            enabled=True,
-            priority=7,
-            weight=1.0,
-            category="drug_label",
-        ),
-        RagSourceEntry(
-            id="searxng",
-            name="SearXNG (self-host)",
-            enabled=True,
-            priority=8,
-            weight=1.0,
-            category="web_search",
-        ),
-        RagSourceEntry(
-            id="rxnorm",
-            name="RxNorm",
-            enabled=True,
-            priority=9,
-            weight=1.0,
-            category="drug_normalization",
-        ),
-        RagSourceEntry(
-            id="davidrug",
-            name="Cục Quản lý Dược (VN)",
-            enabled=True,
-            priority=10,
-            weight=1.0,
-            category="vn_regulatory",
-        ),
-    ],
-    rag_flow=RagFlowConfig(
-        role_router_enabled=True,
-        intent_router_enabled=True,
-        verification_enabled=True,
-        deepseek_fallback_enabled=True,
-        low_context_threshold=0.2,
-        scientific_retrieval_enabled=True,
-        web_retrieval_enabled=True,
-        file_retrieval_enabled=True,
-    ),
-)
-
 
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -501,26 +403,12 @@ def get_sources_registry(
     }
 
 
-def _load_control_tower_config(db: Session) -> SystemControlTowerConfig:
-    row = db.execute(
-        select(SystemSetting).where(SystemSetting.key == CONTROL_TOWER_KEY)
-    ).scalar_one_or_none()
-    if row and isinstance(row.value_json, dict):
-        try:
-            return SystemControlTowerConfig.model_validate(row.value_json)
-        except Exception:
-            pass
-    return SystemControlTowerConfig.model_validate(
-        DEFAULT_CONTROL_TOWER_CONFIG.model_dump(mode="json")
-    )
-
-
 @router.get("/control-tower/config", response_model=SystemControlTowerConfig)
 def get_control_tower_config(
     _token: TokenPayload = Depends(require_roles("doctor")),
     db: Session = Depends(get_db),
 ) -> SystemControlTowerConfig:
-    return _load_control_tower_config(db)
+    return get_control_tower_config_service().load(db)
 
 
 @router.put("/control-tower/config", response_model=SystemControlTowerConfig)
@@ -529,114 +417,38 @@ def update_control_tower_config(
     _token: TokenPayload = Depends(require_roles("doctor")),
     db: Session = Depends(get_db),
 ) -> SystemControlTowerConfig:
-    row = db.execute(
-        select(SystemSetting).where(SystemSetting.key == CONTROL_TOWER_KEY)
-    ).scalar_one_or_none()
-    if not row:
-        row = SystemSetting(key=CONTROL_TOWER_KEY)
-    row.value_json = payload.model_dump(mode="json")
-    row.value_text = ""
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return SystemControlTowerConfig.model_validate(row.value_json or {})
-
-_FLOW_EVENTS_MAX_LIMIT = 500
-_FLOW_EVENTS_DEFAULT_LIMIT = 100
-
-
-def _coerce_flow_events_limit(limit: int) -> int:
-    if limit < 1:
-        return 1
-    if limit > _FLOW_EVENTS_MAX_LIMIT:
-        return _FLOW_EVENTS_MAX_LIMIT
-    return limit
+    return get_control_tower_config_service().save(db, payload)
 
 
 @router.get("/flow-events")
 def get_flow_events(
-    limit: int = _FLOW_EVENTS_DEFAULT_LIMIT,
+    limit: int = FLOW_EVENTS_DEFAULT_LIMIT,
     after_sequence: int | None = None,
     source: str | None = None,
     _token: TokenPayload = Depends(require_roles("doctor", "admin")),
 ) -> dict[str, object]:
-    from clara_api.core.flow_event_store import get_flow_event_store
-
-    safe_limit = _coerce_flow_events_limit(limit)
-    store = get_flow_event_store()
-    items = store.list_events(
-        limit=safe_limit,
+    return get_flow_event_stream_service().list_events(
+        limit=limit,
         after_sequence=after_sequence,
         source=source,
     )
-    return {
-        "items": items,
-        "limit": safe_limit,
-        "after_sequence": after_sequence,
-        "latest_sequence": store.latest_sequence(),
-        "source": source,
-    }
 
 
 @router.get("/flow-events/stream")
 async def stream_flow_events(
     request: Request,
-    limit: int = _FLOW_EVENTS_DEFAULT_LIMIT,
+    limit: int = FLOW_EVENTS_DEFAULT_LIMIT,
     after_sequence: int | None = None,
     source: str | None = None,
     heartbeat_seconds: int = 15,
     poll_interval_seconds: float = 1.0,
     _token: TokenPayload = Depends(require_roles("doctor", "admin")),
 ):
-    import asyncio
-    import json
-    import time
-
-    from fastapi.responses import StreamingResponse
-
-    from clara_api.core.flow_event_store import get_flow_event_store
-
-    safe_limit = _coerce_flow_events_limit(limit)
-    safe_heartbeat_seconds = 5 if heartbeat_seconds < 5 else heartbeat_seconds
-    safe_poll_interval = min(max(poll_interval_seconds, 0.2), 5.0)
-    store = get_flow_event_store()
-    last_sequence = after_sequence if after_sequence is not None else store.latest_sequence()
-
-    async def event_stream():
-        nonlocal last_sequence
-        last_heartbeat_at = time.monotonic()
-        yield ": connected\n\n"
-
-        while True:
-            if await request.is_disconnected():
-                break
-
-            new_items = store.list_events(
-                limit=safe_limit,
-                after_sequence=last_sequence,
-                source=source,
-            )
-            if new_items:
-                for item in new_items:
-                    sequence = item.get("sequence")
-                    if isinstance(sequence, int):
-                        last_sequence = sequence
-                    payload = json.dumps(item, ensure_ascii=False)
-                    yield f"id: {item.get('sequence')}\nevent: flow_event\ndata: {payload}\n\n"
-                last_heartbeat_at = time.monotonic()
-                continue
-
-            if time.monotonic() - last_heartbeat_at >= safe_heartbeat_seconds:
-                yield ": keepalive\n\n"
-                last_heartbeat_at = time.monotonic()
-            await asyncio.sleep(safe_poll_interval)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+    return get_flow_event_stream_service().stream_response(
+        request=request,
+        limit=limit,
+        after_sequence=after_sequence,
+        source=source,
+        heartbeat_seconds=heartbeat_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
