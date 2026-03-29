@@ -114,6 +114,37 @@ export type ControlTowerConfig = {
   rag_flow: ControlTowerRagFlow;
 };
 
+export type SystemFlowEventsRawResponse = {
+  items?: unknown;
+  latest_sequence?: unknown;
+  limit?: unknown;
+  source?: unknown;
+  [key: string]: unknown;
+};
+
+export type SystemFlowEvent = {
+  sequence: number;
+  timestamp: string;
+  source: string;
+  userId: string;
+  role: string;
+  intent: string;
+  modelUsed: string;
+  flowEventsMissing: boolean;
+  eventType: string;
+  stage: string;
+  status: string;
+  note: string;
+  sourceCount: number | null;
+  rawEvent: Record<string, unknown> | null;
+};
+
+export type SystemFlowEventsSnapshot = {
+  items: SystemFlowEvent[];
+  latestSequence: number;
+  source: string | null;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -234,6 +265,21 @@ export async function getSystemEcosystem(): Promise<SystemEcosystemRawResponse> 
 export async function getControlTowerConfig(): Promise<ControlTowerConfig> {
   const response = await api.get<ControlTowerConfig>("/system/control-tower/config");
   return response.data;
+}
+
+export async function getSystemFlowEvents(params?: {
+  limit?: number;
+  afterSequence?: number;
+  source?: string;
+}): Promise<SystemFlowEventsSnapshot> {
+  const response = await api.get<SystemFlowEventsRawResponse>("/system/flow-events", {
+    params: {
+      limit: params?.limit,
+      after_sequence: params?.afterSequence,
+      source: params?.source
+    }
+  });
+  return normalizeSystemFlowEvents(response.data);
 }
 
 export async function updateControlTowerConfig(payload: ControlTowerConfig): Promise<ControlTowerConfig> {
@@ -437,5 +483,66 @@ export function normalizeSystemEcosystem(data: SystemEcosystemRawResponse): Syst
     partnerHealth,
     dataTrustScores,
     federationAlerts
+  };
+}
+
+function parseFlowEventRow(value: unknown): SystemFlowEvent | null {
+  const row = asRecord(value);
+  if (!row) return null;
+
+  const sequence = asNumber(row.sequence);
+  if (sequence === null) return null;
+
+  const event = asRecord(row.event);
+  const source = asText(row.source) ?? "unknown";
+  const eventType = asText(event?.type) ?? "";
+  const stage =
+    asText(event?.stage) ??
+    asText(event?.stage_id) ??
+    asText(event?.step) ??
+    asText(event?.name) ??
+    (eventType ? eventType.replace(/_/g, " ") : "unknown");
+  const status =
+    asText(event?.status) ??
+    asText(event?.state) ??
+    (eventType === "flow_events_missing" ? "warning" : "pending");
+  const note =
+    asText(event?.note) ??
+    asText(event?.detail) ??
+    asText(event?.message) ??
+    (eventType === "flow_events_missing"
+      ? "Upstream chưa trả flow_events, đang dùng fallback signal."
+      : "");
+
+  return {
+    sequence: Math.trunc(sequence),
+    timestamp: asText(row.timestamp) ?? "",
+    source,
+    userId: asText(row.user_id) ?? "",
+    role: asText(row.role) ?? "",
+    intent: asText(row.intent) ?? "",
+    modelUsed: asText(row.model_used) ?? "",
+    flowEventsMissing: Boolean(row.flow_events_missing),
+    eventType,
+    stage,
+    status,
+    note,
+    sourceCount: asNumber(event?.source_count),
+    rawEvent: event
+  };
+}
+
+export function normalizeSystemFlowEvents(data: SystemFlowEventsRawResponse): SystemFlowEventsSnapshot {
+  const root = asRecord(data) ?? {};
+  const rows = asArray(root.items);
+  const items = rows
+    .map((row) => parseFlowEventRow(row))
+    .filter((row): row is SystemFlowEvent => Boolean(row))
+    .sort((a, b) => a.sequence - b.sequence);
+
+  return {
+    items,
+    latestSequence: Math.max(0, Math.trunc(asNumber(root.latest_sequence) ?? 0)),
+    source: asText(root.source)
   };
 }

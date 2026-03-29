@@ -6,6 +6,29 @@ class Settings(BaseSettings):
     app_name: str = "clara-ml"
     environment: str = "development"
     default_embedder: str = "bge-m3"
+    embedding_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "EMBEDDING_API_KEY",
+            "RAG_EMBEDDING_API_KEY",
+            "YESCALE_API_KEY",
+        ),
+    )
+    embedding_base_url: str = Field(
+        default="https://api.yescale.io/v1",
+        validation_alias=AliasChoices("EMBEDDING_BASE_URL", "RAG_EMBEDDING_BASE_URL"),
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-large",
+        validation_alias=AliasChoices("EMBEDDING_MODEL", "RAG_EMBEDDING_MODEL"),
+    )
+    embedding_timeout_seconds: float = Field(
+        default=6.0,
+        validation_alias=AliasChoices(
+            "EMBEDDING_TIMEOUT_SECONDS",
+            "RAG_EMBEDDING_TIMEOUT_SECONDS",
+        ),
+    )
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
         default="https://api.deepseek.com",
@@ -47,6 +70,14 @@ class Settings(BaseSettings):
     rag_external_connectors_enabled: bool = Field(
         default=True,
         validation_alias="RAG_EXTERNAL_CONNECTORS_ENABLED",
+    )
+    searxng_base_url: str = Field(
+        default="",
+        validation_alias="SEARXNG_BASE_URL",
+    )
+    searxng_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="SEARXNG_TIMEOUT_SECONDS",
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

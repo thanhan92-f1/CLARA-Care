@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 
@@ -23,6 +24,20 @@ app = FastAPI(title="CLARA ML Service", version="0.1.0")
 prompt_loader = PromptLoader(Path(__file__).resolve().parent / "prompts" / "templates")
 rag_pipeline = RagPipelineP1()
 router = P1RoleIntentRouter()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _flow_event(*, stage: str, status: str, source_count: int, note: str) -> dict[str, object]:
+    return {
+        "stage": stage,
+        "timestamp": _now_iso(),
+        "status": status,
+        "source_count": max(int(source_count), 0),
+        "note": note,
+    }
 
 
 def _as_bool(value: object, default: bool) -> bool:
@@ -132,6 +147,7 @@ def rag_poc(payload: dict) -> dict:
         "answer": result.answer,
         "model_used": result.model_used,
         "context_debug": result.context_debug,
+        "flow_events": result.flow_events,
     }
 
 
@@ -172,6 +188,14 @@ def routed_chat_infer(payload: dict) -> dict:
             ),
             "retrieved_ids": [],
             "model_used": "emergency-fastpath-v1",
+            "flow_events": [
+                _flow_event(
+                    stage="emergency_fastpath",
+                    status="completed",
+                    source_count=0,
+                    note="Emergency route triggered; retrieval and generation bypassed.",
+                )
+            ],
             "flow_applied": {
                 "role_router_enabled": role_router_enabled,
                 "intent_router_enabled": intent_router_enabled,
@@ -184,27 +208,30 @@ def routed_chat_infer(payload: dict) -> dict:
         }
 
     if not role_router_enabled:
-        route.role = role_hint if role_hint in {"normal", "researcher", "doctor"} else "normal"
+        route.role = (
+            role_hint if role_hint in {"normal", "researcher", "doctor", "admin"} else "normal"
+        )
 
     if not intent_router_enabled:
         default_by_role = {
             "normal": "symptom_triage",
             "researcher": "evidence_review",
             "doctor": "doctor_case_review",
+            "admin": "evidence_review",
         }
         route.intent = default_by_role.get(route.role, "symptom_triage")
         route.confidence = min(route.confidence, 0.6)
 
-        rag_result = rag_pipeline.run(
-            pii.redacted_text,
-            low_context_threshold=low_context_threshold,
-            deepseek_fallback_enabled=deepseek_fallback_enabled,
-            scientific_retrieval_enabled=scientific_retrieval_enabled,
-            web_retrieval_enabled=web_retrieval_enabled,
-            file_retrieval_enabled=file_retrieval_enabled,
-            rag_sources=rag_sources,
-            uploaded_documents=uploaded_documents,
-        )
+    rag_result = rag_pipeline.run(
+        pii.redacted_text,
+        low_context_threshold=low_context_threshold,
+        deepseek_fallback_enabled=deepseek_fallback_enabled,
+        scientific_retrieval_enabled=scientific_retrieval_enabled,
+        web_retrieval_enabled=web_retrieval_enabled,
+        file_retrieval_enabled=file_retrieval_enabled,
+        rag_sources=rag_sources,
+        uploaded_documents=uploaded_documents,
+    )
     factcheck = (
         run_fides_lite(answer=rag_result.answer, retrieved_context=rag_result.retrieved_context)
         if verification_enabled
@@ -218,6 +245,27 @@ def routed_chat_infer(payload: dict) -> dict:
             "Ban nen doi chieu them voi bac si/duoc si truoc khi ap dung."
         )
 
+    flow_events = list(rag_result.flow_events)
+    if verification_enabled:
+        if factcheck is not None:
+            flow_events.append(
+                _flow_event(
+                    stage="verification",
+                    status=factcheck.verdict,
+                    source_count=factcheck.evidence_count,
+                    note=factcheck.note,
+                )
+            )
+        else:
+            flow_events.append(
+                _flow_event(
+                    stage="verification",
+                    status="skipped",
+                    source_count=0,
+                    note="Verification was enabled but no factcheck result was produced.",
+                )
+            )
+
     return {
         "role": route.role,
         "intent": route.intent,
@@ -228,6 +276,7 @@ def routed_chat_infer(payload: dict) -> dict:
         "model_used": rag_result.model_used,
         "factcheck": factcheck.as_dict() if factcheck else None,
         "context_debug": rag_result.context_debug,
+        "flow_events": flow_events,
         "flow_applied": {
             "role_router_enabled": role_router_enabled,
             "intent_router_enabled": intent_router_enabled,

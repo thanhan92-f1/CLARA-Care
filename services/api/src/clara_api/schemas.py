@@ -195,3 +195,41 @@ class RagFlowConfig(BaseModel):
 class SystemControlTowerConfig(BaseModel):
     rag_sources: list[RagSourceEntry] = Field(default_factory=list)
     rag_flow: RagFlowConfig = Field(default_factory=RagFlowConfig)
+
+
+class KnowledgeSourceCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=2000)
+
+
+class KnowledgeSourceUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+
+
+class KnowledgeSourceResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    documents_count: int = 0
+
+
+class KnowledgeDocumentUpdateRequest(BaseModel):
+    is_active: bool
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    id: int
+    source_id: int
+    filename: str
+    content_type: str
+    size: int
+    preview: str
+    token_count: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime

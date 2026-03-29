@@ -35,7 +35,9 @@ class Query(Base):
     __tablename__ = "queries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
     role: Mapped[str] = mapped_column(String(32), index=True)
     user_input: Mapped[str] = mapped_column(Text)
     response_text: Mapped[str] = mapped_column(Text, default="")
@@ -116,3 +118,54 @@ class SystemSetting(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class KnowledgeSource(Base):
+    __tablename__ = "knowledge_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped[User] = relationship("User")
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
+        index=True,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    extracted_text: Mapped[str] = mapped_column(Text, default="")
+    preview: Mapped[str] = mapped_column(Text, default="")
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    source: Mapped[KnowledgeSource] = relationship("KnowledgeSource")
+    owner: Mapped[User] = relationship("User")

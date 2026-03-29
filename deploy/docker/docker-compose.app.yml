@@ -39,10 +39,34 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.yescale.vip/v1}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v3.2}
       DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-30}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      YESCALE_API_KEY: ${YESCALE_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.yescale.io/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
+      EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-6}
       EXTERNAL_DDI_ENABLED: ${EXTERNAL_DDI_ENABLED:-true}
       EXTERNAL_DDI_TIMEOUT_SECONDS: ${EXTERNAL_DDI_TIMEOUT_SECONDS:-1.5}
+      RAG_EXTERNAL_CONNECTORS_ENABLED: ${RAG_EXTERNAL_CONNECTORS_ENABLED:-true}
+      RAG_EXTERNAL_TIMEOUT_SECONDS: ${RAG_EXTERNAL_TIMEOUT_SECONDS:-4}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
+      SEARXNG_TIMEOUT_SECONDS: ${SEARXNG_TIMEOUT_SECONDS:-3}
+    depends_on:
+      - searxng
     ports:
       - "127.0.0.1:${APP_ML_PORT:-8110}:8010"
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      BASE_URL: ${SEARXNG_PUBLIC_BASE_URL:-http://127.0.0.1:8888/}
+      INSTANCE_NAME: CLARA SearXNG
+      UWSGI_WORKERS: 2
+      UWSGI_THREADS: 2
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "127.0.0.1:${APP_SEARXNG_PORT:-8888}:8080"
 
   web:
     build:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, List, Protocol
 
 from clara_ml.config import settings
@@ -17,6 +18,7 @@ class RagResult:
     model_used: str
     retrieved_context: List[dict[str, Any]] = field(default_factory=list)
     context_debug: dict[str, Any] = field(default_factory=dict)
+    flow_events: List[dict[str, Any]] = field(default_factory=list)
 
 
 class LlmGenerator(Protocol):
@@ -43,17 +45,21 @@ class RagPipelineP1:
                 Document(
                     id="byt-001",
                     text="Bo Y Te guidance on safe medicine use in older adults.",
-                    metadata={"source": "byt", "url": "", "score": 0.0},
+                    metadata={"source": "byt", "url": "https://moh.gov.vn/", "score": 0.0},
                 ),
                 Document(
                     id="duoc-thu-001",
                     text="National drug handbook warning for NSAID interactions.",
-                    metadata={"source": "duoc-thu", "url": "", "score": 0.0},
+                    metadata={"source": "duoc-thu", "url": "https://dav.gov.vn/", "score": 0.0},
                 ),
                 Document(
                     id="pubmed-001",
                     text="PubMed: medication adherence improves with reminders.",
-                    metadata={"source": "seed-pubmed", "url": "", "score": 0.0},
+                    metadata={
+                        "source": "seed-pubmed",
+                        "url": "https://pubmed.ncbi.nlm.nih.gov/",
+                        "score": 0.0,
+                    },
                 ),
             ]
         )
@@ -82,6 +88,34 @@ class RagPipelineP1:
     @staticmethod
     def _tokenize(text: str) -> set[str]:
         return {token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]{2,}", text.lower()) if token}
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _source_counts(docs: List[Document]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for doc in docs:
+            source = str((doc.metadata or {}).get("source") or "unknown")
+            counts[source] = counts.get(source, 0) + 1
+        return counts
+
+    def _flow_event(
+        self,
+        *,
+        stage: str,
+        status: str,
+        docs: List[Document],
+        note: str,
+    ) -> dict[str, Any]:
+        return {
+            "stage": stage,
+            "timestamp": self._now_iso(),
+            "status": status,
+            "source_count": len(self._source_counts(docs)),
+            "note": note,
+        }
 
     def _context_relevance(self, query: str, docs: List[Document]) -> float:
         query_tokens = self._tokenize(query)
@@ -169,14 +203,6 @@ class RagPipelineP1:
             return cls._safe_helpful_answer(query, docs)
         return cleaned
 
-    @staticmethod
-    def _source_counts(docs: List[Document]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for doc in docs:
-            source = str((doc.metadata or {}).get("source") or "unknown")
-            counts[source] = counts.get(source, 0) + 1
-        return counts
-
     def _build_context_debug(
         self,
         *,
@@ -227,6 +253,7 @@ class RagPipelineP1:
         threshold = max(0.0, min(1.0, low_context_threshold))
         used_stages: list[str] = ["internal_retrieval"]
         external_attempted = False
+        flow_events: list[dict[str, Any]] = []
 
         docs = self.retriever.retrieve_internal(
             query,
@@ -234,6 +261,15 @@ class RagPipelineP1:
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
         )
+        flow_events.append(
+            self._flow_event(
+                stage="internal_retrieval",
+                status="completed",
+                docs=docs,
+                note=f"Retrieved {len(docs)} internal document(s).",
+            )
+        )
+
         relevance_score = self._context_relevance(query, docs)
         low_context_before_external = relevance_score < threshold
 
@@ -244,6 +280,14 @@ class RagPipelineP1:
         ):
             external_attempted = True
             used_stages.append("external_scientific_retrieval")
+            flow_events.append(
+                self._flow_event(
+                    stage="external_scientific_retrieval",
+                    status="started",
+                    docs=docs,
+                    note="Low context detected; expanding retrieval via external medical connectors.",
+                )
+            )
             docs = self.retriever.retrieve(
                 query,
                 scientific_retrieval_enabled=True,
@@ -253,6 +297,14 @@ class RagPipelineP1:
                 uploaded_documents=uploaded_documents,
             )
             relevance_score = self._context_relevance(query, docs)
+            flow_events.append(
+                self._flow_event(
+                    stage="external_scientific_retrieval",
+                    status="completed",
+                    docs=docs,
+                    note=f"External retrieval merged; {len(docs)} document(s) retained after re-ranking.",
+                )
+            )
 
         has_relevant_context = relevance_score >= threshold
         ids = [d.id for d in docs]
@@ -261,6 +313,14 @@ class RagPipelineP1:
             try:
                 if not has_relevant_context and not deepseek_fallback_enabled:
                     used_stages.append("local_synthesis_no_fallback")
+                    flow_events.append(
+                        self._flow_event(
+                            stage="answer_synthesis",
+                            status="completed",
+                            docs=docs,
+                            note="Low-context fallback disabled; returned deterministic local synthesis.",
+                        )
+                    )
                     answer = self._postprocess_answer(
                         self._local_synthesis(query, docs), query, docs
                     )
@@ -278,9 +338,18 @@ class RagPipelineP1:
                             low_context_before_external=low_context_before_external,
                             external_attempted=external_attempted,
                         ),
+                        flow_events=flow_events,
                     )
 
                 used_stages.append("llm_generation")
+                flow_events.append(
+                    self._flow_event(
+                        stage="llm_generation",
+                        status="started",
+                        docs=docs,
+                        note="Generating answer with LLM.",
+                    )
+                )
                 prompt = (
                     self._build_prompt(query, docs)
                     if has_relevant_context
@@ -292,12 +361,20 @@ class RagPipelineP1:
                         "You are CLARA clinical assistant. Be concise, safe, and cite source ids."
                     ),
                 )
+                flow_events.append(
+                    self._flow_event(
+                        stage="llm_generation",
+                        status="completed",
+                        docs=docs,
+                        note="LLM answer generated successfully.",
+                    )
+                )
                 return RagResult(
                     query=query,
-                    retrieved_ids=ids if has_relevant_context else [],
+                    retrieved_ids=ids,
                     answer=self._postprocess_answer(response.content, query, docs),
                     model_used=response.model or self._llm_client.model,
-                    retrieved_context=self._serialize_context(docs if has_relevant_context else []),
+                    retrieved_context=self._serialize_context(docs),
                     context_debug=self._build_context_debug(
                         relevance=relevance_score,
                         threshold=threshold,
@@ -306,11 +383,28 @@ class RagPipelineP1:
                         low_context_before_external=low_context_before_external,
                         external_attempted=external_attempted,
                     ),
+                    flow_events=flow_events,
                 )
             except Exception:
                 used_stages.append("llm_error_fallback")
+                flow_events.append(
+                    self._flow_event(
+                        stage="llm_generation",
+                        status="error",
+                        docs=docs,
+                        note="LLM generation failed; switching to deterministic fallback.",
+                    )
+                )
 
         used_stages.append("local_synthesis")
+        flow_events.append(
+            self._flow_event(
+                stage="answer_synthesis",
+                status="completed",
+                docs=docs,
+                note="Returned deterministic local synthesis.",
+            )
+        )
         return RagResult(
             query=query,
             retrieved_ids=ids,
@@ -325,6 +419,7 @@ class RagPipelineP1:
                 low_context_before_external=low_context_before_external,
                 external_attempted=external_attempted,
             ),
+            flow_events=flow_events,
         )
 
 

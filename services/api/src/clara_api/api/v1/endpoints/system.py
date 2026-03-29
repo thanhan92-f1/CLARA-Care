@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,26 +28,74 @@ DEFAULT_CONTROL_TOWER_CONFIG = SystemControlTowerConfig(
             category="literature",
         ),
         RagSourceEntry(
-            id="rxnorm",
-            name="RxNorm",
+            id="europepmc",
+            name="Europe PMC",
             enabled=True,
             priority=2,
             weight=1.0,
-            category="drug_normalization",
+            category="literature",
+        ),
+        RagSourceEntry(
+            id="openalex",
+            name="OpenAlex",
+            enabled=True,
+            priority=3,
+            weight=1.0,
+            category="literature",
+        ),
+        RagSourceEntry(
+            id="crossref",
+            name="Crossref",
+            enabled=True,
+            priority=4,
+            weight=1.0,
+            category="literature",
+        ),
+        RagSourceEntry(
+            id="clinicaltrials",
+            name="ClinicalTrials.gov",
+            enabled=True,
+            priority=5,
+            weight=1.0,
+            category="clinical_trials",
         ),
         RagSourceEntry(
             id="openfda",
             name="openFDA",
             enabled=True,
-            priority=3,
+            priority=6,
             weight=1.0,
             category="drug_safety",
+        ),
+        RagSourceEntry(
+            id="dailymed",
+            name="DailyMed",
+            enabled=True,
+            priority=7,
+            weight=1.0,
+            category="drug_label",
+        ),
+        RagSourceEntry(
+            id="searxng",
+            name="SearXNG (self-host)",
+            enabled=True,
+            priority=8,
+            weight=1.0,
+            category="web_search",
+        ),
+        RagSourceEntry(
+            id="rxnorm",
+            name="RxNorm",
+            enabled=True,
+            priority=9,
+            weight=1.0,
+            category="drug_normalization",
         ),
         RagSourceEntry(
             id="davidrug",
             name="Cục Quản lý Dược (VN)",
             enabled=True,
-            priority=4,
+            priority=10,
             weight=1.0,
             category="vn_regulatory",
         ),
@@ -244,6 +292,33 @@ def get_sources_registry(
             "notes": "Nguồn bài báo y khoa cho RAG và trích dẫn.",
         },
         {
+            "id": "europepmc_no_key",
+            "name": "Europe PMC",
+            "group": "literature",
+            "phase": "public_no_key",
+            "key_required": False,
+            "status": "active",
+            "notes": "Nguồn bài báo open-access và biomedical literature.",
+        },
+        {
+            "id": "openalex_no_key",
+            "name": "OpenAlex",
+            "group": "literature",
+            "phase": "public_no_key",
+            "key_required": False,
+            "status": "active",
+            "notes": "Metadata học thuật mở cho truy xuất citation.",
+        },
+        {
+            "id": "crossref_no_key",
+            "name": "Crossref Works API",
+            "group": "literature",
+            "phase": "public_no_key",
+            "key_required": False,
+            "status": "active",
+            "notes": "Truy xuất DOI và metadata bài báo khoa học.",
+        },
+        {
             "id": "clinicaltrials_v2",
             "name": "ClinicalTrials.gov API v2",
             "group": "clinical_trials",
@@ -269,6 +344,15 @@ def get_sources_registry(
             "key_required": False,
             "status": "active",
             "notes": "Nguồn nhãn thuốc SPL của NLM/FDA.",
+        },
+        {
+            "id": "searxng_self_host",
+            "name": "SearXNG (self-host)",
+            "group": "web_search",
+            "phase": "public_no_key",
+            "key_required": False,
+            "status": "active",
+            "notes": "Web search meta-engine tự host, không cần API key.",
         },
         {
             "id": "rxnav_public",
@@ -456,3 +540,103 @@ def update_control_tower_config(
     db.commit()
     db.refresh(row)
     return SystemControlTowerConfig.model_validate(row.value_json or {})
+
+_FLOW_EVENTS_MAX_LIMIT = 500
+_FLOW_EVENTS_DEFAULT_LIMIT = 100
+
+
+def _coerce_flow_events_limit(limit: int) -> int:
+    if limit < 1:
+        return 1
+    if limit > _FLOW_EVENTS_MAX_LIMIT:
+        return _FLOW_EVENTS_MAX_LIMIT
+    return limit
+
+
+@router.get("/flow-events")
+def get_flow_events(
+    limit: int = _FLOW_EVENTS_DEFAULT_LIMIT,
+    after_sequence: int | None = None,
+    source: str | None = None,
+    _token: TokenPayload = Depends(require_roles("doctor", "admin")),
+) -> dict[str, object]:
+    from clara_api.core.flow_event_store import get_flow_event_store
+
+    safe_limit = _coerce_flow_events_limit(limit)
+    store = get_flow_event_store()
+    items = store.list_events(
+        limit=safe_limit,
+        after_sequence=after_sequence,
+        source=source,
+    )
+    return {
+        "items": items,
+        "limit": safe_limit,
+        "after_sequence": after_sequence,
+        "latest_sequence": store.latest_sequence(),
+        "source": source,
+    }
+
+
+@router.get("/flow-events/stream")
+async def stream_flow_events(
+    request: Request,
+    limit: int = _FLOW_EVENTS_DEFAULT_LIMIT,
+    after_sequence: int | None = None,
+    source: str | None = None,
+    heartbeat_seconds: int = 15,
+    poll_interval_seconds: float = 1.0,
+    _token: TokenPayload = Depends(require_roles("doctor", "admin")),
+):
+    import asyncio
+    import json
+    import time
+
+    from fastapi.responses import StreamingResponse
+
+    from clara_api.core.flow_event_store import get_flow_event_store
+
+    safe_limit = _coerce_flow_events_limit(limit)
+    safe_heartbeat_seconds = 5 if heartbeat_seconds < 5 else heartbeat_seconds
+    safe_poll_interval = min(max(poll_interval_seconds, 0.2), 5.0)
+    store = get_flow_event_store()
+    last_sequence = after_sequence if after_sequence is not None else store.latest_sequence()
+
+    async def event_stream():
+        nonlocal last_sequence
+        last_heartbeat_at = time.monotonic()
+        yield ": connected\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            new_items = store.list_events(
+                limit=safe_limit,
+                after_sequence=last_sequence,
+                source=source,
+            )
+            if new_items:
+                for item in new_items:
+                    sequence = item.get("sequence")
+                    if isinstance(sequence, int):
+                        last_sequence = sequence
+                    payload = json.dumps(item, ensure_ascii=False)
+                    yield f"id: {item.get('sequence')}\nevent: flow_event\ndata: {payload}\n\n"
+                last_heartbeat_at = time.monotonic()
+                continue
+
+            if time.monotonic() - last_heartbeat_at >= safe_heartbeat_seconds:
+                yield ": keepalive\n\n"
+                last_heartbeat_at = time.monotonic()
+            await asyncio.sleep(safe_poll_interval)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

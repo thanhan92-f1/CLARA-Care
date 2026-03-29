@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from clara_ml.factcheck import run_fides_lite
 from clara_ml.rag.pipeline import RagPipelineP1
+from clara_ml.routing import P1RoleIntentRouter
+
+router = P1RoleIntentRouter()
 
 
 @dataclass(frozen=True)
@@ -16,6 +20,7 @@ class PlanStep:
 @dataclass(frozen=True)
 class Citation:
     source_id: str
+    source: str
     title: str
     url: str
     relevance: str
@@ -54,68 +59,118 @@ def _build_plan_steps(topic: str, source_mode: str | None) -> list[PlanStep]:
     ]
 
 
-def _url_from_doc_id(doc_id: str) -> str:
-    lowered = doc_id.lower()
-    if lowered.startswith("pubmed-"):
-        suffix = lowered.split("pubmed-", 1)[1]
-        if suffix.isdigit():
-            return f"https://pubmed.ncbi.nlm.nih.gov/{suffix}/"
-        return "https://pubmed.ncbi.nlm.nih.gov/"
-    if lowered.startswith("europepmc-"):
-        return "https://europepmc.org/"
-    if lowered.startswith("uploaded-"):
-        return ""
+def _first_nonempty_text(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
     return ""
+
+
+def _safe_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("https://") or text.startswith("http://"):
+        return text
+    return ""
+
+
+def _compact_snippet(text: Any, *, max_len: int = 120) -> str:
+    snippet = " ".join(str(text or "").split()).strip()
+    if not snippet:
+        return ""
+    if len(snippet) <= max_len:
+        return snippet
+    return f"{snippet[: max_len - 3]}..."
+
+
+def _context_title(item: dict[str, Any], fallback: str) -> str:
+    explicit = _first_nonempty_text(
+        item.get("title"),
+        item.get("name"),
+        item.get("document_title"),
+        item.get("filename"),
+    )
+    if explicit:
+        return explicit
+
+    text = _compact_snippet(item.get("text"), max_len=84)
+    if text:
+        return text
+
+    return fallback
 
 
 def _build_citations(
     topic: str,
-    retrieved_ids: list[str],
+    retrieved_context: list[dict[str, Any]],
     uploaded_documents: list[dict[str, Any]],
 ) -> list[Citation]:
     citations: list[Citation] = []
+    seen_source_ids: set[str] = set()
 
-    for doc_id in retrieved_ids[:8]:
+    for idx, item in enumerate(retrieved_context[:10], start=1):
+        if not isinstance(item, dict):
+            continue
+
+        source_name = _first_nonempty_text(item.get("source"), "retrieved")
+        source_id = _first_nonempty_text(item.get("id"), f"{source_name}-{idx}")
+        source_key = source_id.lower()
+        if source_key in seen_source_ids:
+            continue
+        seen_source_ids.add(source_key)
+
+        title = _context_title(item, fallback=f"Retrieved evidence {idx}")
+        url = _safe_url(item.get("url"))
+        relevance = f"Retrieved context matched query '{topic}' from source '{source_name}'."
+        score = item.get("score")
+        if isinstance(score, (int, float)):
+            relevance = f"{relevance} Score={float(score):.4f}."
+
         citations.append(
             Citation(
-                source_id=doc_id,
-                title=f"Evidence: {doc_id}",
-                url=_url_from_doc_id(doc_id),
-                relevance=f"Matched to query '{topic}' via hybrid retrieval.",
-            )
-        )
-
-    for idx, doc in enumerate(uploaded_documents[:6], start=1):
-        file_id = str(doc.get("file_id") or doc.get("id") or f"uploaded-{idx}")
-        name = str(doc.get("filename") or doc.get("name") or file_id)
-        preview = str(doc.get("preview") or "").strip()
-        relevance = f"Uploaded document context ({name})"
-        if preview:
-            relevance = f"{relevance}: {preview[:120]}"
-        citations.append(
-            Citation(
-                source_id=f"uploaded-{file_id}",
-                title=name,
-                url="",
+                source_id=source_id,
+                source=source_name,
+                title=title,
+                url=url,
                 relevance=relevance,
             )
         )
 
-    if not citations:
-        citations = [
+    for idx, doc in enumerate(uploaded_documents[:8], start=1):
+        if not isinstance(doc, dict):
+            continue
+
+        source_name = _first_nonempty_text(doc.get("source"), "uploaded")
+        file_id = _first_nonempty_text(doc.get("file_id"), doc.get("id"), f"file-{idx}")
+        source_id = f"{source_name}-{file_id}"
+        source_key = source_id.lower()
+        if source_key in seen_source_ids:
+            continue
+        seen_source_ids.add(source_key)
+
+        title = _first_nonempty_text(
+            doc.get("filename"),
+            doc.get("name"),
+            doc.get("title"),
+            f"Uploaded document {idx}",
+        )
+        url = _safe_url(doc.get("url"))
+        preview = _compact_snippet(doc.get("preview") or doc.get("text"), max_len=120)
+        relevance = f"Uploaded document context from source '{source_name}'."
+        if preview:
+            relevance = f"{relevance} Preview: {preview}"
+
+        citations.append(
             Citation(
-                source_id="who-msh-001",
-                title="WHO medication safety resources",
-                url="https://www.who.int/teams/integrated-health-services/patient-safety",
-                relevance="Global baseline for medication safety principles.",
-            ),
-            Citation(
-                source_id="pubmed-adherence-001",
-                title="Medication adherence interventions review",
-                url="https://pubmed.ncbi.nlm.nih.gov/",
-                relevance="Evidence patterns for adherence and outcomes.",
-            ),
-        ]
+                source_id=source_id,
+                source=source_name,
+                title=title,
+                url=url,
+                relevance=relevance,
+            )
+        )
 
     return citations
 
@@ -123,11 +178,13 @@ def _build_citations(
 def run_research_tier2(payload: dict[str, Any]) -> dict:
     topic = _normalize_topic(payload)
     source_mode = str(payload.get("source_mode") or "").strip().lower() or None
+    role_hint = str(payload.get("role") or "").strip().lower() or None
     uploaded_documents_raw = payload.get("uploaded_documents")
     uploaded_documents: list[dict[str, Any]] = (
         uploaded_documents_raw if isinstance(uploaded_documents_raw, list) else []
     )
     rag_sources = payload.get("rag_sources")
+    route = router.route(topic, role_hint=role_hint)
 
     plan_steps = _build_plan_steps(topic, source_mode)
 
@@ -143,8 +200,26 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         uploaded_documents=uploaded_documents,
     )
 
-    citations = _build_citations(topic, rag_result.retrieved_ids, uploaded_documents)
-    fallback_used = rag_result.model_used.startswith("local-synth") or "fallback" in rag_result.model_used.lower()
+    citations = _build_citations(topic, rag_result.retrieved_context, uploaded_documents)
+    fallback_used = (
+        rag_result.model_used.startswith("local-synth")
+        or "fallback" in rag_result.model_used.lower()
+    )
+
+    factcheck_result = run_fides_lite(
+        answer=rag_result.answer, retrieved_context=rag_result.retrieved_context
+    )
+    policy_action = "allow" if factcheck_result.verdict == "pass" else "warn"
+    verification_state = "verified" if policy_action == "allow" else "warning"
+    verification_status = {
+        "state": verification_state,
+        "stage": factcheck_result.stage,
+        "verdict": factcheck_result.verdict,
+        "severity": factcheck_result.severity,
+        "confidence": factcheck_result.confidence,
+        "evidence_count": factcheck_result.evidence_count,
+        "note": factcheck_result.note,
+    }
 
     return {
         "metadata": {
@@ -154,11 +229,20 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 {"name": "plan", "status": "completed"},
                 {"name": "hybrid_retrieval", "status": "completed"},
                 {"name": "answer_synthesis", "status": "completed"},
+                {"name": "verification", "status": verification_state},
                 {"name": "citation_selection", "status": "completed"},
             ],
             "fallback_used": fallback_used,
             "source_mode": source_mode,
             "context_debug": rag_result.context_debug,
+            "policy_action": policy_action,
+            "verification_status": verification_status,
+            "routing": {
+                "role": route.role,
+                "intent": route.intent,
+                "confidence": route.confidence,
+                "emergency": route.emergency,
+            },
         },
         "plan_steps": [asdict(step) for step in plan_steps],
         "citations": [asdict(item) for item in citations],

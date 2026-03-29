@@ -1,15 +1,24 @@
 "use client";
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import HistoryPanel from "@/components/research/history-panel";
+import MarkdownAnswer from "@/components/research/markdown-answer";
+import ResearchRightRail from "@/components/research/right-rail";
 import PageShell from "@/components/ui/page-shell";
-import api from "@/lib/http-client";
 import { UserRole, getRole } from "@/lib/auth-store";
 import { ChatResponse, getChatIntentDebug, getChatReply } from "@/lib/chat";
+import api from "@/lib/http-client";
 import {
+  KnowledgeSource,
+  ResearchFlowEvent,
+  ResearchFlowStage,
   ResearchTier,
+  ResearchTier2Result,
   Tier2Citation,
   Tier2Step,
   UploadedResearchFile,
+  createKnowledgeSource,
+  listKnowledgeSources,
   normalizeResearchTier2,
   runResearchTier2,
   uploadResearchFile
@@ -30,28 +39,52 @@ type Tier1Result = {
 
 type Tier2Result = {
   tier: "tier2";
-  answer: string;
-  citations: Tier2Citation[];
-  steps: Tier2Step[];
-};
+} & ResearchTier2Result;
 
 type ResearchResult = Tier1Result | Tier2Result;
 
+type ConversationItem = {
+  id: string;
+  query: string;
+  result: ResearchResult;
+  createdAt: number;
+};
+
+type FlowVisibilityMode = "idle" | "flow-events" | "metadata-stages" | "local-fallback";
+
 const SUGGESTED_QUERIES = [
-  "Tóm tắt điểm chính từ các file đã tải lên về tăng huyết áp ở người cao tuổi",
-  "Liệt kê khuyến cáo điều trị có mức chứng cứ cao nhất trong tài liệu",
-  "So sánh guideline giữa các nguồn trong file về theo dõi đường huyết"
+  "So sánh DASH và Mediterranean cho bệnh tim mạch",
+  "Tóm tắt guideline tăng huyết áp mới nhất từ tài liệu đã tải",
+  "Liệt kê các cảnh báo tương tác thuốc quan trọng trong dữ liệu"
 ] as const;
 
-function formatFileSize(size?: number): string {
-  if (!size || Number.isNaN(size)) return "Không rõ dung lượng";
-  if (size < 1024) return `${size} B`;
-  const kb = size / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
-}
+const LOCAL_FLOW_BLUEPRINT: Array<Pick<ResearchFlowStage, "id" | "label" | "detail">> = [
+  {
+    id: "scope_question",
+    label: "Scope Question",
+    detail: "Chuẩn hóa truy vấn và xác định phạm vi phân tích."
+  },
+  {
+    id: "collect_evidence",
+    label: "Collect Evidence",
+    detail: "Tổng hợp nguồn từ knowledge source và tài liệu upload."
+  },
+  {
+    id: "synthesize_findings",
+    label: "Synthesize Findings",
+    detail: "Tổng hợp các điểm đồng thuận và bất đồng."
+  },
+  {
+    id: "verification",
+    label: "Verification",
+    detail: "Đối chiếu consistency và độ tin cậy của câu trả lời."
+  },
+  {
+    id: "final_response",
+    label: "Final Response",
+    detail: "Hoàn thiện câu trả lời có citation và metadata."
+  }
+];
 
 function mergeUploadedFiles(current: UploadedResearchFile[], incoming: UploadedResearchFile[]): UploadedResearchFile[] {
   const byId = new Map(current.map((item) => [item.id, item]));
@@ -68,14 +101,72 @@ function mergeUploadedFiles(current: UploadedResearchFile[], incoming: UploadedR
   return Array.from(byId.values());
 }
 
+function formatHistoryTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function conversationLabel(item: ConversationItem): string {
+  const normalized = item.query.replace(/\s+/g, " ").trim();
+  return normalized.length > 56 ? `${normalized.slice(0, 56)}...` : normalized;
+}
+
+function resolveFlowModeFromResult(result: Tier2Result): FlowVisibilityMode {
+  if (result.flowEvents.length) return "flow-events";
+  if (result.flowStages.length) return "metadata-stages";
+  return "idle";
+}
+
+function buildLocalFlowStages(activeIndex: number, terminalStatus?: "completed" | "failed"): ResearchFlowStage[] {
+  const cappedIndex = Math.max(0, Math.min(activeIndex, LOCAL_FLOW_BLUEPRINT.length - 1));
+
+  return LOCAL_FLOW_BLUEPRINT.map((stage, index) => {
+    let status: ResearchFlowStage["status"] = "pending";
+    if (index < cappedIndex) status = "completed";
+    if (index === cappedIndex) status = terminalStatus ?? "in_progress";
+    if (terminalStatus === "completed" && index <= cappedIndex) status = "completed";
+    if (terminalStatus === "failed" && index < cappedIndex) status = "completed";
+
+    return {
+      ...stage,
+      status,
+      source: "local"
+    };
+  });
+}
+
+function markTimelineFailed(stages: ResearchFlowStage[]): ResearchFlowStage[] {
+  if (!stages.length) {
+    return buildLocalFlowStages(0, "failed");
+  }
+
+  const activeIndex = stages.findIndex((stage) => stage.status === "in_progress");
+  if (activeIndex >= 0) {
+    return stages.map((stage, index) => (index === activeIndex ? { ...stage, status: "failed" } : stage));
+  }
+
+  const lastCompletedIndex = stages.reduce((acc, stage, index) => {
+    if (stage.status === "completed") return index;
+    return acc;
+  }, 0);
+
+  return stages.map((stage, index) => {
+    if (index < lastCompletedIndex) return stage;
+    if (index === lastCompletedIndex) return { ...stage, status: "failed" };
+    return stage;
+  });
+}
+
 export default function ResearchPage() {
   const [role, setRole] = useState<UserRole>("normal");
-  const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier2");
+  const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier1");
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const [history, setHistory] = useState<ConversationItem[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedResearchFile[]>([]);
   const [uploadedFileIds, setUploadedFileIds] = useState<string[]>([]);
@@ -83,38 +174,114 @@ export default function ResearchPage() {
   const [uploadError, setUploadError] = useState("");
   const [isDragActive, setIsDragActive] = useState(false);
 
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<number[]>([]);
+  const [newSourceName, setNewSourceName] = useState("");
+  const [isLoadingSources, setIsLoadingSources] = useState(true);
+  const [isCreatingSource, setIsCreatingSource] = useState(false);
+  const [sourceError, setSourceError] = useState("");
+
+  const [liveFlowStages, setLiveFlowStages] = useState<ResearchFlowStage[]>([]);
+  const [liveFlowEvents, setLiveFlowEvents] = useState<ResearchFlowEvent[]>([]);
+  const [flowMode, setFlowMode] = useState<FlowVisibilityMode>("idle");
+
+  const localFlowIndexRef = useRef(0);
+  const localFlowTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isDev = process.env.NODE_ENV !== "production";
   const roleLabel = useMemo(() => ROLE_LABELS[role] ?? ROLE_LABELS.normal, [role]);
-  const canRunProcess = uploadedFileIds.length > 0;
 
-  const processSteps = useMemo(
-    () => [
-      {
-        id: 1,
-        title: "Upload tài liệu",
-        detail: canRunProcess ? `${uploadedFileIds.length} file đã sẵn sàng` : "Chưa có tài liệu",
-        done: canRunProcess
-      },
-      {
-        id: 2,
-        title: "Đặt câu hỏi",
-        detail: lastQuery || "Nhập câu hỏi chính để bắt đầu phân tích",
-        done: Boolean(lastQuery)
-      },
-      {
-        id: 3,
-        title: "Nhận kết quả",
-        detail: result ? "Đã có câu trả lời + nguồn" : isSubmitting ? "Hệ thống đang xử lý" : "Chưa có kết quả",
-        done: Boolean(result)
-      }
-    ],
-    [canRunProcess, uploadedFileIds.length, lastQuery, result, isSubmitting]
+  const activeConversation = useMemo(
+    () => history.find((item) => item.id === activeConversationId) ?? null,
+    [history, activeConversationId]
   );
+
+  const activeTier2Result = useMemo(() => {
+    if (activeConversation?.result.tier === "tier2") return activeConversation.result;
+    if (result?.tier === "tier2") return result;
+    return null;
+  }, [activeConversation, result]);
+
+  const evidenceCitations = useMemo<Tier2Citation[]>(() => activeTier2Result?.citations ?? [], [activeTier2Result]);
+  const evidenceSteps = useMemo<Tier2Step[]>(() => activeTier2Result?.steps ?? [], [activeTier2Result]);
+
+  const persistedFlowStages = useMemo<ResearchFlowStage[]>(() => activeTier2Result?.flowStages ?? [], [activeTier2Result]);
+  const persistedFlowEvents = useMemo<ResearchFlowEvent[]>(() => activeTier2Result?.flowEvents ?? [], [activeTier2Result]);
+  const persistedFlowMode = useMemo<FlowVisibilityMode>(() => {
+    if (!activeTier2Result) return "idle";
+    return resolveFlowModeFromResult(activeTier2Result);
+  }, [activeTier2Result]);
+
+  const timelineStages = isSubmitting
+    ? liveFlowStages
+    : persistedFlowStages.length
+      ? persistedFlowStages
+      : liveFlowStages;
+  const timelineEvents = isSubmitting
+    ? liveFlowEvents
+    : persistedFlowEvents.length
+      ? persistedFlowEvents
+      : liveFlowEvents;
+  const timelineMode = isSubmitting ? flowMode : persistedFlowMode !== "idle" ? persistedFlowMode : flowMode;
+
+  const historyItems = useMemo(
+    () =>
+      history.map((item) => ({
+        id: item.id,
+        label: conversationLabel(item),
+        timestamp: formatHistoryTime(item.createdAt),
+        tier: item.result.tier,
+        active: item.id === activeConversationId
+      })),
+    [history, activeConversationId]
+  );
+
+  const stopLocalFlowSimulation = () => {
+    if (localFlowTimerRef.current !== null) {
+      window.clearInterval(localFlowTimerRef.current);
+      localFlowTimerRef.current = null;
+    }
+  };
+
+  const startLocalFlowSimulation = () => {
+    stopLocalFlowSimulation();
+    localFlowIndexRef.current = 0;
+    setFlowMode("local-fallback");
+    setLiveFlowEvents([]);
+    setLiveFlowStages(buildLocalFlowStages(0));
+
+    localFlowTimerRef.current = window.setInterval(() => {
+      localFlowIndexRef.current = Math.min(localFlowIndexRef.current + 1, LOCAL_FLOW_BLUEPRINT.length - 1);
+      setLiveFlowStages(buildLocalFlowStages(localFlowIndexRef.current));
+    }, 1300);
+  };
 
   useEffect(() => {
     setRole(getRole());
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopLocalFlowSimulation();
+    };
+  }, []);
+
+  useEffect(() => {
+    const loadSources = async () => {
+      setIsLoadingSources(true);
+      setSourceError("");
+      try {
+        const items = await listKnowledgeSources();
+        setKnowledgeSources(items);
+      } catch (loadError) {
+        setSourceError(loadError instanceof Error ? loadError.message : "Không thể tải knowledge sources.");
+      } finally {
+        setIsLoadingSources(false);
+      }
+    };
+
+    void loadSources();
   }, []);
 
   const uploadFiles = async (files: File[]) => {
@@ -158,9 +325,6 @@ export default function ResearchPage() {
     if (batchIds.length) {
       setUploadedFileIds((prev) => Array.from(new Set([...prev, ...batchIds])));
       setUploadedFiles((prev) => mergeUploadedFiles(prev, batchFiles));
-      setLastQuery("");
-      setResult(null);
-      setQuery("");
     }
 
     if (failedUploads.length) {
@@ -199,288 +363,259 @@ export default function ResearchPage() {
     setError("");
     setIsSubmitting(true);
     setLastQuery(message);
-    setResult(null);
 
     try {
+      let nextResult: ResearchResult;
+
       if (selectedTier === "tier1") {
+        stopLocalFlowSimulation();
+        setFlowMode("idle");
+        setLiveFlowStages([]);
+        setLiveFlowEvents([]);
+
         const response = await api.post<ChatResponse>("/chat", { message });
         const answer = getChatReply(response.data);
         if (!answer) throw new Error("Chưa có nội dung trả lời hợp lệ.");
 
-        setResult({ tier: "tier1", answer, debug: getChatIntentDebug(response.data) });
+        nextResult = { tier: "tier1", answer, debug: getChatIntentDebug(response.data) };
       } else {
-        const response = await runResearchTier2(message, { uploadedFileIds });
+        startLocalFlowSimulation();
+
+        const response = await runResearchTier2(message, { uploadedFileIds, sourceIds: selectedSourceIds });
         const normalized = normalizeResearchTier2(response);
         if (!normalized.answer && !normalized.citations.length) {
           throw new Error("Chưa có phản hồi chuyên sâu hợp lệ.");
         }
-        setResult({
+
+        const resolvedMode =
+          normalized.flowEvents.length > 0
+            ? "flow-events"
+            : normalized.flowStages.length > 0
+              ? "metadata-stages"
+              : "local-fallback";
+
+        const resolvedStages =
+          normalized.flowStages.length > 0
+            ? normalized.flowStages
+            : buildLocalFlowStages(LOCAL_FLOW_BLUEPRINT.length - 1, "completed");
+
+        setFlowMode(resolvedMode);
+        setLiveFlowEvents(normalized.flowEvents);
+        setLiveFlowStages(resolvedStages);
+
+        nextResult = {
           tier: "tier2",
-          answer: normalized.answer,
-          citations: normalized.citations,
-          steps: normalized.steps
-        });
+          ...normalized
+        };
       }
+
+      setResult(nextResult);
+
+      const conversation: ConversationItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        query: message,
+        result: nextResult,
+        createdAt: Date.now()
+      };
+
+      setHistory((prev) => [conversation, ...prev]);
+      setActiveConversationId(conversation.id);
       setQuery("");
     } catch (submitError) {
+      if (selectedTier === "tier2") {
+        setLiveFlowStages((prev) => markTimelineFailed(prev));
+        setFlowMode("local-fallback");
+      }
       setError(submitError instanceof Error ? submitError.message : "Không thể gửi câu hỏi.");
     } finally {
+      stopLocalFlowSimulation();
       setIsSubmitting(false);
+    }
+  };
+
+  const onOpenConversation = (conversationId: string) => {
+    const item = history.find((entry) => entry.id === conversationId);
+    if (!item) return;
+
+    setActiveConversationId(item.id);
+    setLastQuery(item.query);
+    setResult(item.result);
+    setSelectedTier(item.result.tier);
+    setError("");
+
+    if (item.result.tier === "tier2") {
+      setLiveFlowStages(item.result.flowStages);
+      setLiveFlowEvents(item.result.flowEvents);
+      setFlowMode(resolveFlowModeFromResult(item.result));
+    } else {
+      setLiveFlowStages([]);
+      setLiveFlowEvents([]);
+      setFlowMode("idle");
     }
   };
 
   const onRemoveUploadedFile = (fileId: string) => {
     setUploadedFileIds((prev) => prev.filter((id) => id !== fileId));
     setUploadedFiles((prev) => prev.filter((item) => item.id !== fileId));
-    setResult(null);
-    setLastQuery("");
-    setError("");
+    setUploadError("");
   };
 
   const onClearUploadedFiles = () => {
     setUploadedFileIds([]);
     setUploadedFiles([]);
-    setResult(null);
-    setLastQuery("");
-    setQuery("");
-    setError("");
     setUploadError("");
   };
 
+  const onToggleSource = (sourceId: number) => {
+    setSelectedSourceIds((prev) =>
+      prev.includes(sourceId) ? prev.filter((id) => id !== sourceId) : [...prev, sourceId]
+    );
+  };
+
+  const onCreateSource = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = newSourceName.trim();
+    if (!name || isCreatingSource) return;
+
+    setIsCreatingSource(true);
+    setSourceError("");
+    try {
+      const source = await createKnowledgeSource(name);
+      setKnowledgeSources((prev) => [source, ...prev]);
+      setSelectedSourceIds((prev) => [source.id, ...prev]);
+      setNewSourceName("");
+    } catch (createError) {
+      setSourceError(createError instanceof Error ? createError.message : "Không thể tạo knowledge source.");
+    } finally {
+      setIsCreatingSource(false);
+    }
+  };
+
+  const showDebugHints = role === "admin" || isDev;
+
   return (
     <PageShell title="Hỏi đáp y tế" variant="plain">
-      <div className="space-y-4">
-        <section className="glass-card rounded-3xl p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">clara research</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Upload trước, hỏi sau, trả lời có nguồn</h2>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                Luồng mới: tải tài liệu trước để hệ thống trích xuất ngữ cảnh, sau đó nhập một câu hỏi chính để nhận câu trả lời + citation.
-              </p>
-            </div>
-            <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-              Vai trò: {roleLabel}
-            </span>
-          </div>
-        </section>
+      <div className="grid gap-4 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)_minmax(20rem,24rem)] 2xl:grid-cols-[18rem_minmax(0,1fr)_24rem] 2xl:gap-5">
+        <aside className="order-2 space-y-4 xl:order-1 xl:sticky xl:top-24 xl:max-h-[calc(100dvh-7.5rem)] xl:overflow-y-auto xl:pr-1">
+          <HistoryPanel
+            items={historyItems}
+            suggestions={SUGGESTED_QUERIES}
+            onOpenConversation={onOpenConversation}
+            onPickSuggestion={setQuery}
+          />
+        </aside>
 
-        <section className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-[0_28px_90px_-54px_rgba(2,132,199,0.48)] dark:border-slate-700 dark:bg-slate-900/85">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 dark:text-sky-300">Bước 1</p>
-              <h3 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tải tài liệu nghiên cứu</h3>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                Kéo thả file vào vùng lớn bên dưới hoặc bấm chọn file. Hệ thống sẽ gọi endpoint
-                <span className="mx-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                  /research/upload-file
+        <section className="order-1 space-y-4 xl:order-2">
+          <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white via-slate-50/70 to-cyan-50/45 p-4 shadow-sm dark:border-slate-700 dark:from-slate-900/90 dark:via-slate-900/75 dark:to-cyan-950/35 sm:p-5">
+            <div className="pointer-events-none absolute -right-8 -top-8 h-36 w-36 rounded-full bg-sky-200/55 blur-2xl dark:bg-sky-800/35" />
+            <div className="pointer-events-none absolute -bottom-12 -left-6 h-32 w-40 rounded-full bg-cyan-100/60 blur-2xl dark:bg-cyan-900/25" />
+            <div className="relative flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">CLARA Research Workspace</p>
+                <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Chatbot y tế với luồng xử lý minh bạch</h2>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                  Bố cục tách rõ thread, composer, evidence và timeline để theo dõi quality của câu trả lời theo thời gian thực.
+                </p>
+              </div>
+              <div className="space-y-2 text-right">
+                <span className="inline-flex rounded-full border border-slate-300 bg-white/90 px-3 py-1 text-xs font-medium text-slate-700 dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-200">
+                  Vai trò: {roleLabel}
                 </span>
-                và lưu <span className="font-mono text-xs">uploaded_file_ids</span> để dùng cho tier2.
-              </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Sources: {selectedSourceIds.length} · Files: {uploadedFiles.length}
+                </p>
+              </div>
             </div>
-            {uploadedFiles.length ? (
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                {uploadedFiles.length} file đã upload
-              </span>
-            ) : null}
-          </div>
+          </section>
 
-          <div
-            onDrop={onDropUpload}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setIsDragActive(true);
-            }}
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setIsDragActive(true);
-            }}
-            onDragLeave={(event) => {
-              event.preventDefault();
-              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-                setIsDragActive(false);
-              }
-            }}
-            className={`mt-4 rounded-3xl border-2 border-dashed p-8 text-center transition ${
-              isDragActive
-                ? "border-sky-400 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
-                : "border-slate-300 bg-slate-50/80 dark:border-slate-600 dark:bg-slate-800/65"
-            }`}
-          >
-            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Kéo & thả tài liệu vào đây</p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Hỗ trợ PDF, DOC, DOCX, TXT, ảnh. Có thể chọn nhiều file.</p>
+          <section className="rounded-3xl border border-slate-200 bg-white/90 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 sm:p-5 lg:p-6">
+            <form onSubmit={onSubmit} className="space-y-3">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-700 dark:bg-slate-800/70 sm:p-4">
+                <label htmlFor="research-query" className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                  Composer
+                </label>
+                <textarea
+                  id="research-query"
+                  className="mt-2 min-h-[140px] w-full resize-none border-0 bg-transparent p-0 text-sm leading-7 text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-400"
+                  placeholder="Hỏi ngay một câu y tế bạn cần làm rõ..."
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  disabled={isSubmitting}
+                />
 
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
-              >
-                {isUploading ? "Đang upload..." : "Chọn file"}
-              </button>
-              {uploadedFiles.length ? (
-                <button
-                  type="button"
-                  onClick={onClearUploadedFiles}
-                  disabled={isUploading}
-                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Xóa toàn bộ
-                </button>
-              ) : null}
-            </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".pdf,.doc,.docx,.txt,image/*"
-              className="hidden"
-              onChange={onUploadInputChange}
-            />
-          </div>
-
-          {uploadError ? (
-            <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300">
-              {uploadError}
-            </p>
-          ) : null}
-
-          {uploadedFiles.length ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {uploadedFiles.map((file, index) => (
-                <div
-                  key={file.id}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-                >
-                  <span className="rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-sky-700 dark:bg-sky-900 dark:text-sky-200">
-                    [{index + 1}]
-                  </span>
-                  <span className="max-w-[200px] truncate" title={file.name}>
-                    {file.name}
-                  </span>
-                  <span className="text-slate-500 dark:text-slate-400">{formatFileSize(file.size)}</span>
-                  <button
-                    type="button"
-                    className="rounded-full px-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                    onClick={() => onRemoveUploadedFile(file.id)}
-                    aria-label={`Xóa file ${file.name}`}
-                  >
-                    x
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        {canRunProcess ? (
-          <>
-            <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Bước 2</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Process và trả lời</h3>
-
-              <ol className="mt-4 grid gap-2 md:grid-cols-3">
-                {processSteps.map((step) => (
-                  <li
-                    key={step.id}
-                    className={`rounded-2xl border px-3 py-2 ${
-                      step.done
-                        ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/50"
-                        : "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/70"
-                    }`}
-                  >
-                    <p
-                      className={`text-xs font-semibold uppercase tracking-wide ${
-                        step.done ? "text-emerald-700 dark:text-emerald-300" : "text-slate-500 dark:text-slate-400"
-                      }`}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading || isSubmitting}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
-                      Step {step.id}
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{step.title}</p>
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-600 dark:text-slate-300">{step.detail}</p>
-                  </li>
-                ))}
-              </ol>
+                      {isUploading ? "Đang upload..." : "Đính kèm"}
+                    </button>
 
-              <form onSubmit={onSubmit} className="mt-4 space-y-3">
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/70 sm:p-4">
-                  <textarea
-                    className="min-h-[112px] w-full resize-none border-0 bg-transparent p-0 text-sm leading-7 text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-0 dark:text-slate-100 dark:placeholder:text-slate-400"
-                    placeholder="Nhập câu hỏi chính để phân tích trên bộ tài liệu đã upload..."
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    disabled={isSubmitting}
-                  />
-
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
                     <fieldset className="inline-flex rounded-full border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
                       <legend className="sr-only">Chọn chế độ trả lời</legend>
                       <button
                         type="button"
                         onClick={() => setSelectedTier("tier1")}
-                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        className={[
+                          "rounded-full px-3 py-1 text-xs font-medium transition",
                           selectedTier === "tier1"
                             ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
                             : "text-slate-600 dark:text-slate-300"
-                        }`}
+                        ].join(" ")}
                       >
                         Nhanh
                       </button>
                       <button
                         type="button"
                         onClick={() => setSelectedTier("tier2")}
-                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        className={[
+                          "rounded-full px-3 py-1 text-xs font-medium transition",
                           selectedTier === "tier2"
                             ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
                             : "text-slate-600 dark:text-slate-300"
-                        }`}
+                        ].join(" ")}
                       >
                         Chuyên sâu
                       </button>
                     </fieldset>
-
-                    <button
-                      type="submit"
-                      disabled={isSubmitting || !query.trim()}
-                      className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
-                    >
-                      {isSubmitting ? "Đang xử lý..." : "Phân tích"}
-                    </button>
                   </div>
-                </div>
-              </form>
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                {SUGGESTED_QUERIES.map((item) => (
                   <button
-                    key={item}
-                    type="button"
-                    onClick={() => setQuery(item)}
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:border-sky-300 hover:text-sky-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-sky-400 dark:hover:text-sky-300"
+                    type="submit"
+                    disabled={isSubmitting || !query.trim()}
+                    className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                   >
-                    {item}
+                    {isSubmitting ? "Đang xử lý..." : "Gửi"}
                   </button>
-                ))}
-              </div>
-            </section>
+                </div>
 
-            <section className="mx-auto max-w-5xl space-y-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.doc,.docx,.txt,image/*"
+                  className="hidden"
+                  onChange={onUploadInputChange}
+                />
+              </div>
+            </form>
+
+            <div className="mt-4 space-y-3">
               {lastQuery ? (
-                <article className="flex justify-end">
-                  <div className="max-w-3xl rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Câu hỏi của bạn</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm leading-7 text-slate-800 dark:text-slate-100">{lastQuery}</p>
-                  </div>
+                <article className="rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Câu hỏi</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-7 text-slate-800 dark:text-slate-100">{lastQuery}</p>
                 </article>
               ) : null}
 
               {isSubmitting ? (
-                <article className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200">
+                <article className="rounded-3xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-sm text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200">
                   <span className="inline-flex items-center gap-2">
                     <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
-                    CLARA đang tổng hợp phản hồi...
+                    CLARA đang tổng hợp phản hồi và cập nhật timeline xử lý...
                   </span>
                 </article>
               ) : null}
@@ -488,101 +623,75 @@ export default function ResearchPage() {
               {result?.tier === "tier1" ? (
                 <article className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
                   <p className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">Trả lời nhanh</p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-900 dark:text-slate-100">{result.answer}</p>
+                  <div className="mt-2">
+                    <MarkdownAnswer answer={result.answer} citations={[]} />
+                  </div>
                 </article>
               ) : null}
 
               {result?.tier === "tier2" ? (
-                <>
-                  <article className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+                <article className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+                  <div className="flex flex-wrap items-center gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">Trả lời chuyên sâu</p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-900 dark:text-slate-100">{result.answer || "Chưa có nội dung."}</p>
-
-                    {result.citations.length ? (
-                      <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-700">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Citation bar</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {result.citations.map((citation, idx) => (
-                            <a
-                              key={`${citation.title}-${idx}`}
-                              href={`#citation-${idx + 1}`}
-                              className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 hover:border-sky-300 hover:text-sky-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-sky-400 dark:hover:text-sky-300"
-                            >
-                              <span className="rounded-full bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-700 dark:bg-sky-900 dark:text-sky-200">
-                                [{idx + 1}]
-                              </span>
-                              <span className="max-w-[220px] truncate" title={citation.source ?? citation.title}>
-                                {citation.source ?? citation.title}
-                              </span>
-                            </a>
-                          ))}
-                        </div>
-                      </div>
+                    {result.policyAction ? (
+                      <span
+                        className={[
+                          "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                          result.policyAction === "warn"
+                            ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                            : "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        ].join(" ")}
+                      >
+                        {result.policyAction === "warn" ? "Policy: Warn" : "Policy: Allow"}
+                      </span>
                     ) : null}
-                  </article>
+                    {typeof result.fallbackUsed === "boolean" ? (
+                      <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        {result.fallbackUsed ? "Fallback mode" : "RAG mode"}
+                      </span>
+                    ) : null}
+                  </div>
 
-                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 sm:p-5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Nguồn tham chiếu chi tiết</p>
-                    {result.citations.length ? (
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        {result.citations.map((citation, idx) => (
-                          <article
-                            id={`citation-${idx + 1}`}
-                            key={`${citation.title}-${idx}-detail`}
-                            className="scroll-mt-24 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/75"
-                          >
-                            <p className="text-xs font-semibold text-sky-700 dark:text-sky-300">[{idx + 1}]</p>
-                            <p className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{citation.title}</p>
-                            {(citation.source || citation.year) && (
-                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                {[citation.source, citation.year].filter(Boolean).join(" | ")}
-                              </p>
-                            )}
-                            {citation.snippet ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{citation.snippet}</p> : null}
-                            {citation.url ? (
-                              <a
-                                href={citation.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-2 inline-block text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300"
-                              >
-                                Mở nguồn
-                              </a>
-                            ) : null}
-                          </article>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Chưa có nguồn tham chiếu.</p>
-                    )}
-                  </section>
+                  <div className="mt-2">
+                    <MarkdownAnswer answer={result.answer || "Chưa có nội dung."} citations={result.citations} />
+                  </div>
 
-                  <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 sm:p-5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Các bước phân tích</p>
-                    {result.steps.length ? (
-                      <ol className="mt-3 space-y-2">
-                        {result.steps.map((step, idx) => (
-                          <li
-                            key={`${step.title}-${idx}`}
-                            className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/75"
-                          >
-                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                              {idx + 1}. {step.title}
-                            </p>
-                            {step.detail ? <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{step.detail}</p> : null}
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Chưa có chi tiết bước xử lý.</p>
-                    )}
-                  </section>
-                </>
+                  {result.citations.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {result.citations.map((citation, index) => (
+                        <a
+                          key={`answer-citation-${index + 1}`}
+                          href={citation.url || `#citation-${index + 1}`}
+                          target={citation.url ? "_blank" : undefined}
+                          rel={citation.url ? "noreferrer" : undefined}
+                          className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:border-sky-600 dark:hover:bg-sky-900/40"
+                        >
+                          [{index + 1}] {citation.source ?? citation.title}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {result.verificationStatus ? (
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200">
+                      <p className="font-semibold">
+                        FIDES-lite: {result.verificationStatus.verdict ?? "n/a"} | confidence:{" "}
+                        {typeof result.verificationStatus.confidence === "number"
+                          ? result.verificationStatus.confidence.toFixed(2)
+                          : "n/a"}
+                        {result.verificationStatus.severity ? ` | severity: ${result.verificationStatus.severity}` : ""}
+                      </p>
+                      {result.verificationStatus.note ? (
+                        <p className="mt-1 text-slate-600 dark:text-slate-300">{result.verificationStatus.note}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
               ) : null}
 
-              {isDev && result?.tier === "tier1" ? (
+              {showDebugHints && result?.tier === "tier1" ? (
                 <section className="rounded-3xl border border-dashed border-slate-300 bg-white p-4 dark:border-slate-600 dark:bg-slate-900/85">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Intent Debug (dev)</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Intent Debug</p>
                   <div className="mt-2 grid gap-1 text-sm text-slate-700 dark:text-slate-300">
                     <p>role: {result.debug?.role ?? "N/A"}</p>
                     <p>intent: {result.debug?.intent ?? "N/A"}</p>
@@ -591,19 +700,86 @@ export default function ResearchPage() {
                   </div>
                 </section>
               ) : null}
-            </section>
-          </>
-        ) : (
-          <section className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
-            Upload tối thiểu một tài liệu để mở bước process và kết quả chi tiết.
-          </section>
-        )}
 
-        {error ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300">
-            {error}
-          </div>
-        ) : null}
+              {result?.tier === "tier2" && evidenceSteps.length ? (
+                <section className="rounded-3xl border border-slate-200 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/85">
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Analysis Steps</p>
+                  <ol className="mt-3 space-y-2">
+                    {evidenceSteps.map((step, index) => (
+                      <li key={`${step.title}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/75">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{index + 1}. {step.title}</p>
+                        {step.detail ? <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{step.detail}</p> : null}
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              ) : null}
+            </div>
+          </section>
+
+          {error ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300">
+              {error}
+            </div>
+          ) : null}
+        </section>
+
+        <aside className="order-3 space-y-4 xl:sticky xl:top-24 xl:max-h-[calc(100dvh-7.5rem)] xl:overflow-y-auto xl:pl-1">
+          <ResearchRightRail
+            citations={evidenceCitations}
+            flowStages={timelineStages}
+            flowEvents={timelineEvents}
+            flowMode={timelineMode}
+            isSubmitting={isSubmitting}
+            knowledgeSources={knowledgeSources}
+            selectedSourceIds={selectedSourceIds}
+            isLoadingSources={isLoadingSources}
+            isCreatingSource={isCreatingSource}
+            sourceError={sourceError}
+            newSourceName={newSourceName}
+            onSourceNameChange={setNewSourceName}
+            onToggleSource={onToggleSource}
+            onCreateSource={onCreateSource}
+            uploadedFiles={uploadedFiles}
+            isUploading={isUploading}
+            isDragActive={isDragActive}
+            uploadError={uploadError}
+            onClearUploadedFiles={onClearUploadedFiles}
+            onRemoveUploadedFile={onRemoveUploadedFile}
+            onDropUpload={onDropUpload}
+            onDragOverUpload={(event) => {
+              event.preventDefault();
+              setIsDragActive(true);
+            }}
+            onDragEnterUpload={(event) => {
+              event.preventDefault();
+              setIsDragActive(true);
+            }}
+            onDragLeaveUpload={(event) => {
+              event.preventDefault();
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                setIsDragActive(false);
+              }
+            }}
+            showDebugHints={showDebugHints}
+            debugHints={{
+              roleLabel,
+              selectedTier,
+              conversationCount: history.length,
+              selectedSourceCount: selectedSourceIds.length,
+              uploadedFileCount: uploadedFiles.length,
+              flowMode: timelineMode,
+              policyAction: activeTier2Result?.policyAction,
+              fallbackUsed: activeTier2Result?.fallbackUsed,
+              verificationVerdict: activeTier2Result?.verificationStatus?.verdict,
+              verificationConfidence: activeTier2Result?.verificationStatus?.confidence,
+              routingRole: activeTier2Result?.debug.routing?.role,
+              routingIntent: activeTier2Result?.debug.routing?.intent,
+              routingConfidence: activeTier2Result?.debug.routing?.confidence,
+              pipeline: activeTier2Result?.debug.pipeline
+            }}
+          />
+        </aside>
       </div>
     </PageShell>
   );
