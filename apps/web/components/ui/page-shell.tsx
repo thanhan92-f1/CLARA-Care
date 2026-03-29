@@ -11,8 +11,8 @@ export default function PageShell({
 }) {
   const heading = (
     <div className="space-y-1.5">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-[2rem]">{title}</h1>
-      {description ? <p className="text-sm text-slate-600 sm:text-[15px]">{description}</p> : null}
+      <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-[2rem]">{title}</h1>
+      {description ? <p className="text-sm text-[var(--text-secondary)] sm:text-[15px]">{description}</p> : null}
     </div>
   );
 
@@ -28,7 +28,7 @@ export default function PageShell({
   return (
     <section className="space-y-4">
       {heading}
-      <div className="rounded-2xl border border-slate-200/90 bg-white/90 p-4 shadow-[0_14px_34px_-26px_rgba(15,23,42,0.5)] backdrop-blur sm:p-5">
+      <div className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-soft)] backdrop-blur sm:p-5">
         {children}
       </div>
     </section>

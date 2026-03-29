@@ -121,6 +121,17 @@ const NAV_ITEMS: NavigationItem[] = [
     }
   },
   {
+    href: "/admin/knowledge-sources",
+    label: "Knowledge Sources",
+    desc: "Dataset upload theo từng kho",
+    group: "admin",
+    roles: ["researcher", "doctor", "admin"],
+    page: {
+      title: "Knowledge Sources",
+      subtitle: "Tạo kho tri thức riêng, upload tài liệu và bật/tắt document cho RAG."
+    }
+  },
+  {
     href: "/admin/answer-flow",
     label: "Luồng trả lời",
     desc: "Điều phối phân tích và phản hồi",
