@@ -11,11 +11,6 @@ if ! command -v perl >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! command -v rg >/dev/null 2>&1; then
-  echo "[docs-check] ripgrep (rg) is required but not found."
-  exit 2
-fi
-
 echo "[docs-check] scanning docs/*.md (excluding docs/archive)..."
 
 errors=0
@@ -104,7 +99,13 @@ done < <(find docs -type f -name '*.md' ! -path 'docs/archive/*' | sort)
 while IFS= read -r hit; do
   echo "[docs-check][ERROR] absolute machine path found: $hit"
   errors=$((errors + 1))
-done < <(rg -n '/Users/|/home/|/private/' docs --glob '!docs/archive/**' || true)
+done < <(
+  if command -v rg >/dev/null 2>&1; then
+    rg -n '/Users/|/home/|/private/' docs --glob '!docs/archive/**' || true
+  else
+    grep -R -nE '/Users/|/home/|/private/' docs --include='*.md' --exclude-dir='archive' || true
+  fi
+)
 
 if (( errors > 0 )); then
   echo "[docs-check] FAILED with $errors issue(s)."
