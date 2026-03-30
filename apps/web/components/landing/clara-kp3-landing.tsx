@@ -70,6 +70,25 @@ function NeonButton({
   );
 }
 
+function NeonGhostButton({
+  href,
+  children,
+  className = "",
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex min-h-12 items-center justify-center rounded-xl border border-cyan-300/40 bg-[#071839]/72 px-6 py-3 text-center text-sm font-semibold uppercase tracking-[0.06em] text-cyan-100 transition hover:border-cyan-200/65 hover:bg-[#0a1f48] hover:text-white sm:min-h-14 sm:min-w-[178px] sm:text-base ${className}`}
+    >
+      {children}
+    </Link>
+  );
+}
+
 function RatingPill({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <p className={`clara-rating-pill ${className}`}>
@@ -91,8 +110,8 @@ export default function ClaraKp3Landing() {
       <div className="clara-grid-overlay pointer-events-none absolute inset-0 opacity-60" aria-hidden="true" />
       <div className="clara-ambient-layers pointer-events-none absolute inset-0" aria-hidden="true" />
 
-      <SectionContainer className="relative z-10 pt-6">
-        <header className="clara-nav-frame z-30 flex flex-col gap-3 rounded-2xl border border-blue-400/25 bg-[#07122a]/82 px-4 py-3 backdrop-blur min-[641px]:max-[1024px]:flex-row min-[641px]:max-[1024px]:items-center min-[641px]:max-[1024px]:justify-between min-[1025px]:max-[1535px]:flex-row min-[1025px]:max-[1535px]:items-center min-[1025px]:max-[1535px]:justify-between min-[1025px]:max-[1535px]:px-6 min-[1025px]:max-[1535px]:py-4 min-[1536px]:flex-row min-[1536px]:items-center min-[1536px]:justify-between min-[1536px]:px-8 min-[1536px]:py-5">
+      <SectionContainer className="relative z-30 pt-6">
+        <header className="clara-nav-frame sticky top-3 z-30 flex flex-col gap-3 rounded-[2rem] border border-blue-400/25 bg-[#07122a]/84 px-4 py-3 backdrop-blur-xl min-[641px]:max-[1024px]:flex-row min-[641px]:max-[1024px]:items-center min-[641px]:max-[1024px]:justify-between min-[1025px]:max-[1535px]:flex-row min-[1025px]:max-[1535px]:items-center min-[1025px]:max-[1535px]:justify-between min-[1025px]:max-[1535px]:px-6 min-[1025px]:max-[1535px]:py-4 min-[1536px]:flex-row min-[1536px]:items-center min-[1536px]:justify-between min-[1536px]:px-8 min-[1536px]:py-5">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-200">CLARA.CARE</p>
             <p className="text-sm text-slate-300">Clinical Agent for Retrieval & Analysis</p>
@@ -140,12 +159,20 @@ export default function ClaraKp3Landing() {
                 placeholder="Nhập email để nhận chiến lược triển khai CLARA"
                 aria-label="Email nhận chiến lược"
               />
-              <NeonButton href="/register" className="min-[641px]:max-[1024px]:w-auto min-[1025px]:max-[1535px]:px-8 min-[1536px]:px-10">
-                Nhận ngay
-              </NeonButton>
+              <div className="flex w-full flex-col gap-2 min-[641px]:max-[1024px]:w-auto min-[1025px]:max-[1535px]:w-auto">
+                <NeonButton href="/register" className="min-[641px]:max-[1024px]:w-auto min-[1025px]:max-[1535px]:px-8 min-[1536px]:px-10">
+                  Bắt đầu miễn phí
+                </NeonButton>
+                <NeonGhostButton href="/huong-dan" className="min-[641px]:max-[1024px]:min-h-12 min-[641px]:max-[1024px]:text-sm">
+                  Xem demo 2 phút
+                </NeonGhostButton>
+              </div>
             </div>
 
             <RatingPill>4.8/5 từ nhóm dùng thử nội bộ và đối tác đào tạo y khoa</RatingPill>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/90">
+              Không cần tích hợp phức tạp. Khởi tạo pilot trong 7 ngày.
+            </p>
           </div>
 
           <div className="mt-10 grid gap-3 min-[641px]:max-[1024px]:grid-cols-2 min-[1025px]:max-[1535px]:grid-cols-4 min-[1536px]:grid-cols-4 min-[1536px]:gap-5">
@@ -183,22 +210,24 @@ export default function ClaraKp3Landing() {
         </article>
       </SectionContainer>
 
-      <section className="clara-section relative z-10 mt-4 bg-[#eef4ff] text-slate-900">
+      <section className="clara-section relative z-10 mt-4 bg-transparent text-slate-100">
         <SectionContainer>
-          <article className="mx-auto max-w-4xl rounded-[2rem] border border-blue-200 bg-white px-5 py-9 shadow-[0_24px_60px_-40px_rgba(37,99,235,0.45)] min-[641px]:max-[1024px]:px-8 min-[641px]:max-[1024px]:py-12 min-[1025px]:max-[1535px]:max-w-5xl min-[1025px]:max-[1535px]:px-12 min-[1025px]:max-[1535px]:py-16 min-[1536px]:px-14 min-[1536px]:py-20">
-            <p className="text-sm font-semibold text-slate-500">Thư ngỏ từ đội ngũ CLARA</p>
-            <p className="mt-1 text-sm text-slate-500">Việt Nam, 2026</p>
-            <div className="my-4 h-1 w-28 rounded bg-gradient-to-r from-blue-600 to-cyan-400" />
-            <h2 className="text-2xl font-black uppercase leading-[1.02] min-[641px]:max-[1024px]:text-4xl min-[1025px]:max-[1535px]:text-5xl min-[1536px]:text-6xl">Chúng ta không thiếu thông tin y tế. Chúng ta thiếu một hệ thống an toàn để quyết định.</h2>
+          <article className="clara-glass-panel mx-auto max-w-4xl rounded-[2rem] border border-blue-200/30 bg-[#061530]/86 px-5 py-9 shadow-[0_24px_60px_-40px_rgba(37,99,235,0.55)] min-[641px]:max-[1024px]:px-8 min-[641px]:max-[1024px]:py-12 min-[1025px]:max-[1535px]:max-w-5xl min-[1025px]:max-[1535px]:px-12 min-[1025px]:max-[1535px]:py-16 min-[1536px]:px-14 min-[1536px]:py-20">
+            <p className="text-sm font-semibold text-blue-200">Thư ngỏ từ đội ngũ CLARA</p>
+            <p className="mt-1 text-sm text-blue-200/80">Việt Nam, 2026</p>
+            <div className="my-4 h-1 w-28 rounded bg-gradient-to-r from-cyan-400 to-blue-500" />
+            <h2 className="text-2xl font-black uppercase leading-[1.02] text-white min-[641px]:max-[1024px]:text-4xl min-[1025px]:max-[1535px]:text-5xl min-[1536px]:text-6xl">
+              Chúng ta không thiếu thông tin y tế. Chúng ta thiếu một hệ thống an toàn để quyết định.
+            </h2>
 
-            <div className="clara-copy-rhythm mt-6 space-y-5 text-slate-700">
+            <div className="clara-copy-rhythm mt-6 space-y-5 text-slate-200">
               {OPEN_LETTER_PARAGRAPHS.map((paragraph) => (
                 <p key={paragraph}>{paragraph}</p>
               ))}
             </div>
 
-            <div className="mt-8 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-7 text-blue-900">
-              <p className="font-bold uppercase">Tuyên ngôn vận hành CLARA</p>
+            <div className="mt-8 rounded-xl border border-cyan-300/35 bg-[#0a234a]/66 p-4 text-sm leading-7 text-cyan-100">
+              <p className="font-bold uppercase tracking-[0.1em]">Tuyên ngôn vận hành CLARA</p>
               <ul className="mt-3 space-y-2">
                 <li className="clara-medical-bullet">Không thay thế phán đoán chuyên môn của bác sĩ.</li>
                 <li className="clara-medical-bullet">Không đưa khuyến nghị nguy cơ cao nếu không đủ bằng chứng.</li>
@@ -206,8 +235,8 @@ export default function ClaraKp3Landing() {
               </ul>
             </div>
 
-            <p className="mt-6 text-base font-semibold text-slate-800">Thân mến,</p>
-            <p className="text-base text-slate-600">Nhóm sáng lập CLARA</p>
+            <p className="mt-6 text-base font-semibold text-slate-100">Thân mến,</p>
+            <p className="text-base text-slate-300">Nhóm sáng lập CLARA</p>
           </article>
         </SectionContainer>
       </section>
@@ -360,7 +389,7 @@ export default function ClaraKp3Landing() {
               </div>
 
               <div className="order-1 text-center min-[1025px]:order-2 min-[1025px]:text-left">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4f9a]">Clinical Safety System</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">Clinical Safety System</p>
                 <h2 className="clara-sub-display clara-med-heading mt-3 font-black">
                   Bạn đã quá mệt với những lời hứa suông trong health AI?
                 </h2>
@@ -414,7 +443,7 @@ export default function ClaraKp3Landing() {
             </div>
             <div className="clara-cta-stack mt-7 text-center">
               <NeonButton href="/register">60 phút tư vấn chiến lược miễn phí</NeonButton>
-              <RatingPill className="text-[#2c4b73]">4.8 sao từ cộng đồng dùng thử</RatingPill>
+              <RatingPill className="text-cyan-100">4.8 sao từ cộng đồng dùng thử</RatingPill>
             </div>
           </article>
         </SectionContainer>
@@ -512,9 +541,12 @@ export default function ClaraKp3Landing() {
       </SectionContainer>
 
       <div className="fixed bottom-5 right-5 z-40">
-        <span className="inline-flex items-center rounded-full border border-blue-300/40 bg-blue-600/90 px-4 py-2 text-sm font-bold text-white shadow-[0_16px_38px_-20px_rgba(37,99,235,0.9)]">
-          CLARA TRÊN HEALTH AI
-        </span>
+        <Link
+          href="/register"
+          className="inline-flex items-center rounded-full border border-cyan-300/45 bg-blue-600/92 px-4 py-2 text-sm font-bold text-white shadow-[0_16px_38px_-20px_rgba(37,99,235,0.9)] transition hover:-translate-y-0.5 hover:brightness-110"
+        >
+          Đặt lịch demo CLARA
+        </Link>
       </div>
     </main>
   );
