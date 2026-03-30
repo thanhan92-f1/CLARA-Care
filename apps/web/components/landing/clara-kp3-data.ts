@@ -1,0 +1,220 @@
+export type ServiceCard = {
+  tag: string;
+  title: string;
+  description: string;
+  bullets: string[];
+  cta: string;
+  href: string;
+};
+
+export type ModelStep = {
+  index: string;
+  title: string;
+  subtitle: string;
+  points: string[];
+};
+
+export type Testimonial = {
+  name: string;
+  role: string;
+  channel: string;
+  quote: string;
+};
+
+export type FaqItem = {
+  question: string;
+  answer: string;
+};
+
+export type Office = {
+  city: string;
+  detail: string;
+};
+
+export const HERO_METRICS = [
+  { label: "Bệnh không lây nhiễm tại Việt Nam", value: "~80%" },
+  { label: "Tỷ lệ DDI gộp ở người >=65 tuổi", value: "28.8%" },
+  { label: "Tự dùng kháng sinh (nghiên cứu 2025)", value: "35.8%" },
+  { label: "Tuân thủ THA tại cộng đồng", value: "49.8%" },
+] as const;
+
+export const OPEN_LETTER_PARAGRAPHS = [
+  "Chào bạn, chúng tôi xây CLARA vì một thực tế đang diễn ra mỗi ngày: người dân có rất nhiều thông tin y tế, nhưng thiếu một hệ thống đủ tin cậy để ra quyết định an toàn.",
+  "Ở nhà, một bệnh nhân mạn tính có thể dùng 4-5 thuốc cùng lúc. Chỉ cần một sai lệch nhỏ về liều, thời điểm, hoặc tương tác thuốc, rủi ro có thể tăng rất nhanh.",
+  "Trong bệnh viện và môi trường học thuật, vấn đề lại là quá tải tri thức. Tìm được bằng chứng đúng đã khó; đối chiếu guideline quốc tế với bối cảnh Việt Nam còn khó hơn.",
+  "CLARA không thay thế bác sĩ. CLARA được thiết kế để đóng vai trò co-pilot: truy xuất bằng chứng, hiển thị mức tin cậy, cảnh báo rủi ro và ghi rõ giới hạn hệ thống.",
+  "Mục tiêu của chúng tôi rất rõ: giúp bạn ra quyết định y tế nhanh hơn, có căn cứ hơn và an toàn hơn.",
+] as const;
+
+export const SERVICE_CARDS: ServiceCard[] = [
+  {
+    tag: "CLARA RESEARCH",
+    title: "Truy xuất bằng chứng y khoa đa nguồn",
+    description:
+      "Hỏi một lần, nhận câu trả lời có citation từ PubMed, ClinicalTrials, WHO ICD-11 và nguồn guideline nội địa được cấu hình trong hệ thống.",
+    bullets: [
+      "Agentic RAG + reranking để giảm nhiễu nguồn",
+      "Evidence panel có truy vết PMID/DOI",
+      "Phù hợp sinh viên y, bác sĩ trẻ, researcher"
+    ],
+    cta: "Mở CLARA Research",
+    href: "/research",
+  },
+  {
+    tag: "CLARA SELF-MED",
+    title: "An toàn dùng thuốc tại gia đình",
+    description:
+      "Số hóa tủ thuốc, nhận diện thuốc từ ảnh/OCR, kiểm tra tương tác bất lợi và nhắc lịch dùng thuốc theo ngữ cảnh cá nhân.",
+    bullets: [
+      "DDI Safe phát hiện tương tác nguy cơ cao",
+      "Nhắc liều theo thời gian thực",
+      "Giảm sai sót do quên liều, trùng hoạt chất"
+    ],
+    cta: "Mở CLARA Self-Med",
+    href: "/selfmed",
+  },
+] as const;
+
+export const MODEL_STEPS: ModelStep[] = [
+  {
+    index: "01",
+    title: "TRIAGE & ROUTER",
+    subtitle: "ĐÚNG NGƯỜI DÙNG, ĐÚNG Ý ĐỊNH",
+    points: [
+      "Role-based routing (patient / doctor / researcher)",
+      "Intent parsing trước khi truy xuất",
+      "Ưu tiên luồng an toàn trong tình huống nhạy cảm"
+    ],
+  },
+  {
+    index: "02",
+    title: "RETRIEVE & SYNTHESIZE",
+    subtitle: "RAG CÓ CẤU TRÚC VÀ KIỂM SOÁT NGUỒN",
+    points: [
+      "Truy xuất đa nguồn quốc tế + nội địa",
+      "Re-rank theo trust tier",
+      "Tổng hợp câu trả lời kèm bằng chứng"
+    ],
+  },
+  {
+    index: "03",
+    title: "VERIFY & POLICY GATE",
+    subtitle: "CHẶN RỦI RO TRƯỚC KHI HIỂN THỊ",
+    points: [
+      "FIDES-lite kiểm chứng phát biểu chính",
+      "Policy gate cho khuyến nghị nhạy cảm",
+      "Audit trail đầy đủ cho phiên rủi ro cao"
+    ],
+  },
+] as const;
+
+export const TESTIMONIALS: Testimonial[] = [
+  {
+    name: "Lê Minh Anh",
+    role: "Người chăm sóc tại nhà",
+    channel: "Hà Nội",
+    quote:
+      "Điều mình cần nhất là cảnh báo tương tác thuốc rõ ràng, không vòng vo. CLARA giúp mình tự tin hơn khi quản lý thuốc cho bố mẹ.",
+  },
+  {
+    name: "Trần Đức Phúc",
+    role: "Sinh viên Y6",
+    channel: "TP.HCM",
+    quote:
+      "Điểm mạnh là citation rất rõ. Khi làm seminar, mình tiết kiệm nhiều giờ vì không phải lần mò nguồn từng đoạn nữa.",
+  },
+  {
+    name: "BS. Nguyễn Hoài Nam",
+    role: "Bác sĩ Nội tổng quát",
+    channel: "Huế",
+    quote:
+      "Tôi dùng CLARA như một lớp hỗ trợ tra cứu nhanh trước hội chẩn. Hữu ích nhất là cơ chế nêu mức tin cậy và giới hạn.",
+  },
+  {
+    name: "Phạm Thảo Vy",
+    role: "Bệnh nhân tăng huyết áp",
+    channel: "Đà Nẵng",
+    quote:
+      "Nhắc lịch đúng giờ và tủ thuốc lưu theo tài khoản giúp mình giảm hẳn tình trạng quên thuốc.",
+  },
+  {
+    name: "Dương Quốc Bảo",
+    role: "Research Assistant",
+    channel: "Cần Thơ",
+    quote:
+      "Luồng Research của CLARA phù hợp cho công việc tổng hợp y văn nhanh, đặc biệt khi cần đối chiếu nhiều guideline.",
+  },
+  {
+    name: "Ngô Hạnh Sương",
+    role: "Điều dưỡng",
+    channel: "Gia Lâm",
+    quote:
+      "Medical Scribe giúp chuẩn hóa ghi chú nhanh hơn, đỡ áp lực hành chính khi ca trực dày.",
+  },
+] as const;
+
+export const FAQ_ITEMS: FaqItem[] = [
+  {
+    question: "CLARA có thay thế bác sĩ trong chẩn đoán và kê đơn không?",
+    answer:
+      "Không. CLARA là hệ thống hỗ trợ quyết định dựa trên bằng chứng, không thay thế khám chữa bệnh trực tiếp. Quyết định lâm sàng cuối cùng luôn thuộc về bác sĩ và cơ sở y tế.",
+  },
+  {
+    question: "CLARA giảm rủi ro tương tác thuốc như thế nào?",
+    answer:
+      "Hệ thống duy trì hồ sơ thuốc đang dùng, đối chiếu tương tác bất lợi và hiển thị cảnh báo theo mức độ ưu tiên. Các khuyến nghị nhạy cảm đi qua policy gate trước khi trả lời.",
+  },
+  {
+    question: "Dữ liệu cá nhân và dữ liệu sức khỏe có được bảo vệ không?",
+    answer:
+      "Có. CLARA áp dụng de-identification cho PII/PHI, kiểm soát phân quyền theo vai trò và lưu vết vận hành để phục vụ kiểm toán theo yêu cầu tuân thủ.",
+  },
+  {
+    question: "Nguồn tri thức của CLARA đến từ đâu?",
+    answer:
+      "CLARA sử dụng kiến trúc RAG với các nguồn như PubMed, ClinicalTrials.gov, WHO ICD-11, openFDA cùng các nguồn nội địa đã được thiết lập trong control tower.",
+  },
+  {
+    question: "Ai phù hợp để dùng CLARA ngay hôm nay?",
+    answer:
+      "Người bệnh mạn tính, người chăm sóc, sinh viên y khoa, bác sĩ trẻ và nhóm nghiên cứu cần truy xuất nhanh bằng chứng có trích dẫn minh bạch.",
+  },
+] as const;
+
+export const OFFICES: Office[] = [
+  {
+    city: "HÀ NỘI (VN)",
+    detail: "Toà P3 Pavilion, Vinhomes Ocean Park 1, Gia Lâm, HN",
+  },
+  {
+    city: "HUẾ (VN)",
+    detail: "Toà CT3, Chung cư Aranya, đường Dương Khuê, TP Huế",
+  },
+  {
+    city: "EMAIL",
+    detail: "clara@thiennn.icu",
+  },
+  {
+    city: "HOTLINE",
+    detail: "0853374247",
+  },
+] as const;
+
+export const PARTNER_STRIP = [
+  "PubMed",
+  "ClinicalTrials.gov",
+  "WHO ICD-11",
+  "openFDA",
+  "Dược thư VN",
+  "Bộ Y tế",
+  "DI & ADR",
+  "RxNorm",
+] as const;
+
+export const FINAL_CTA = {
+  heading: "SẴN SÀNG BIẾN DỮ LIỆU Y TẾ THÀNH QUYẾT ĐỊNH AN TOÀN HƠN?",
+  subheading:
+    "Bắt đầu với CLARA Research hoặc CLARA Self-Med trong vài phút. Theo dõi bằng chứng, cảnh báo rủi ro và hành động có kiểm soát trong cùng một nền tảng.",
+  button: "BẮT ĐẦU VỚI CLARA",
+  href: "/register",
+} as const;
