@@ -187,6 +187,14 @@ export const OFFICES: Office[] = [
     detail: "Toà P3 Pavilion, Vinhomes Ocean Park 1, Gia Lâm, HN",
   },
   {
+    city: "HÀ NỘI (VN)",
+    detail: "Toà S2.18, phân khu Sapphire, Vinhomes Ocean Park 1, quận Gia Lâm, TP Hà Nội",
+  },
+  {
+    city: "HÀ NỘI (VN)",
+    detail: "Toà E5, Khu đô thị Ciputra, Phú Thượng, Hà Nội",
+  },
+  {
     city: "HUẾ (VN)",
     detail: "Toà CT3, Chung cư Aranya, đường Dương Khuê, TP Huế",
   },

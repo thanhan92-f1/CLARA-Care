@@ -30,6 +30,25 @@ export type CouncilRunResult = {
   escalationReason: string;
 };
 
+export type CouncilCaseDraft = {
+  symptomsInput: string;
+  labsInput: string;
+  medicationsInput: string;
+  historyInput: string;
+  specialistCount: number;
+  selectedSpecialists: string[];
+};
+
+export type CouncilRunSnapshot = {
+  request: CouncilRunRequest;
+  result: CouncilRunResult;
+  raw: CouncilRunRawResponse;
+  createdAt: string;
+};
+
+const COUNCIL_DRAFT_KEY = "clara.council.draft.v1";
+const COUNCIL_RESULT_KEY = "clara.council.result.v1";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -291,4 +310,46 @@ export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilR
     isEmergency,
     escalationReason
   };
+}
+
+function readStorageJson<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageJson<T>(key: string, value: T): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+export function loadCouncilDraft(): CouncilCaseDraft | null {
+  return readStorageJson<CouncilCaseDraft>(COUNCIL_DRAFT_KEY);
+}
+
+export function saveCouncilDraft(draft: CouncilCaseDraft): void {
+  writeStorageJson(COUNCIL_DRAFT_KEY, draft);
+}
+
+export function clearCouncilDraft(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(COUNCIL_DRAFT_KEY);
+}
+
+export function loadCouncilSnapshot(): CouncilRunSnapshot | null {
+  return readStorageJson<CouncilRunSnapshot>(COUNCIL_RESULT_KEY);
+}
+
+export function saveCouncilSnapshot(snapshot: CouncilRunSnapshot): void {
+  writeStorageJson(COUNCIL_RESULT_KEY, snapshot);
+}
+
+export function clearCouncilSnapshot(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(COUNCIL_RESULT_KEY);
 }

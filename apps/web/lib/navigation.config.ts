@@ -132,6 +132,17 @@ const NAV_ITEMS: NavigationItem[] = [
     }
   },
   {
+    href: "/admin/source-hub",
+    label: "Source Hub",
+    desc: "Cào dữ liệu chuẩn y khoa",
+    group: "admin",
+    roles: ["researcher", "doctor", "admin"],
+    page: {
+      title: "Source Hub y khoa",
+      subtitle: "Đồng bộ PubMed, RxNorm, openFDA và DAVIDrug vào kho tri thức quản trị."
+    }
+  },
+  {
     href: "/admin/answer-flow",
     label: "Luồng trả lời",
     desc: "Điều phối phân tích và phản hồi",

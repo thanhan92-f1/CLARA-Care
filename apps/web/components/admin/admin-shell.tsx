@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { ReactNode } from "react";
 
-export type AdminTabKey = "overview" | "rag-sources" | "knowledge-sources" | "answer-flow" | "observability";
+export type AdminTabKey =
+  | "overview"
+  | "rag-sources"
+  | "knowledge-sources"
+  | "source-hub"
+  | "answer-flow"
+  | "observability";
 
 type AdminShellProps = {
   activeTab: AdminTabKey;
@@ -14,6 +20,7 @@ const ADMIN_TABS: Array<{ key: AdminTabKey; href: string; label: string }> = [
   { key: "overview", href: "/admin/overview", label: "Overview" },
   { key: "rag-sources", href: "/admin/rag-sources", label: "RAG Sources" },
   { key: "knowledge-sources", href: "/admin/knowledge-sources", label: "Knowledge" },
+  { key: "source-hub", href: "/admin/source-hub", label: "Source Hub" },
   { key: "answer-flow", href: "/admin/answer-flow", label: "Answer Flow" },
   { key: "observability", href: "/admin/observability", label: "Observability" }
 ];
@@ -60,7 +67,7 @@ export default function AdminShell({ activeTab, title, description, children }: 
         className="rounded-[1.4rem] border border-slate-200/90 bg-white/85 p-2.5 shadow-soft dark:border-slate-700 dark:bg-slate-900/85"
         aria-label="Admin navigation"
       >
-        <ul className="flex w-max min-w-full gap-2.5 overflow-x-auto pb-1 sm:grid sm:w-full sm:grid-cols-5 sm:overflow-visible sm:pb-0">
+        <ul className="flex w-max min-w-full gap-2.5 overflow-x-auto pb-1 sm:grid sm:w-full sm:grid-cols-6 sm:overflow-visible sm:pb-0">
           {ADMIN_TABS.map((tab, index) => {
             const isActive = tab.key === activeTab;
             return (

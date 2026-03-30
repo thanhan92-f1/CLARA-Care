@@ -303,3 +303,47 @@ class KnowledgeDocumentResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+SourceHubSourceKey = Literal["pubmed", "rxnorm", "openfda", "davidrug"]
+
+
+class SourceHubCatalogEntry(BaseModel):
+    key: SourceHubSourceKey
+    label: str
+    description: str
+    docs_url: str | None = None
+    default_query: str | None = None
+    supports_live_sync: bool = True
+
+
+class SourceHubRecord(BaseModel):
+    id: str
+    source: SourceHubSourceKey
+    title: str
+    url: str | None = None
+    snippet: str | None = None
+    external_id: str | None = None
+    query: str | None = None
+    published_at: str | None = None
+    synced_at: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class SourceHubRecordsResponse(BaseModel):
+    records: list[SourceHubRecord] = Field(default_factory=list)
+
+
+class SourceHubSyncRequest(BaseModel):
+    source: SourceHubSourceKey
+    query: str = Field(min_length=1, max_length=512)
+    limit: int = Field(default=12, ge=1, le=100)
+
+
+class SourceHubSyncResponse(BaseModel):
+    source: SourceHubSourceKey
+    query: str
+    fetched: int = 0
+    stored: int = 0
+    records: list[SourceHubRecord] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

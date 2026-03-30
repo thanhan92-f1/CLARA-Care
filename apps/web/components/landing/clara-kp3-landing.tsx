@@ -534,6 +534,8 @@ export default function ClaraKp3Landing() {
             <div>
               <p className="font-semibold uppercase tracking-[0.12em] text-blue-200">Liên hệ nhanh</p>
               <p className="mt-3 leading-7">Toà P3 Pavilion, Vinhomes Ocean Park 1, Gia Lâm, HN</p>
+              <p className="mt-2 leading-7">Toà S2.18, phân khu Sapphire, Vinhomes Ocean Park 1, quận Gia Lâm, TP Hà Nội</p>
+              <p className="mt-2 leading-7">Toà E5, Khu đô thị Ciputra, Phú Thượng, Hà Nội</p>
               <p className="mt-2 leading-7">Toà CT3, Chung cư Aranya, đường Dương Khuê, TP Huế</p>
             </div>
           </footer>
