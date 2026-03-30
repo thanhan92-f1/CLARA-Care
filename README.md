@@ -6,7 +6,7 @@ Tài liệu này mô tả phần hạ tầng/devops cho Phase 0 để đội API
 
 - Local infra stack bằng Docker Compose.
 - App stack Docker gồm `web + api + ml`.
-- CI trên Pull Request chạy `ruff` + `mypy` + `pytest`.
+- CI trên Pull Request chạy `docs-check` + `ruff` + `mypy` + `pytest`.
 - Make targets chuẩn cho dev flow.
 - Pre-commit hooks để giữ quality gate trước khi push.
 
@@ -74,11 +74,14 @@ make docker-app-down
 - `make lint`: `ruff check services scripts tests`.
 - `make type-check`: `mypy services --ignore-missing-imports`.
 - `make test`: `pytest -q`.
+- `make docs-check`: kiểm tra link docs và tham chiếu `docs/...` bị gãy.
 - `make docker-logs`: tail logs toàn bộ infra.
 
 ## 7. CI Quality Gate
 
-Workflow: `.github/workflows/ci.yml`
+Pipeline chính: `azure-pipelines.yml` (Azure DevOps)
+
+Workflow GitHub (nếu vẫn dùng song song): `.github/workflows/ci.yml`
 
 Trigger:
 
@@ -89,9 +92,10 @@ Các bước:
 
 1. Setup Python 3.11
 2. Install tooling (`ruff`, `mypy`, `pytest`)
-3. Run `ruff`
-4. Run `mypy`
-5. Run `pytest`
+3. Run `docs-check`
+4. Run `ruff`
+5. Run `mypy`
+6. Run `pytest`
 
 ## 8. Pre-commit
 

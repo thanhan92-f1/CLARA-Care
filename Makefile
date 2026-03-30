@@ -2,7 +2,7 @@ SHELL := /bin/zsh
 COMPOSE_FILE := deploy/docker/docker-compose.yml
 APP_COMPOSE_FILE := deploy/docker/docker-compose.app.yml
 
-.PHONY: help setup-env check-env docker-up docker-down docker-logs docker-ps docker-app-up docker-app-down docker-app-logs docker-app-ps dev-api dev-web dev-ml lint type-check test precommit-install
+.PHONY: help setup-env check-env docker-up docker-down docker-logs docker-ps docker-app-up docker-app-down docker-app-logs docker-app-ps dev-api dev-web dev-ml lint type-check test docs-check precommit-install
 
 help:
 	@echo "CLARA P0 Make targets"
@@ -22,6 +22,7 @@ help:
 	@echo "  lint              Run ruff"
 	@echo "  type-check        Run mypy"
 	@echo "  test              Run pytest"
+	@echo "  docs-check        Validate docs links and docs path references"
 	@echo "  precommit-install Install git pre-commit hooks"
 
 setup-env:
@@ -104,6 +105,9 @@ test:
 	else \
 		echo "No test directories found."; \
 	fi
+
+docs-check:
+	@bash scripts/docs/check-docs-links.sh
 
 precommit-install:
 	pre-commit install

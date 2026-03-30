@@ -767,24 +767,15 @@ gantt
 
 ## 13.1 Tài liệu nội bộ CLARA
 
-1. `docs/architecture/clara-platform-architecture.md`  
+1. `docs/index.md`  
 2. `docs/architecture/clara-runtime-and-routing.md`  
-3. `docs/proposal/clara-master-proposal.md`  
-4. `docs/proposal/clara-research-proposal.md`  
-5. `docs/proposal/clara-self-med-proposal.md`  
-6. `docs/proposal/feature-planning-and-roadmap.md`  
-7. `docs/research/market-need-and-regulatory-research.md`  
-8. `docs/research/multimodal-rag-and-data-connectors-research.md`  
-9. `docs/research/medical-slm-and-safety-research.md`  
-10. `docs/research/risk-deep-dive-and-mitigation.md`  
-11. `docs/research/trusted-sources-and-api-access-plan.md`  
-12. `docs/research/2026-03-29-competitive-chatflow-rag-ddi-webresearch.md`  
-13. `docs/research/2026-03-29-clara-research-flow-deepdive.md`  
-14. `docs/research/competitive-selfmed-and-pillbox-apps-2026-03-25.md`  
-15. `docs/implementation-plan/phase-00-to-06-master-plan.md`  
-16. `docs/implementation-plan/workstream-clara-research.md`  
-17. `docs/implementation-plan/workstream-clara-self-med.md`  
-18. `docs/implementation-plan/system-control-tower-dashboard-plan.md`  
+3. `docs/proposal/clara-full-proposal-2026-03-29.md`  
+4. `docs/implementation-plan/readme.md`  
+5. `docs/implementation-plan/round2-14-day-execution-checklist-2026-03-30.md`  
+6. `docs/research/market-need-and-regulatory-research.md`  
+7. `docs/research/risk-deep-dive-and-mitigation.md`  
+
+Ghi chú: Các tài liệu nội bộ lịch sử/deep-dive đã được lưu trữ tại `docs/archive/2026-03-30-cleanup/`.
 
 ## 13.2 Tài liệu kỹ thuật và nguồn chính thức
 
