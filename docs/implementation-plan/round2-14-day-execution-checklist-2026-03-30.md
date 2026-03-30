@@ -14,21 +14,24 @@
 
 ## Ngày 1 (30/03/2026) - Chốt contract liên thông
 Mục tiêu: Đóng băng contract kỹ thuật để tránh sửa dây chuyền.
-- [ ] Chốt schema chung: `policy_action`, `fallback_used`, `source_errors`, `attributions`.
-- [ ] Chốt schema consent: `consent_version`, `accepted_at`, `user_id`.
-- [ ] Chốt cờ runtime: `external_ddi_enabled`.
-- [ ] Chốt KPI Gate và tiêu chí Go/No-Go.
+- [x] Chốt schema chung: `policy_action`, `fallback_used`, `source_errors`, `attributions`. (đã chốt `attributions` là canonical; giữ `attribution` singular ở chế độ tương thích ngược)
+- [x] Chốt schema consent: `consent_version`, `accepted_at`, `user_id`. (`user_id` đã vào response contract)
+- [x] Chốt cờ runtime: `external_ddi_enabled`.
+- [x] Chốt KPI Gate và tiêu chí Go/No-Go.
 Tệp liên quan:
+- `docs/implementation-plan/day1-unified-contract-2026-03-30.md`
 - `services/api/src/clara_api/schemas.py`
 - `services/ml/src/clara_ml/main.py`
 - `services/ml/src/clara_ml/agents/careguard.py`
 - `services/api/src/clara_api/api/v1/endpoints/system.py`
 Lệnh kiểm tra:
 ```bash
-rg -n "policy_action|fallback_used|source_errors|attributions|consent_version|external_ddi_enabled" services/api/src services/ml/src
+rg -n "policy_action|fallback_used|source_errors|attributions|consent_version|accepted_at|user_id|external_ddi_enabled" services/api/src services/ml/src apps/web/lib || \
+grep -RIn "policy_action\|fallback_used\|source_errors\|attributions\|consent_version\|accepted_at\|user_id\|external_ddi_enabled" services/api/src services/ml/src apps/web/lib
 ```
 Tiêu chí hoàn thành:
-- [ ] Có tài liệu contract thống nhất, không mâu thuẫn giữa API/ML/Web.
+- [x] Có tài liệu contract thống nhất, không mâu thuẫn giữa API/ML/Web.
+- [x] Có quy ước tương thích ngược (`attribution` singular -> `attributions` canonical).
 
 ## Ngày 2 (31/03/2026) - Migration DB + Model Consent
 Mục tiêu: Có lưu vết consent dạng persistent.

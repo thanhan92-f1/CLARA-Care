@@ -26,6 +26,7 @@ def test_medical_consent_status_and_accept_flow() -> None:
     status_payload = status_response.json()
     assert status_payload["consent_type"] == "medical_disclaimer"
     assert status_payload["accepted"] is False
+    assert isinstance(status_payload["user_id"], int)
 
     accept_response = client.post(
         "/api/v1/auth/consent",
@@ -35,6 +36,7 @@ def test_medical_consent_status_and_accept_flow() -> None:
     assert accept_response.status_code == 200
     accept_payload = accept_response.json()
     assert accept_payload["consent_type"] == "medical_disclaimer"
+    assert accept_payload["user_id"] == status_payload["user_id"]
     assert accept_payload["consent_version"] == status_payload["required_version"]
     assert accept_payload["accepted_at"]
 
@@ -45,6 +47,7 @@ def test_medical_consent_status_and_accept_flow() -> None:
     assert verify_response.status_code == 200
     verify_payload = verify_response.json()
     assert verify_payload["accepted"] is True
+    assert verify_payload["user_id"] == status_payload["user_id"]
     assert verify_payload["accepted_version"] == status_payload["required_version"]
     assert verify_payload["accepted_at"]
 

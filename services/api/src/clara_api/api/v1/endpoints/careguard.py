@@ -273,7 +273,7 @@ def _attach_careguard_attribution(
     citations = _normalize_citation_rows(response.get("citations"))
     if "citations" not in response:
         response["citations"] = citations
-    response["attribution"] = {
+    attribution = {
         "channel": "careguard",
         "mode": "external_plus_local" if external_ddi_enabled else "local_only",
         "source_count": len(_default_careguard_sources(external_ddi_enabled)),
@@ -281,6 +281,8 @@ def _attach_careguard_attribution(
         "sources": _default_careguard_sources(external_ddi_enabled),
         "citations": citations,
     }
+    response["attributions"] = [attribution]
+    response["attribution"] = attribution
     return response
 
 

@@ -4,6 +4,7 @@ export type ConsentStatus = {
   consent_type: string;
   required_version: string;
   accepted: boolean;
+  user_id?: number;
   accepted_version?: string | null;
   accepted_at?: string | null;
 };

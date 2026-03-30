@@ -4,9 +4,13 @@ Ngày cập nhật: 30/03/2026.
 
 ## 1) Tài liệu triển khai chính
 
-- `docs/implementation-plan/round2-14-day-execution-checklist-2026-03-30.md`
+- `docs/implementation-plan/round2-14-day-execution-checklist-2026-03-30.md` (timeline + execution tracker)
+- `docs/implementation-plan/day1-unified-contract-2026-03-30.md` (contract canonical API/ML/Web)
 
-Đây là tài liệu điều phối duy nhất để team bám tiến độ hằng ngày.
+Quy ước nguồn sự thật:
+- Checklist là tài liệu điều phối tiến độ.
+- Day1 Unified Contract là tài liệu chuẩn schema/field.
+- Nếu có mâu thuẫn field/schema, ưu tiên Day1 Unified Contract và cập nhật lại checklist trong ngày.
 
 ## 2) Cách sử dụng
 
@@ -28,7 +32,7 @@ Ngày cập nhật: 30/03/2026.
 
 ## 4) Quy tắc vận hành
 
-- Không mở thêm tài liệu kế hoạch mới nếu chưa thật sự cần.
+- Không mở thêm tài liệu kế hoạch mới nếu chưa thật sự cần; ưu tiên cập nhật 2 tài liệu canonical ở trên.
 - Mọi thay đổi quan trọng phải phản ánh lại checklist 14 ngày trong ngày đó.
 - Khi cần tra cứu tài liệu cũ, vào:
 - `docs/archive/2026-03-30-cleanup/`

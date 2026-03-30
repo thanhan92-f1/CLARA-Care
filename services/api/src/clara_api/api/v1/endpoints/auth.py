@@ -388,6 +388,8 @@ def get_consent_status(
         consent_type=MEDICAL_CONSENT_TYPE,
         required_version=required_version,
         accepted=accepted,
+        user_id=user.id,
+        consent_version=latest.consent_version if latest else None,
         accepted_version=latest.consent_version if latest else None,
         accepted_at=latest.accepted_at if latest else None,
     )
@@ -422,6 +424,7 @@ def accept_consent(
     if latest and latest.consent_version == required_version:
         return ConsentAcceptResponse(
             consent_type=MEDICAL_CONSENT_TYPE,
+            user_id=user.id,
             consent_version=latest.consent_version,
             accepted_at=latest.accepted_at,
         )
@@ -436,6 +439,7 @@ def accept_consent(
     db.refresh(consent)
     return ConsentAcceptResponse(
         consent_type=consent.consent_type,
+        user_id=consent.user_id,
         consent_version=consent.consent_version,
         accepted_at=consent.accepted_at,
     )

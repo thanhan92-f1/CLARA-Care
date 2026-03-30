@@ -11,6 +11,12 @@ Bộ file này giúp chứng minh nhanh 3 điểm với Ban giám khảo:
 - `data/demo/ddi_internal_test_set.json`: 50 case DDI nội bộ cho demo.
 - `data/demo/chatbot_refusal_prompts_10.json`: 10 prompt bẫy (kê đơn/chẩn đoán/liều).
 - `docs/hackathon/kpi-snapshot.md`: snapshot KPI nhanh cho pitch.
+- `docs/implementation-plan/day1-unified-contract-2026-03-30.md`: contract freeze Day 1 (canonical cho API/ML/Web).
+
+## Bằng chứng contract freeze Day 1
+- Khi demo fallback online/offline, payload cần thể hiện rõ: `policy_action`, `fallback_used`, `source_errors`, `attributions`.
+- Khi demo consent, response cần có: `consent_version`, `accepted_at`, `user_id`.
+- Trong giai đoạn chuyển tiếp, chấp nhận `attribution` singular nhưng `attributions` là chuẩn canonical.
 
 ## Cách regenerate
 Chạy lệnh sau ở root repo:

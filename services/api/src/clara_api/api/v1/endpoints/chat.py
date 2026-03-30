@@ -182,6 +182,7 @@ def chat_placeholder(
         ml_response=ml_response,
     )
     attribution = _build_chat_attribution(ml_response, rag_sources)
+    attributions = [attribution]
 
     return {
         "message": payload.message,
@@ -192,6 +193,7 @@ def chat_placeholder(
         "emergency": ml_response.get("emergency"),
         "model_used": ml_response.get("model_used"),
         "retrieved_ids": ml_response.get("retrieved_ids", []),
+        "attributions": attributions,
         "attribution": attribution,
         "citations": attribution["citations"],
         "ml": ml_response,

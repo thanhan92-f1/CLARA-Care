@@ -56,6 +56,8 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
     assert body["attribution"]["channel"] == "chat"
     assert body["attribution"]["citation_count"] == 0
     assert body["attribution"]["source_count"] >= 4
+    assert isinstance(body["attributions"], list)
+    assert body["attributions"][0]["channel"] == "chat"
 
     assert str(captured["url"]).endswith("/v1/chat/routed")
     forwarded = captured["json"]
@@ -105,3 +107,5 @@ def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
     assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")
     assert body["attribution"]["channel"] == "chat"
     assert body["attribution"]["citation_count"] == 0
+    assert isinstance(body["attributions"], list)
+    assert body["attributions"][0]["channel"] == "chat"

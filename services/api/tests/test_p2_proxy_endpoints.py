@@ -73,6 +73,8 @@ def test_new_proxy_endpoints_success(
         assert response_payload["endpoint"] == ml_path
         assert response_payload["attribution"]["channel"] == "careguard"
         assert response_payload["attribution"]["mode"] == "local_only"
+        assert isinstance(response_payload["attributions"], list)
+        assert response_payload["attributions"][0]["channel"] == "careguard"
     else:
         assert response_payload == upstream_payload
     assert str(captured["url"]).endswith(ml_path)

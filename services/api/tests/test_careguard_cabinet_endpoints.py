@@ -196,6 +196,9 @@ def test_auto_ddi_proxy_payload(monkeypatch) -> None:
     assert payload["external_ddi_enabled"] is False
     body = response.json()
     assert "attribution" in body
+    assert "attributions" in body
     assert body["attribution"]["channel"] == "careguard"
     assert body["attribution"]["mode"] == "local_only"
     assert body["attribution"]["citation_count"] == 1
+    assert isinstance(body["attributions"], list)
+    assert body["attributions"][0]["channel"] == "careguard"

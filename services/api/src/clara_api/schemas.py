@@ -114,6 +114,8 @@ class ConsentStatusResponse(BaseModel):
     consent_type: str = "medical_disclaimer"
     required_version: str
     accepted: bool
+    user_id: int
+    consent_version: str | None = None
     accepted_version: str | None = None
     accepted_at: datetime | None = None
 
@@ -125,8 +127,40 @@ class ConsentAcceptRequest(BaseModel):
 
 class ConsentAcceptResponse(BaseModel):
     consent_type: str = "medical_disclaimer"
+    user_id: int
     consent_version: str
     accepted_at: datetime
+
+
+PolicyAction = Literal["allow", "warn", "block", "escalate"]
+
+
+class AttributionCitation(BaseModel):
+    source: str
+    url: str | None = None
+
+
+class AttributionSource(BaseModel):
+    id: str
+    name: str
+    category: str | None = None
+    type: str | None = None
+
+
+class AttributionEntry(BaseModel):
+    channel: str
+    mode: str | None = None
+    source_count: int = 0
+    citation_count: int = 0
+    sources: list[AttributionSource] = Field(default_factory=list)
+    citations: list[AttributionCitation] = Field(default_factory=list)
+
+
+class UnifiedContractMetadata(BaseModel):
+    policy_action: PolicyAction | None = None
+    fallback_used: bool = False
+    source_errors: dict[str, list[str]] = Field(default_factory=dict)
+    attributions: list[AttributionEntry] = Field(default_factory=list)
 
 
 class MedicineCabinetItemCreate(BaseModel):
