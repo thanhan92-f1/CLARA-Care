@@ -15,6 +15,40 @@ def _login(email: str) -> str:
     return response.json()["access_token"]
 
 
+def test_medical_consent_status_and_accept_flow() -> None:
+    token = _login("consent-user@example.com")
+
+    status_response = client.get(
+        "/api/v1/auth/consent-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["consent_type"] == "medical_disclaimer"
+    assert status_payload["accepted"] is False
+
+    accept_response = client.post(
+        "/api/v1/auth/consent",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"consent_version": status_payload["required_version"], "accepted": True},
+    )
+    assert accept_response.status_code == 200
+    accept_payload = accept_response.json()
+    assert accept_payload["consent_type"] == "medical_disclaimer"
+    assert accept_payload["consent_version"] == status_payload["required_version"]
+    assert accept_payload["accepted_at"]
+
+    verify_response = client.get(
+        "/api/v1/auth/consent-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert verify_response.status_code == 200
+    verify_payload = verify_response.json()
+    assert verify_payload["accepted"] is True
+    assert verify_payload["accepted_version"] == status_payload["required_version"]
+    assert verify_payload["accepted_at"]
+
+
 def test_auth_me_returns_subject_and_role() -> None:
     email = "alice@research.clara"
     token = _login(email)

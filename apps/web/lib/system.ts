@@ -109,9 +109,14 @@ export type ControlTowerRagFlow = {
   file_retrieval_enabled: boolean;
 };
 
+export type CareguardRuntimeConfig = {
+  external_ddi_enabled: boolean;
+};
+
 export type ControlTowerConfig = {
   rag_sources: ControlTowerRagSource[];
   rag_flow: ControlTowerRagFlow;
+  careguard_runtime: CareguardRuntimeConfig;
 };
 
 export type SystemFlowEventsRawResponse = {

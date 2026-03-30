@@ -110,6 +110,25 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class ConsentStatusResponse(BaseModel):
+    consent_type: str = "medical_disclaimer"
+    required_version: str
+    accepted: bool
+    accepted_version: str | None = None
+    accepted_at: datetime | None = None
+
+
+class ConsentAcceptRequest(BaseModel):
+    consent_version: str = Field(min_length=1, max_length=32)
+    accepted: bool = True
+
+
+class ConsentAcceptResponse(BaseModel):
+    consent_type: str = "medical_disclaimer"
+    consent_version: str
+    accepted_at: datetime
+
+
 class MedicineCabinetItemCreate(BaseModel):
     drug_name: str = Field(min_length=1, max_length=255)
     dosage: str = ""
@@ -192,9 +211,14 @@ class RagFlowConfig(BaseModel):
     file_retrieval_enabled: bool = True
 
 
+class CareguardRuntimeConfig(BaseModel):
+    external_ddi_enabled: bool = False
+
+
 class SystemControlTowerConfig(BaseModel):
     rag_sources: list[RagSourceEntry] = Field(default_factory=list)
     rag_flow: RagFlowConfig = Field(default_factory=RagFlowConfig)
+    careguard_runtime: CareguardRuntimeConfig = Field(default_factory=CareguardRuntimeConfig)
 
 
 class KnowledgeSourceCreateRequest(BaseModel):

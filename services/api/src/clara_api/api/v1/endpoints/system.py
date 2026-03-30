@@ -11,7 +11,7 @@ from clara_api.core.metrics import get_api_metrics_store
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.session import get_db
-from clara_api.schemas import SystemControlTowerConfig
+from clara_api.schemas import CareguardRuntimeConfig, SystemControlTowerConfig
 
 router = APIRouter()
 
@@ -418,6 +418,27 @@ def update_control_tower_config(
     db: Session = Depends(get_db),
 ) -> SystemControlTowerConfig:
     return get_control_tower_config_service().save(db, payload)
+
+
+@router.get("/careguard/runtime", response_model=CareguardRuntimeConfig)
+def get_careguard_runtime(
+    _token: TokenPayload = Depends(require_roles("doctor")),
+    db: Session = Depends(get_db),
+) -> CareguardRuntimeConfig:
+    return get_control_tower_config_service().load(db).careguard_runtime
+
+
+@router.put("/careguard/runtime", response_model=CareguardRuntimeConfig)
+def update_careguard_runtime(
+    payload: CareguardRuntimeConfig,
+    _token: TokenPayload = Depends(require_roles("doctor")),
+    db: Session = Depends(get_db),
+) -> CareguardRuntimeConfig:
+    service = get_control_tower_config_service()
+    config = service.load(db)
+    config.careguard_runtime = payload
+    updated = service.save(db, config)
+    return updated.careguard_runtime
 
 
 @router.get("/flow-events")

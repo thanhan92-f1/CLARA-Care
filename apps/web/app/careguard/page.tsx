@@ -1,602 +1,482 @@
 "use client";
 
-import Link from "next/link";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import PageShell from "@/components/ui/page-shell";
+import { acceptConsent, getConsentStatus } from "@/lib/consent";
 import {
   CareguardAnalyzeResult,
   analyzeCareguard,
   normalizeCareguardResult,
-  parseLabsInput,
-  parseFreeTextList
+  parseFreeTextList,
+  parseLabsInput
 } from "@/lib/careguard";
-
-type CabinetItem = {
-  id: string;
-  name: string;
-  source: "manual" | "receipt";
-  addedAt: string;
-};
-
-type ReceiptDetection = {
-  name: string;
-  confidence: number;
-  evidence: string;
-};
-
-const CABINET_STORAGE_KEY = "clara:selfmed:cabinet:v1";
-
-const DRUG_ALIAS_MAP: Record<string, string[]> = {
-  paracetamol: ["paracetamol", "acetaminophen", "panadol", "hapacol", "efferalgan"],
-  ibuprofen: ["ibuprofen", "advil", "brufen"],
-  aspirin: ["aspirin"],
-  warfarin: ["warfarin", "coumadin"],
-  lisinopril: ["lisinopril"],
-  metformin: ["metformin", "glucophage"],
-  amoxicillin: ["amoxicillin", "augmentin"],
-  omeprazole: ["omeprazole"],
-  simvastatin: ["simvastatin"],
-  loratadine: ["loratadine", "claritin"],
-  cetirizine: ["cetirizine", "zyrtec"],
-  vitamin_c: ["vitamin c", "ascorbic acid"]
-};
-
-const STEP_CARD_CLASS = "rounded-3xl border border-slate-200 bg-white p-4 shadow-sm";
-
-function normalizeDrugName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function canonicalLabel(name: string): string {
-  const map: Record<string, string> = {
-    vitamin_c: "Vitamin C"
-  };
-  if (map[name]) return map[name];
-  return name
-    .split(" ")
-    .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
-    .join(" ");
-}
-
-function detectDrugsFromReceiptText(text: string): ReceiptDetection[] {
-  const normalized = text.toLowerCase();
-  const output: ReceiptDetection[] = [];
-
-  Object.entries(DRUG_ALIAS_MAP).forEach(([canonical, aliases]) => {
-    for (const alias of aliases) {
-      const regex = new RegExp(`(^|[^a-z0-9])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
-      if (!regex.test(normalized)) continue;
-
-      output.push({
-        name: canonicalLabel(canonical.replace(/_/g, " ")),
-        confidence: alias === canonical ? 0.94 : 0.82,
-        evidence: alias
-      });
-      break;
-    }
-  });
-
-  output.sort((a, b) => b.confidence - a.confidence || a.name.localeCompare(b.name));
-  return output;
-}
+import {
+  addCabinetItem,
+  CabinetItem,
+  deleteCabinetItem,
+  getCabinet,
+  importDetections,
+  runCabinetAutoDdi,
+  scanReceiptFile,
+  scanReceiptText,
+  ScanDetection
+} from "@/lib/selfmed";
 
 function getRiskBadgeClass(riskTier: string | null): string {
   const value = riskTier?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("red")) return "border-red-200 bg-red-50 text-red-700";
+  if (value.includes("high") || value.includes("red") || value.includes("critical")) {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
   if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) {
     return "border-amber-200 bg-amber-50 text-amber-700";
   }
-  if (value.includes("low") || value.includes("green")) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value.includes("low") || value.includes("green")) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function getRiskLabelVi(riskTier: string | null): string {
   const value = riskTier?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("red")) return "Cao";
+  if (value.includes("high") || value.includes("red") || value.includes("critical")) return "Cao";
   if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) return "Trung bình";
   if (value.includes("low") || value.includes("green")) return "Thấp";
   return riskTier ?? "Chưa xác định";
 }
 
-function getRiskHelperText(riskTier: string | null): string {
-  const value = riskTier?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("red")) {
-    return "Nguy cơ tương tác cao. Không tự ý dùng đồng thời khi chưa hỏi bác sĩ/dược sĩ.";
-  }
-  if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) {
-    return "Có tương tác mức trung bình. Cần theo dõi triệu chứng và trao đổi chuyên môn nếu dùng kéo dài.";
-  }
-  if (value.includes("low") || value.includes("green")) {
-    return "Nguy cơ thấp theo dữ liệu hiện tại. Vẫn nên dùng đúng liều và theo dõi phản ứng bất thường.";
-  }
-  return "Chưa đủ dữ liệu để kết luận mức rủi ro rõ ràng.";
-}
-
-function getSeverityLabelVi(severity: string | undefined): string {
-  const value = severity?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("severe") || value.includes("red")) return "Nghiêm trọng";
-  if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) return "Trung bình";
-  if (value.includes("low") || value.includes("mild") || value.includes("green")) return "Nhẹ";
-  return severity ?? "Chưa rõ";
-}
-
-function getSeverityAdvice(severity: string | undefined): string {
-  const value = severity?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("severe") || value.includes("red")) {
-    return "Ưu tiên hỏi bác sĩ trước khi tiếp tục phối hợp các thuốc này.";
-  }
-  if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) {
-    return "Theo dõi dấu hiệu bất thường và tham khảo dược sĩ khi cần.";
-  }
-  return "Tiếp tục theo dõi phản ứng cơ thể trong quá trình dùng thuốc.";
-}
-
-function getSeverityToneClass(severity: string | undefined): string {
-  const value = severity?.toLowerCase() ?? "";
-  if (value.includes("high") || value.includes("severe") || value.includes("red")) {
-    return "border-red-200 bg-red-50";
-  }
-  if (value.includes("medium") || value.includes("moderate") || value.includes("amber")) {
-    return "border-amber-200 bg-amber-50";
-  }
-  return "border-emerald-200 bg-emerald-50";
-}
-
-function parseStorage(raw: string | null): CabinetItem[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== "object") return null;
-        const id = typeof item.id === "string" ? item.id : "";
-        const name = typeof item.name === "string" ? item.name : "";
-        const source = item.source === "receipt" ? "receipt" : "manual";
-        const addedAt = typeof item.addedAt === "string" ? item.addedAt : new Date().toISOString();
-        if (!id || !name) return null;
-        return { id, name, source, addedAt } as CabinetItem;
-      })
-      .filter((item): item is CabinetItem => Boolean(item));
-  } catch {
-    return [];
-  }
-}
-
-function uniqueMedicationNames(cabinet: CabinetItem[]): string[] {
-  return Array.from(new Set(cabinet.map((item) => normalizeDrugName(item.name))));
-}
-
-function createCabinetItem(name: string, source: "manual" | "receipt"): CabinetItem {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: name.trim(),
-    source,
-    addedAt: new Date().toISOString()
-  };
-}
-
 export default function CareguardPage() {
-  const [symptomsInput, setSymptomsInput] = useState("");
-  const [labsInput, setLabsInput] = useState("");
-  const [allergiesInput, setAllergiesInput] = useState("");
-  const [manualMedicationInput, setManualMedicationInput] = useState("");
-
-  const [receiptTextInput, setReceiptTextInput] = useState("");
-  const [receiptDetections, setReceiptDetections] = useState<ReceiptDetection[]>([]);
-  const [receiptNotice, setReceiptNotice] = useState("");
+  const [consentLoading, setConsentLoading] = useState(true);
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  const [consentRequiredVersion, setConsentRequiredVersion] = useState("");
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const [acceptingConsent, setAcceptingConsent] = useState(false);
 
   const [cabinet, setCabinet] = useState<CabinetItem[]>([]);
-  const [cabinetNotice, setCabinetNotice] = useState("");
+  const [cabinetLabel, setCabinetLabel] = useState("Tủ thuốc cá nhân");
+  const [cabinetLoading, setCabinetLoading] = useState(true);
   const [cabinetError, setCabinetError] = useState("");
+  const [cabinetNotice, setCabinetNotice] = useState("");
+
+  const [receiptTextInput, setReceiptTextInput] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptDetections, setReceiptDetections] = useState<ScanDetection[]>([]);
+  const [receiptNotice, setReceiptNotice] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
+
+  const [manualMedicationInput, setManualMedicationInput] = useState("");
+  const [allergiesInput, setAllergiesInput] = useState("");
+  const [symptomsInput, setSymptomsInput] = useState("");
+  const [labsInput, setLabsInput] = useState("");
 
   const [autoResult, setAutoResult] = useState<CareguardAnalyzeResult | null>(null);
   const [manualResult, setManualResult] = useState<CareguardAnalyzeResult | null>(null);
-
   const [autoChecking, setAutoChecking] = useState(false);
   const [manualChecking, setManualChecking] = useState(false);
   const [autoError, setAutoError] = useState("");
   const [manualError, setManualError] = useState("");
 
-  const cabinetMedicationNames = useMemo(() => uniqueMedicationNames(cabinet), [cabinet]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(CABINET_STORAGE_KEY);
-    setCabinet(parseStorage(raw));
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(CABINET_STORAGE_KEY, JSON.stringify(cabinet));
+  const cabinetStats = useMemo(() => {
+    const fromOcr = cabinet.filter((item) => item.source === "ocr").length;
+    return { total: cabinet.length, fromOcr };
   }, [cabinet]);
 
-  useEffect(() => {
-    let isCancelled = false;
-    const allergies = parseFreeTextList(allergiesInput);
+  const medicationNames = useMemo(() => {
+    return Array.from(new Set(cabinet.map((item) => item.normalized_name))).filter(Boolean);
+  }, [cabinet]);
 
-    if (cabinetMedicationNames.length === 0) {
-      setAutoResult(null);
-      setAutoError("");
-      return;
+  const refreshConsentStatus = async (): Promise<boolean> => {
+    setConsentError("");
+    try {
+      const status = await getConsentStatus();
+      setConsentAccepted(status.accepted);
+      setConsentRequiredVersion(status.required_version);
+      return status.accepted;
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Không thể kiểm tra consent.");
+      setConsentAccepted(false);
+      return false;
     }
-
-    const timeout = setTimeout(async () => {
-      setAutoChecking(true);
-      setAutoError("");
-      try {
-        const response = await analyzeCareguard({
-          symptoms: [],
-          labs: {},
-          medications: cabinetMedicationNames,
-          allergies
-        });
-
-        if (!isCancelled) {
-          setAutoResult(normalizeCareguardResult(response));
-        }
-      } catch (cause) {
-        if (!isCancelled) {
-          setAutoError(cause instanceof Error ? cause.message : "Không thể tự động kiểm tra DDI.");
-        }
-      } finally {
-        if (!isCancelled) {
-          setAutoChecking(false);
-        }
-      }
-    }, 350);
-
-    return () => {
-      isCancelled = true;
-      clearTimeout(timeout);
-    };
-  }, [cabinetMedicationNames, allergiesInput]);
-
-  const autoRiskClass = useMemo(() => getRiskBadgeClass(autoResult?.riskTier ?? null), [autoResult?.riskTier]);
-  const manualRiskClass = useMemo(() => getRiskBadgeClass(manualResult?.riskTier ?? null), [manualResult?.riskTier]);
-  const hasReceiptText = receiptTextInput.trim().length > 0;
-  const stepProgress = useMemo(
-    () => [
-      {
-        id: "01",
-        title: "Nhận diện hóa đơn",
-        helper: "Dán văn bản hoặc nạp tệp OCR.",
-        done: receiptDetections.length > 0
-      },
-      {
-        id: "02",
-        title: "Xây tủ thuốc",
-        helper: "Hợp nhất thuốc nhận diện và nhập tay.",
-        done: cabinet.length > 0
-      },
-      {
-        id: "03",
-        title: "Auto DDI",
-        helper: "Tự kiểm tra tương tác khi tủ thay đổi.",
-        done: Boolean(autoResult)
-      },
-      {
-        id: "04",
-        title: "Phân tích nâng cao",
-        helper: "Bổ sung triệu chứng và xét nghiệm khi cần.",
-        done: Boolean(manualResult)
-      }
-    ],
-    [autoResult, cabinet.length, manualResult, receiptDetections.length]
-  );
-
-  const onAddManualMedication = () => {
-    setCabinetNotice("");
-    setCabinetError("");
-
-    const names = parseFreeTextList(manualMedicationInput);
-    if (!names.length) {
-      setCabinetError("Vui lòng nhập ít nhất 1 tên thuốc để thêm vào tủ thuốc.");
-      return;
-    }
-
-    const normalizedSet = new Set(cabinet.map((item) => normalizeDrugName(item.name)));
-    const nextItems = names
-      .map((name) => name.trim())
-      .filter(Boolean)
-      .filter((name) => !normalizedSet.has(normalizeDrugName(name)))
-      .map((name) => createCabinetItem(name, "manual"));
-
-    if (!nextItems.length) {
-      setCabinetError("Các thuốc này đã có trong tủ thuốc.");
-      return;
-    }
-
-    setCabinet((current) => [...nextItems, ...current]);
-    setManualMedicationInput("");
-    setCabinetNotice(`Đã thêm ${nextItems.length} thuốc thủ công vào tủ thuốc.`);
   };
 
-  const onRecognizeReceiptText = () => {
+  const refreshCabinet = async () => {
+    setCabinetLoading(true);
+    setCabinetError("");
+    try {
+      const response = await getCabinet();
+      setCabinet(response.items);
+      setCabinetLabel(response.label);
+    } catch (error) {
+      setCabinetError(error instanceof Error ? error.message : "Không thể tải dữ liệu tủ thuốc.");
+    } finally {
+      setCabinetLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const initialize = async () => {
+      setConsentLoading(true);
+      const accepted = await refreshConsentStatus();
+      if (accepted) {
+        await refreshCabinet();
+      } else {
+        setCabinetLoading(false);
+      }
+      setConsentLoading(false);
+    };
+    void initialize();
+  }, []);
+
+  const onAcceptConsent = async () => {
+    if (!consentRequiredVersion) return;
+    if (!consentChecked) {
+      setConsentError("Vui lòng tick xác nhận trước khi tiếp tục.");
+      return;
+    }
+
+    setAcceptingConsent(true);
+    setConsentError("");
+    try {
+      await acceptConsent({ consent_version: consentRequiredVersion, accepted: true });
+      setConsentAccepted(true);
+      await refreshCabinet();
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Không thể lưu xác nhận consent.");
+    } finally {
+      setAcceptingConsent(false);
+    }
+  };
+
+  const onRecognizeReceiptText = async () => {
     const text = receiptTextInput.trim();
     if (!text) {
-      setReceiptNotice("Vui lòng nhập nội dung hóa đơn trước khi nhận diện.");
-      setReceiptDetections([]);
+      setReceiptNotice("Vui lòng nhập nội dung OCR trước khi nhận diện.");
       return;
     }
 
-    const detections = detectDrugsFromReceiptText(text);
-    setReceiptDetections(detections);
-    if (!detections.length) {
-      setReceiptNotice("Chưa nhận diện được thuốc. Bạn có thể thêm thủ công ở bước 2.");
-      return;
-    }
-
-    setReceiptNotice(`Nhận diện được ${detections.length} thuốc từ hóa đơn.`);
-  };
-
-  const onImportReceiptFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+    setIsScanning(true);
+    setReceiptNotice("");
+    setReceiptDetections([]);
     try {
-      const text = await file.text();
-      const mergedText = receiptTextInput ? `${receiptTextInput}\n${text}` : text;
-      const detections = detectDrugsFromReceiptText(mergedText);
-
-      setReceiptTextInput(mergedText);
+      const detections = await scanReceiptText(text);
       setReceiptDetections(detections);
-
-      if (!detections.length) {
-        setReceiptNotice("Đã nạp tệp nhưng chưa nhận diện được thuốc. Hãy kiểm tra lại nội dung OCR.");
-      } else {
-        setReceiptNotice(`Đã nạp tệp và nhận diện được ${detections.length} thuốc.`);
-      }
-    } catch {
-      setReceiptNotice("Không thể đọc tệp này. Bạn vui lòng dán nội dung hóa đơn trực tiếp.");
+      setReceiptNotice(
+        detections.length
+          ? `Nhận diện được ${detections.length} thuốc từ nội dung OCR.`
+          : "Chưa nhận diện được thuốc từ nội dung này."
+      );
+    } catch (error) {
+      setReceiptNotice(error instanceof Error ? error.message : "Không thể nhận diện nội dung OCR.");
     } finally {
-      event.target.value = "";
+      setIsScanning(false);
     }
   };
 
-  const onAddDetectedToCabinet = () => {
-    setCabinetNotice("");
-    setCabinetError("");
+  const onScanReceiptFile = async () => {
+    if (!receiptFile) {
+      setReceiptNotice("Vui lòng chọn file hóa đơn/đơn thuốc trước khi quét.");
+      return;
+    }
 
+    setIsScanning(true);
+    setReceiptNotice("");
+    setReceiptDetections([]);
+    try {
+      const detections = await scanReceiptFile(receiptFile);
+      setReceiptDetections(detections);
+      setReceiptNotice(
+        detections.length
+          ? `Nhận diện được ${detections.length} thuốc từ file OCR.`
+          : "Đã quét file nhưng chưa nhận diện được thuốc."
+      );
+    } catch (error) {
+      setReceiptNotice(error instanceof Error ? error.message : "Không thể quét file OCR.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const onImportDetections = async () => {
     if (!receiptDetections.length) {
-      setCabinetError("Chưa có thuốc đã nhận diện để thêm vào tủ thuốc.");
+      setCabinetNotice("Chưa có dữ liệu nhận diện để thêm vào tủ thuốc.");
       return;
     }
 
-    const existing = new Set(cabinet.map((item) => normalizeDrugName(item.name)));
-    const nextItems = receiptDetections
-      .map((item) => item.name)
-      .filter((name) => !existing.has(normalizeDrugName(name)))
-      .map((name) => createCabinetItem(name, "receipt"));
+    setCabinetNotice("");
+    try {
+      const inserted = await importDetections(receiptDetections);
+      await refreshCabinet();
+      setCabinetNotice(`Đã thêm ${inserted} thuốc vào ${cabinetLabel}.`);
+    } catch (error) {
+      setCabinetNotice(error instanceof Error ? error.message : "Không thể nhập dữ liệu nhận diện.");
+    }
+  };
 
-    if (!nextItems.length) {
-      setCabinetError("Các thuốc đã nhận diện đều đã có trong tủ thuốc.");
+  const onAddManualMedication = async () => {
+    const names = parseFreeTextList(manualMedicationInput);
+    if (!names.length) {
+      setCabinetNotice("Vui lòng nhập ít nhất 1 tên thuốc.");
       return;
     }
 
-    setCabinet((current) => [...nextItems, ...current]);
-    setCabinetNotice(`Đã thêm ${nextItems.length} thuốc từ hóa đơn vào tủ thuốc.`);
+    let inserted = 0;
+    for (const name of names) {
+      try {
+        await addCabinetItem({ drug_name: name, source: "manual" });
+        inserted += 1;
+      } catch {
+        // Ignore duplicates to keep quick-add flow smooth.
+      }
+    }
+
+    await refreshCabinet();
+    setManualMedicationInput("");
+    setCabinetNotice(
+      inserted > 0
+        ? `Đã thêm ${inserted} thuốc thủ công vào tủ thuốc.`
+        : "Các thuốc vừa nhập đã tồn tại trong tủ thuốc."
+    );
   };
 
-  const onRemoveCabinetItem = (id: string) => {
-    setCabinet((current) => current.filter((item) => item.id !== id));
+  const onRemoveCabinetItem = async (itemId: number) => {
     setCabinetNotice("");
-    setCabinetError("");
+    try {
+      await deleteCabinetItem(itemId);
+      await refreshCabinet();
+      setCabinetNotice("Đã xóa thuốc khỏi tủ thuốc.");
+    } catch (error) {
+      setCabinetNotice(error instanceof Error ? error.message : "Không thể xóa thuốc.");
+    }
   };
 
-  const onClearCabinet = () => {
-    setCabinet([]);
-    setCabinetNotice("");
-    setCabinetError("");
-    setAutoResult(null);
-    setManualResult(null);
+  const onRunAutoDdi = async () => {
+    setAutoChecking(true);
     setAutoError("");
+    setAutoResult(null);
+    try {
+      const result = await runCabinetAutoDdi({
+        allergies: parseFreeTextList(allergiesInput)
+      });
+      setAutoResult(result);
+    } catch (error) {
+      setAutoError(error instanceof Error ? error.message : "Không thể chạy auto DDI.");
+    } finally {
+      setAutoChecking(false);
+    }
   };
 
-  const onRunManualAnalyze = async () => {
-    const symptoms = parseFreeTextList(symptomsInput);
-    const labs = parseLabsInput(labsInput);
-    const allergies = parseFreeTextList(allergiesInput);
-
-    if (!cabinetMedicationNames.length && !symptoms.length && Object.keys(labs).length === 0 && !allergies.length) {
-      setManualError("Vui lòng nhập dữ liệu trước khi chạy phân tích nâng cao.");
+  const onRunAdvancedAnalyze = async () => {
+    if (!medicationNames.length) {
+      setManualError("Cần ít nhất 1 thuốc trong tủ để chạy phân tích nâng cao.");
       return;
     }
 
     setManualError("");
     setManualChecking(true);
-
     try {
       const response = await analyzeCareguard({
-        symptoms,
-        labs,
-        medications: cabinetMedicationNames,
-        allergies
+        symptoms: parseFreeTextList(symptomsInput),
+        labs: parseLabsInput(labsInput),
+        medications: medicationNames,
+        allergies: parseFreeTextList(allergiesInput)
       });
       setManualResult(normalizeCareguardResult(response));
-    } catch (cause) {
-      setManualError(cause instanceof Error ? cause.message : "Không thể chạy phân tích nâng cao.");
+    } catch (error) {
+      setManualError(error instanceof Error ? error.message : "Không thể chạy phân tích nâng cao.");
     } finally {
       setManualChecking(false);
     }
   };
 
-  return (
-    <PageShell title="Self-Med: dùng thuốc an toàn tại nhà" variant="plain">
-      <div className="space-y-4">
-        <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-4 shadow-sm sm:p-5">
-          <div className="space-y-2">
-            <span className="inline-flex items-center rounded-full border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
-              CLARA Self-Med
-            </span>
-            <p className="text-sm leading-6 text-slate-700">
-              Quy trình 4 bước: nhận diện thuốc từ hóa đơn, chuẩn hóa tủ thuốc, tự động kiểm tra tương tác và mở phân
-              tích nâng cao khi cần thêm ngữ cảnh lâm sàng.
-            </p>
-          </div>
-
-          <ol className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {stepProgress.map((step) => (
-              <li
-                key={step.id}
-                className={`rounded-2xl border px-3 py-2 ${
-                  step.done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"
-                }`}
-              >
-                <p className={`text-xs font-semibold ${step.done ? "text-emerald-700" : "text-slate-500"}`}>B{step.id}</p>
-                <p className="mt-0.5 text-sm font-semibold text-slate-900">{step.title}</p>
-                <p className="mt-1 text-xs text-slate-600">{step.helper}</p>
-              </li>
-            ))}
-          </ol>
+  if (consentLoading) {
+    return (
+      <PageShell title="CLARA CareGuard">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-base font-semibold text-slate-900">Đang kiểm tra điều khoản sử dụng y tế...</p>
         </section>
+      </PageShell>
+    );
+  }
 
-        <section className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3">
-          <p className="text-sm text-indigo-800">
-            Đã có module lưu tủ thuốc permanent theo tài khoản tại{" "}
-            <Link href="/selfmed" className="font-semibold underline">
-              trang Tủ thuốc cá nhân
-            </Link>
-            . Trang này tập trung workflow phân tích nâng cao.
+  if (!consentAccepted) {
+    return (
+      <PageShell title="CLARA CareGuard">
+        <section className="rounded-3xl border-2 border-amber-300 bg-amber-50 p-6 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-amber-800">Bước bắt buộc trước khi dùng</p>
+          <h2 className="mt-2 text-2xl font-bold text-slate-900">Tuyên bố miễn trừ trách nhiệm y tế</h2>
+          <p className="mt-3 text-lg leading-8 text-slate-800">
+            CLARA chỉ hỗ trợ cảnh báo tương tác thuốc và giải thích an toàn sử dụng. Ứng dụng không thay thế bác sĩ,
+            không kê đơn, không chẩn đoán và không chỉ định liều dùng.
           </p>
-        </section>
+          <p className="mt-3 text-base text-slate-700">
+            Phiên bản điều khoản hiện tại: <span className="font-semibold">{consentRequiredVersion || "-"}</span>
+          </p>
 
-        <section className={STEP_CARD_CLASS}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">B1. Nhận diện hóa đơn thuốc</h2>
-              <p className="mt-1 text-xs text-slate-500">Hỗ trợ dán văn bản hoặc nạp tệp OCR để nhận diện nhanh.</p>
-            </div>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-              {receiptDetections.length} thuốc
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-300 bg-white p-4">
+            <input
+              type="checkbox"
+              className="mt-1 h-5 w-5"
+              checked={consentChecked}
+              onChange={(event) => setConsentChecked(event.target.checked)}
+            />
+            <span className="text-base font-medium leading-7 text-slate-900">
+              Tôi đã đọc, hiểu và đồng ý với tuyên bố miễn trừ trách nhiệm y tế của CLARA.
+            </span>
+          </label>
+
+          <button
+            type="button"
+            onClick={onAcceptConsent}
+            disabled={!consentChecked || acceptingConsent}
+            className="mt-5 min-h-12 rounded-xl bg-slate-900 px-6 py-3 text-base font-semibold text-white disabled:opacity-50"
+          >
+            {acceptingConsent ? "Đang lưu xác nhận..." : "Đồng ý và tiếp tục"}
+          </button>
+
+          {consentError ? <p className="mt-3 text-sm text-red-700">{consentError}</p> : null}
+        </section>
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell title="CLARA CareGuard" variant="plain">
+      <div className="space-y-4">
+        <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Flow backend thật</p>
+          <h1 className="mt-1 text-xl font-semibold text-slate-900">Scan → xác nhận thủ công → lưu tủ thuốc → phân tích DDI</h1>
+          <p className="mt-2 text-sm text-slate-700">
+            Luồng CareGuard hiện dùng cùng dữ liệu persistent với <Link className="font-semibold underline" href="/selfmed">/selfmed</Link>.
+            Dữ liệu không còn nằm ở localStorage.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+              Tổng thuốc: {cabinetStats.total}
+            </span>
+            <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+              Nguồn OCR: {cabinetStats.fromOcr}
             </span>
           </div>
+        </section>
 
-          <textarea
-            className="mt-3 h-28 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-            placeholder="Dán nội dung hóa đơn thuốc vào đây..."
-            value={receiptTextInput}
-            onChange={(event) => setReceiptTextInput(event.target.value)}
-          />
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bước 1</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">Nhận diện OCR và xác nhận thủ công</h2>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <input
-              type="file"
-              onChange={onImportReceiptFile}
-              className="max-w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-2.5 file:py-1.5 file:text-xs file:font-medium file:text-slate-700"
-            />
-            <button
-              type="button"
-              onClick={onRecognizeReceiptText}
-              className="rounded-xl bg-primary px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
-            >
-              Nhận diện thuốc
-            </button>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-sm font-medium text-slate-800" htmlFor="careguard-scan-file">Tải file đơn thuốc/hóa đơn</label>
+              <input
+                id="careguard-scan-file"
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setReceiptFile(event.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-sm file:font-medium"
+              />
+              <button
+                type="button"
+                onClick={onScanReceiptFile}
+                disabled={isScanning}
+                className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+              >
+                {isScanning ? "Đang quét file..." : "Quét file OCR"}
+              </button>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-sm font-medium text-slate-800" htmlFor="careguard-scan-text">Hoặc dán nội dung OCR</label>
+              <textarea
+                id="careguard-scan-text"
+                value={receiptTextInput}
+                onChange={(event) => setReceiptTextInput(event.target.value)}
+                className="min-h-[120px] w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Dán nội dung OCR hóa đơn/đơn thuốc..."
+              />
+              <button
+                type="button"
+                onClick={onRecognizeReceiptText}
+                disabled={isScanning}
+                className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+              >
+                {isScanning ? "Đang quét nội dung..." : "Nhận diện từ text"}
+              </button>
+            </div>
           </div>
 
-          {receiptNotice ? <p className="mt-2 text-sm text-slate-600">{receiptNotice}</p> : null}
+          {receiptNotice ? <p className="mt-3 text-sm text-slate-700">{receiptNotice}</p> : null}
 
           {receiptDetections.length ? (
-            <ul className="mt-3 space-y-2">
-              {receiptDetections.map((item) => (
-                <li
-                  key={`${item.name}-${item.evidence}`}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
-                >
-                  <p className="font-medium text-slate-900">{item.name}</p>
-                  <p className="text-xs text-slate-500">
-                    khớp theo &quot;{item.evidence}&quot; | độ tin cậy {(item.confidence * 100).toFixed(0)}
-                    %
-                  </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500">
-              {hasReceiptText
-                ? "Chưa nhận diện được thuốc từ nội dung hiện tại. Bạn có thể nhập lại hoặc bổ sung ở bước 2."
-                : "Chưa có nội dung hóa đơn. Sau khi nhận diện được thuốc, chuyển sang bước 2 để thêm vào tủ thuốc."}
-            </p>
-          )}
+            <div className="mt-3 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-base font-semibold text-emerald-900">Xác nhận thủ công trước khi nhập tủ thuốc</p>
+              <p className="mt-1 text-sm text-emerald-800">
+                Vui lòng kiểm tra danh sách dưới đây. Nút thêm chỉ nên bấm khi bạn xác nhận kết quả OCR là chính xác.
+              </p>
+              <ul className="mt-3 grid gap-2 md:grid-cols-2">
+                {receiptDetections.map((item) => (
+                  <li key={`${item.normalized_name}-${item.evidence}`} className="rounded-xl border border-emerald-200 bg-white p-3">
+                    <p className="text-lg font-semibold text-slate-900">{item.drug_name}</p>
+                    <p className="mt-1 text-sm text-slate-700">Bằng chứng: {item.evidence}</p>
+                    <p className="mt-1 text-sm font-medium text-slate-700">Độ tin cậy: {Math.round(item.confidence * 100)}%</p>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={onImportDetections}
+                className="mt-4 min-h-12 rounded-xl bg-emerald-700 px-5 py-3 text-base font-semibold text-white hover:bg-emerald-800"
+              >
+                Tôi đã kiểm tra đúng, thêm vào {cabinetLabel}
+              </button>
+            </div>
+          ) : null}
         </section>
 
-        <section className={STEP_CARD_CLASS}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">B2. Chuẩn hóa tủ thuốc</h2>
-              <p className="mt-1 text-xs text-slate-500">Thêm từ hóa đơn hoặc nhập tay để hệ thống tự chạy DDI.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                {cabinet.length} mục
-              </span>
-              {cabinet.length ? (
-                <button
-                  type="button"
-                  onClick={onClearCabinet}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
-                >
-                  Xóa toàn bộ
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onAddDetectedToCabinet}
-              disabled={!receiptDetections.length}
-              className="rounded-xl bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Thêm từ nhận diện ({receiptDetections.length})
-            </button>
-          </div>
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bước 2</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">Quản lý {cabinetLabel}</h2>
 
           <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
             <input
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-              placeholder="Ví dụ: Paracetamol, Ibuprofen"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Ví dụ: Panadol Extra, Warfarin"
               value={manualMedicationInput}
               onChange={(event) => setManualMedicationInput(event.target.value)}
             />
             <button
               type="button"
               onClick={onAddManualMedication}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
             >
               Thêm thủ công
             </button>
+            <button
+              type="button"
+              onClick={refreshCabinet}
+              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+            >
+              Làm mới
+            </button>
           </div>
 
-          {cabinetNotice ? (
-            <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              {cabinetNotice}
-            </p>
-          ) : null}
-          {cabinetError ? (
-            <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{cabinetError}</p>
-          ) : null}
+          {cabinetLoading ? <p className="mt-3 text-sm text-slate-600">Đang tải tủ thuốc...</p> : null}
+          {cabinetError ? <p className="mt-3 text-sm text-red-700">{cabinetError}</p> : null}
+          {cabinetNotice ? <p className="mt-3 text-sm text-slate-700">{cabinetNotice}</p> : null}
 
           {cabinet.length ? (
             <ul className="mt-3 space-y-2">
               {cabinet.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900">{item.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {item.source === "receipt" ? "Nguồn: Hóa đơn" : "Nguồn: Thủ công"} |{" "}
-                      {new Date(item.addedAt).toLocaleString("vi-VN")}
+                <li key={item.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{item.drug_name}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      normalized: {item.normalized_name} | nguồn: {item.source}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => onRemoveCabinetItem(item.id)}
-                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-100"
+                    className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-700"
                   >
                     Xóa
                   </button>
@@ -604,156 +484,107 @@ export default function CareguardPage() {
               ))}
             </ul>
           ) : (
-            <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500">
-              Tủ thuốc đang trống. Khi có ít nhất 1 thuốc, hệ thống sẽ tự động kiểm tra DDI ở bước 3.
-            </p>
+            !cabinetLoading && <p className="mt-3 text-sm text-slate-600">Tủ thuốc đang trống.</p>
           )}
         </section>
 
-        <section className={STEP_CARD_CLASS}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">B3. Tự động kiểm tra DDI</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Kết quả tự cập nhật mỗi khi danh sách thuốc hoặc thông tin dị ứng thay đổi.
-              </p>
-            </div>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${autoRiskClass}`}>
-              {getRiskLabelVi(autoResult?.riskTier ?? null)}
-            </span>
-          </div>
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bước 3</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">Auto DDI và phân tích nâng cao</h2>
 
           <label className="mt-3 block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Dị ứng thuốc (tùy chọn)</span>
-            <input
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-              placeholder="Ví dụ: Penicillin, Aspirin"
+            <span className="text-sm font-medium text-slate-700">Dị ứng (không bắt buộc)</span>
+            <textarea
+              className="min-h-[90px] w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               value={allergiesInput}
               onChange={(event) => setAllergiesInput(event.target.value)}
+              placeholder="Mỗi dòng 1 dị ứng hoặc phân tách bằng dấu phẩy"
             />
-            <span className="text-xs text-slate-500">Thông tin này được dùng cho cả kiểm tra tự động và phân tích nâng cao.</span>
           </label>
 
-          {cabinet.length === 0 ? (
-            <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500">
-              Chưa có thuốc trong tủ nên chưa thể kiểm tra tương tác.
-            </p>
-          ) : null}
-
-          {autoChecking ? (
-            <p className="mt-3 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
-              Đang tự động kiểm tra tương tác thuốc...
-            </p>
-          ) : null}
-          {autoError ? (
-            <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{autoError}</p>
-          ) : null}
-
-          {autoResult ? (
-            <div className="mt-3 space-y-3">
-              <article className={`rounded-2xl border px-3 py-3 ${autoRiskClass}`}>
-                <p className="text-sm font-semibold">Tổng quan rủi ro: {getRiskLabelVi(autoResult.riskTier)}</p>
-                <p className="mt-1 text-sm">{getRiskHelperText(autoResult.riskTier)}</p>
-              </article>
-
-              <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-700">Cảnh báo tương tác</p>
-                {autoResult.ddiAlerts.length ? (
-                  <ul className="space-y-2">
-                    {autoResult.ddiAlerts.map((alert, index) => (
-                      <li
-                        key={`${alert.title}-${index}`}
-                        className={`rounded-xl border p-3 text-sm ${getSeverityToneClass(alert.severity)}`}
-                      >
-                        <p className="font-medium text-slate-800">{alert.title}</p>
-                        <p className="mt-1 text-xs text-slate-600">Mức độ: {getSeverityLabelVi(alert.severity)}</p>
-                        {alert.details ? <p className="mt-1 text-slate-700">{alert.details}</p> : null}
-                        <p className="mt-1 text-xs text-slate-700">Gợi ý: {getSeverityAdvice(alert.severity)}</p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                    Chưa ghi nhận tương tác nổi bật trong danh sách hiện tại.
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : !autoChecking && cabinet.length ? (
-            <p className="mt-3 text-sm text-slate-600">Chưa có kết quả kiểm tra tự động.</p>
-          ) : null}
-        </section>
-
-        <section className={STEP_CARD_CLASS}>
-          <details>
-            <summary className="cursor-pointer text-sm font-semibold uppercase tracking-wide text-slate-700">
-              B4. Phân tích nâng cao (tùy chọn)
-            </summary>
-
-            <p className="mt-2 text-sm text-slate-600">
-              Bổ sung triệu chứng và xét nghiệm để nhận khuyến nghị theo bối cảnh lâm sàng.
-            </p>
-
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Triệu chứng</span>
-                <textarea
-                  className="h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                  placeholder="Sốt, ho, chóng mặt..."
-                  value={symptomsInput}
-                  onChange={(event) => setSymptomsInput(event.target.value)}
-                />
-              </label>
-
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-700">Chỉ số xét nghiệm</span>
-                <textarea
-                  className="h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                  placeholder="egfr=28, creatinine=2.1"
-                  value={labsInput}
-                  onChange={(event) => setLabsInput(event.target.value)}
-                />
-              </label>
-            </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onRunAutoDdi}
+              disabled={autoChecking || cabinet.length === 0}
+              className="min-h-11 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {autoChecking ? "Đang chạy auto DDI..." : "Chạy auto DDI"}
+            </button>
 
             <button
               type="button"
-              onClick={onRunManualAnalyze}
-              disabled={manualChecking}
-              className="mt-3 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
+              onClick={onRunAdvancedAnalyze}
+              disabled={manualChecking || cabinet.length === 0}
+              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
             >
-              {manualChecking ? "Đang phân tích..." : "Chạy phân tích nâng cao"}
+              {manualChecking ? "Đang phân tích nâng cao..." : "Chạy phân tích nâng cao"}
             </button>
+          </div>
 
-            {manualError ? (
-              <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{manualError}</p>
-            ) : null}
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-sm font-medium text-slate-700">Triệu chứng (nâng cao)</span>
+              <textarea
+                className="h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Ví dụ: chóng mặt, khó thở"
+                value={symptomsInput}
+                onChange={(event) => setSymptomsInput(event.target.value)}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-sm font-medium text-slate-700">Xét nghiệm (nâng cao)</span>
+              <textarea
+                className="h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Ví dụ: egfr=28, creatinine=2.1"
+                value={labsInput}
+                onChange={(event) => setLabsInput(event.target.value)}
+              />
+            </label>
+          </div>
 
-            {manualResult ? (
-              <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-medium text-slate-700">Mức độ rủi ro</p>
-                  <span className={`rounded-full border px-2 py-1 text-xs font-semibold uppercase ${manualRiskClass}`}>
-                    {getRiskLabelVi(manualResult.riskTier)}
-                  </span>
-                </div>
+          {autoError ? <p className="mt-3 text-sm text-red-700">{autoError}</p> : null}
+          {manualError ? <p className="mt-3 text-sm text-red-700">{manualError}</p> : null}
 
-                <div className="space-y-2">
-                  <p className="text-sm font-semibold text-slate-700">Khuyến nghị</p>
-                  {manualResult.recommendations.length ? (
-                    <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                      {manualResult.recommendations.map((item, index) => (
-                        <li key={`${item}-${index}`}>{item}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-sm text-slate-600">Chưa có khuyến nghị chi tiết.</p>
-                  )}
-                </div>
+          {autoResult ? (
+            <article className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900">Kết quả Auto DDI:</p>
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getRiskBadgeClass(autoResult.riskTier)}`}>
+                  {getRiskLabelVi(autoResult.riskTier)}
+                </span>
               </div>
-            ) : null}
-          </details>
+              {autoResult.ddiAlerts.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {autoResult.ddiAlerts.map((alert, index) => (
+                    <li key={`${alert.title}-${index}`}>{alert.title}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-slate-700">Chưa phát hiện cảnh báo tương tác rõ ràng.</p>
+              )}
+            </article>
+          ) : null}
+
+          {manualResult ? (
+            <article className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900">Kết quả nâng cao:</p>
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getRiskBadgeClass(manualResult.riskTier)}`}>
+                  {getRiskLabelVi(manualResult.riskTier)}
+                </span>
+              </div>
+              {manualResult.recommendations.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {manualResult.recommendations.map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-slate-700">Chưa có khuyến nghị bổ sung.</p>
+              )}
+            </article>
+          ) : null}
         </section>
       </div>
     </PageShell>

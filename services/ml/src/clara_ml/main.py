@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from time import perf_counter
 
 from fastapi import FastAPI, Request, WebSocket
@@ -24,6 +25,36 @@ app = FastAPI(title="CLARA ML Service", version="0.1.0")
 prompt_loader = PromptLoader(Path(__file__).resolve().parent / "prompts" / "templates")
 rag_pipeline = RagPipelineP1()
 router = P1RoleIntentRouter()
+
+_LEGAL_GUARD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            (
+                r"(k[êe]\s*đ[ơo]n|prescrib(?:e|ing)?|đ[ơo]n\s*thu[oố]c|"
+                r"toa\s*thu[oố]c|thu[oố]c\s*tr[ịi])"
+            ),
+            flags=re.IGNORECASE,
+        ),
+        "prescription_request",
+    ),
+    (
+        re.compile(
+            r"(ch[ẩa]n\s*đo[aá]n|diagnos(?:e|is)|t[ôo]i\s*b[iị]\s*b[eệ]nh\s*g[iì])",
+            flags=re.IGNORECASE,
+        ),
+        "diagnosis_request",
+    ),
+    (
+        re.compile(
+            (
+                r"(li[ềe]u|dos(?:e|age)|u[ốo]ng\s*m[ấa]y|bao\s*nhi[eê]u\s*(vi[eê]n|mg)|"
+                r"m[ấa]y\s*(vi[eê]n|mg)|mg\s*m[ỗo]i\s*ng[aà]y)"
+            ),
+            flags=re.IGNORECASE,
+        ),
+        "dosage_request",
+    ),
+]
 
 
 def _now_iso() -> str:
@@ -73,6 +104,16 @@ def _as_list(value: object) -> list:
     if isinstance(value, tuple):
         return list(value)
     return []
+
+
+def _detect_legal_guard_violation(query: str) -> str | None:
+    normalized = query.strip().lower()
+    if not normalized:
+        return None
+    for pattern, reason in _LEGAL_GUARD_PATTERNS:
+        if pattern.search(normalized):
+            return reason
+    return None
 
 
 @app.middleware("http")
@@ -155,6 +196,37 @@ def rag_poc(payload: dict) -> dict:
 def routed_chat_infer(payload: dict) -> dict:
     query = str(payload.get("query", "")).strip()
     role_hint = str(payload.get("role", "")).strip().lower() or None
+    legal_guard_reason = _detect_legal_guard_violation(query)
+    if legal_guard_reason:
+        safe_role = (
+            role_hint
+            if role_hint in {"normal", "researcher", "doctor", "admin"}
+            else "normal"
+        )
+        return {
+            "role": safe_role,
+            "intent": "medical_policy_refusal",
+            "confidence": 1.0,
+            "emergency": False,
+            "answer": (
+                "CLARA không có thẩm quyền kê đơn, chẩn đoán, hoặc chỉ định liều dùng. "
+                "Tôi chỉ có thể giải thích tương tác thuốc và thông tin an toàn sử dụng "
+                "từ nguồn tham khảo. "
+                "Vui lòng liên hệ bác sĩ hoặc dược sĩ để được chỉ định phù hợp."
+            ),
+            "retrieved_ids": [],
+            "model_used": "legal-hard-guard-v1",
+            "flow_events": [
+                _flow_event(
+                    stage="legal_guard",
+                    status="blocked",
+                    source_count=0,
+                    note=f"Blocked by hard policy: {legal_guard_reason}",
+                )
+            ],
+            "guard_reason": legal_guard_reason,
+        }
+
     rag_flow_payload = payload.get("rag_flow")
     rag_flow = rag_flow_payload if isinstance(rag_flow_payload, dict) else {}
     role_router_enabled = _as_bool(rag_flow.get("role_router_enabled"), True)

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import PageShell from "@/components/ui/page-shell";
 import { CareguardAnalyzeResult } from "@/lib/careguard";
+import { acceptConsent, getConsentStatus } from "@/lib/consent";
 import {
   addCabinetItem,
   deleteCabinetItem,
@@ -78,6 +79,13 @@ function noticeClass(message: string): string {
 }
 
 export default function SelfMedPage() {
+  const [consentLoading, setConsentLoading] = useState(true);
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  const [consentRequiredVersion, setConsentRequiredVersion] = useState("");
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const [acceptingConsent, setAcceptingConsent] = useState(false);
+
   const [cabinetLabel, setCabinetLabel] = useState("Tủ thuốc cá nhân");
   const [items, setItems] = useState<CabinetItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -126,6 +134,43 @@ export default function SelfMedPage() {
     [ddiResult, items.length, scanDetections.length]
   );
 
+  const refreshConsentStatus = async (): Promise<boolean> => {
+    setConsentError("");
+    try {
+      const status = await getConsentStatus();
+      setConsentAccepted(status.accepted);
+      setConsentRequiredVersion(status.required_version);
+      return status.accepted;
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Không thể kiểm tra consent.");
+      setConsentAccepted(false);
+      return false;
+    }
+  };
+
+  const onAcceptConsent = async () => {
+    if (!consentRequiredVersion) return;
+    if (!consentChecked) {
+      setConsentError("Vui lòng tick xác nhận trước khi tiếp tục.");
+      return;
+    }
+
+    setAcceptingConsent(true);
+    setConsentError("");
+    try {
+      await acceptConsent({
+        consent_version: consentRequiredVersion,
+        accepted: true
+      });
+      setConsentAccepted(true);
+      await refreshCabinet();
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Không thể lưu xác nhận consent.");
+    } finally {
+      setAcceptingConsent(false);
+    }
+  };
+
   const refreshCabinet = async () => {
     setIsLoading(true);
     setLoadingError("");
@@ -141,7 +186,17 @@ export default function SelfMedPage() {
   };
 
   useEffect(() => {
-    void refreshCabinet();
+    const initialize = async () => {
+      setConsentLoading(true);
+      const accepted = await refreshConsentStatus();
+      if (accepted) {
+        await refreshCabinet();
+      } else {
+        setIsLoading(false);
+      }
+      setConsentLoading(false);
+    };
+    void initialize();
   }, []);
 
   const onAddManual = async (event: FormEvent<HTMLFormElement>) => {
@@ -245,6 +300,56 @@ export default function SelfMedPage() {
     }
   };
 
+  if (consentLoading) {
+    return (
+      <PageShell title="CLARA Self-Med">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-base font-semibold text-slate-900">Đang kiểm tra điều khoản sử dụng y tế...</p>
+        </section>
+      </PageShell>
+    );
+  }
+
+  if (!consentAccepted) {
+    return (
+      <PageShell title="CLARA Self-Med">
+        <section className="rounded-3xl border-2 border-amber-300 bg-amber-50 p-6 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-amber-800">Bước bắt buộc trước khi dùng</p>
+          <h2 className="mt-2 text-2xl font-bold text-slate-900">Tuyên bố miễn trừ trách nhiệm y tế</h2>
+          <p className="mt-3 text-lg leading-8 text-slate-800">
+            CLARA chỉ hỗ trợ cảnh báo an toàn thuốc và không thay thế bác sĩ. Không sử dụng ứng dụng để tự chẩn đoán, tự kê đơn, hoặc tự điều chỉnh liều dùng.
+          </p>
+          <p className="mt-3 text-base text-slate-700">
+            Phiên bản điều khoản hiện tại: <span className="font-semibold">{consentRequiredVersion || "-"}</span>
+          </p>
+
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-300 bg-white p-4">
+            <input
+              type="checkbox"
+              className="mt-1 h-5 w-5"
+              checked={consentChecked}
+              onChange={(event) => setConsentChecked(event.target.checked)}
+            />
+            <span className="text-base font-medium leading-7 text-slate-900">
+              Tôi đã đọc, hiểu và đồng ý với tuyên bố miễn trừ trách nhiệm y tế của CLARA.
+            </span>
+          </label>
+
+          <button
+            type="button"
+            onClick={onAcceptConsent}
+            disabled={!consentChecked || acceptingConsent}
+            className="mt-5 min-h-12 rounded-xl bg-slate-900 px-6 py-3 text-base font-semibold text-white disabled:opacity-50"
+          >
+            {acceptingConsent ? "Đang lưu xác nhận..." : "Đồng ý và tiếp tục"}
+          </button>
+
+          {consentError ? <p className="mt-3 text-sm text-red-700">{consentError}</p> : null}
+        </section>
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell title="CLARA Self-Med">
       <div className="space-y-5">
@@ -346,14 +451,14 @@ export default function SelfMedPage() {
                   {scanDetections.map((detection) => (
                     <li key={`${detection.normalized_name}-${detection.evidence}`} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-slate-900">{detection.drug_name}</p>
+                        <p className="text-base font-semibold text-slate-900">{detection.drug_name}</p>
                         <span
                           className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${confidencePillClass(detection.confidence)}`}
                         >
                           {Math.round(detection.confidence * 100)}%
                         </span>
                       </div>
-                      <p className="mt-1 text-xs text-slate-600">Bằng chứng OCR: {detection.evidence}</p>
+                      <p className="mt-1 text-sm text-slate-700">Bằng chứng OCR: {detection.evidence}</p>
                     </li>
                   ))}
                 </ul>
@@ -371,15 +476,17 @@ export default function SelfMedPage() {
 
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-sm font-semibold text-slate-900">Nhập từ kết quả scan</p>
-                  <p className="mt-1 text-xs text-slate-600">Hệ thống sẽ thêm toàn bộ thuốc đã nhận diện ở Bước 1 vào tủ thuốc.</p>
+                  <p className="text-sm font-semibold text-slate-900">Xác nhận thủ công kết quả scan</p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    Kiểm tra lại danh sách OCR ở Bước 1 trước khi thêm vào tủ thuốc.
+                  </p>
                   <button
-                    className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                    className="mt-3 min-h-12 rounded-xl bg-emerald-700 px-4 py-2 text-base font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
                     type="button"
                     disabled={!scanDetections.length}
                     onClick={onImportDetections}
                   >
-                    Thêm {scanDetections.length} thuốc từ scan
+                    Tôi đã kiểm tra đúng, thêm {scanDetections.length} thuốc
                   </button>
                 </article>
 

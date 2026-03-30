@@ -1,4 +1,9 @@
-from clara_api.schemas import RagFlowConfig, RagSourceEntry, SystemControlTowerConfig
+from clara_api.schemas import (
+    CareguardRuntimeConfig,
+    RagFlowConfig,
+    RagSourceEntry,
+    SystemControlTowerConfig,
+)
 
 CONTROL_TOWER_KEY = "control_tower_config_v1"
 
@@ -95,6 +100,7 @@ _DEFAULT_CONTROL_TOWER_CONFIG = SystemControlTowerConfig(
         web_retrieval_enabled=True,
         file_retrieval_enabled=True,
     ),
+    careguard_runtime=CareguardRuntimeConfig(external_ddi_enabled=False),
 )
 
 

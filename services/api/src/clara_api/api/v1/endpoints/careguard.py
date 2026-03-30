@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 import base64
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
 from clara_api.core.config import get_settings
+from clara_api.core.consent import ensure_medical_disclaimer_consent
+from clara_api.core.control_tower import get_control_tower_config_service
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.models import MedicineCabinet, MedicineItem, User
@@ -30,23 +33,133 @@ from clara_api.schemas import (
 router = APIRouter()
 
 DRUG_ALIAS_MAP: dict[str, list[str]] = {
-    "paracetamol": ["paracetamol", "acetaminophen", "panadol", "hapacol", "efferalgan"],
-    "ibuprofen": ["ibuprofen", "advil", "brufen"],
-    "aspirin": ["aspirin"],
-    "warfarin": ["warfarin", "coumadin"],
-    "lisinopril": ["lisinopril"],
-    "metformin": ["metformin", "glucophage"],
-    "amoxicillin": ["amoxicillin", "augmentin"],
-    "omeprazole": ["omeprazole"],
-    "simvastatin": ["simvastatin"],
-    "loratadine": ["loratadine", "claritin"],
-    "cetirizine": ["cetirizine", "zyrtec"],
-    "vitamin c": ["vitamin c", "ascorbic acid", "vitamin-c"],
+    "paracetamol": [
+        "paracetamol", "acetaminophen", "panadol", "panadol xanh", "hapacol", "efferalgan",
+        "paracetamol stada", "paracetamol dhg", "paracetamol mekophar", "acetamin",
+        "tylenol", "pamol", "adol", "pamin",
+    ],
+    "paracetamol caffeine": [
+        "panadol extra", "paracetamol caffeine", "paracetamol + caffeine", "cafetin",
+        "efferalgan codein", "decolgen", "tiffy", "cảm xuyên hương",
+    ],
+    "ibuprofen": ["ibuprofen", "advil", "brufen", "motrin", "ibuprofen stella", "ibuprofen dhg"],
+    "diclofenac": ["diclofenac", "voltaren", "cataflam", "diclofenac stada", "diclofenac dhg"],
+    "naproxen": ["naproxen", "naprosyn", "nalgesin", "naproxen stada"],
+    "aspirin": ["aspirin", "aspirin cardio", "aspirin protect", "aspilet", "baby aspirin"],
+    "warfarin": ["warfarin", "coumadin", "warfarex"],
+    "rivaroxaban": ["rivaroxaban", "xarelto"],
+    "apixaban": ["apixaban", "eliquis"],
+    "clopidogrel": ["clopidogrel", "plavix", "clopidogrel stada", "clopidogrel dhg"],
+    "lisinopril": ["lisinopril", "zestril", "lisinopril stada"],
+    "losartan": ["losartan", "cozaar", "losartan stada", "losartan dhg"],
+    "amlodipine": ["amlodipine", "norvasc", "amlodipin stada", "amlodipin dhg"],
+    "bisoprolol": ["bisoprolol", "concor", "bisoprolol stada", "bisoprolol hasan"],
+    "metoprolol": ["metoprolol", "betaloc", "metoprolol stella"],
+    "spironolactone": ["spironolactone", "aldactone", "spironolacton stada"],
+    "furosemide": ["furosemide", "lasix", "furosemid stada", "furosemid dhg"],
+    "digoxin": ["digoxin", "lanoxin"],
+    "amiodarone": ["amiodarone", "cordarone", "amiodaron stella"],
+    "verapamil": ["verapamil", "isoptin"],
+    "metformin": ["metformin", "glucophage", "metformin stada", "metformin dhg", "metformin hasan"],
+    "gliclazide": ["gliclazide", "diamicron", "gliclazid stada"],
+    "glimepiride": ["glimepiride", "amaryl", "glimepirid stada"],
+    "insulin": ["insulin", "insulatard", "novorapid", "humalog", "mixtard", "lantus", "levemir"],
+    "atorvastatin": ["atorvastatin", "lipitor", "atorvastatin stada", "atorvastatin dhg"],
+    "simvastatin": ["simvastatin", "zocor", "simvastatin stada", "simvastatin dhg"],
+    "rosuvastatin": ["rosuvastatin", "crestor", "rosuvastatin stada", "rosuvastatin dhg"],
+    "omeprazole": ["omeprazole", "losec", "omeprazol stada", "omeprazol dhg"],
+    "esomeprazole": ["esomeprazole", "nexium", "esomeprazol stada"],
+    "pantoprazole": ["pantoprazole", "pantoloc", "pantozol", "pantoprazol stada"],
+    "amoxicillin": ["amoxicillin", "amox", "amoxicillin stada", "amoxicillin dhg", "amoxil"],
+    "amoxicillin clavulanate": [
+        "amoxicillin clavulanate", "augmentin", "klamentin", "bidiclav", "amoclav", "clavam",
+    ],
+    "clarithromycin": ["clarithromycin", "klacid", "clarithromycin stada"],
+    "erythromycin": ["erythromycin", "erythrocin", "erythromycin stella"],
+    "ciprofloxacin": ["ciprofloxacin", "cipro", "ciprobay", "ciprofloxacin stada"],
+    "trimethoprim": ["trimethoprim", "cotrimoxazole", "bactrim", "septrin"],
+    "fluconazole": ["fluconazole", "diflucan", "fluconazole stada", "fluconazole dhg"],
+    "ketoconazole": ["ketoconazole", "nizoral", "ketoconazol stada"],
+    "linezolid": ["linezolid", "zyvox"],
+    "methotrexate": ["methotrexate", "methotrexat ebewe", "methotrexat"],
+    "allopurinol": ["allopurinol", "zyloric", "allopurinol stada"],
+    "azathioprine": ["azathioprine", "imuran"],
+    "tacrolimus": ["tacrolimus", "prograf"],
+    "sertraline": ["sertraline", "zoloft", "sertralin stada"],
+    "fluoxetine": ["fluoxetine", "prozac", "fluoxetin stada"],
+    "diazepam": ["diazepam", "valium", "seduxen", "diazepam stella"],
+    "tramadol": ["tramadol", "ultram", "tramadol stada", "tramadol dhg"],
+    "tizanidine": ["tizanidine", "sirdalud"],
+    "sildenafil": ["sildenafil", "viagra", "sildenafil stada"],
+    "nitroglycerin": ["nitroglycerin", "nitromint", "nitrostat"],
+    "loratadine": ["loratadine", "claritin", "loratadin stada", "loratadin dhg", "allerclear"],
+    "cetirizine": ["cetirizine", "zyrtec", "cetirizin stada", "cetirizin dhg"],
+    "prednisone": ["prednisone", "prednisolon", "medrol", "methylprednisolone"],
+    "cimetidine": ["cimetidine", "tagamet"],
+    "potassium chloride": ["potassium chloride", "kali clorid", "kcl", "kaliorid"],
+    "vitamin c": ["vitamin c", "ascorbic acid", "vitamin-c", "ceelin", "upsavit c", "redoxon"],
 }
+
+DRUG_RXCUI_MAP: dict[str, str] = {
+    "paracetamol": "161",
+    "ibuprofen": "5640",
+    "aspirin": "1191",
+    "warfarin": "11289",
+    "metformin": "6809",
+    "amoxicillin": "723",
+    "simvastatin": "36567",
+    "loratadine": "28889",
+    "cetirizine": "20610",
+    "omeprazole": "7646",
+    "lisinopril": "29046",
+    "losartan": "52175",
+    "amlodipine": "17767",
+    "clopidogrel": "32968",
+    "rivaroxaban": "1114195",
+    "apixaban": "1364430",
+    "spironolactone": "9997",
+    "furosemide": "4603",
+    "digoxin": "3407",
+    "amiodarone": "703",
+    "verapamil": "11170",
+    "atorvastatin": "83367",
+    "rosuvastatin": "301542",
+    "gliclazide": "4815",
+    "glimepiride": "25789",
+    "clarithromycin": "21212",
+    "ciprofloxacin": "2551",
+    "fluconazole": "4450",
+    "diazepam": "3322",
+    "tramadol": "10689",
+    "sildenafil": "136411",
+    "nitroglycerin": "4917",
+    "diclofenac": "3355",
+    "naproxen": "7258",
+}
+
+
+def _build_alias_lookup() -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for canonical, aliases in DRUG_ALIAS_MAP.items():
+        lookup[_normalize_text(canonical)] = canonical
+        for alias in aliases:
+            lookup[_normalize_text(alias)] = canonical
+    return lookup
 
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
+
+
+DRUG_ALIAS_LOOKUP = _build_alias_lookup()
+
+
+def _resolve_dictionary_mapping(drug_name: str) -> tuple[str, str, str]:
+    normalized_input = _normalize_text(drug_name)
+    canonical = DRUG_ALIAS_LOOKUP.get(normalized_input, normalized_input)
+    display_name = _to_title_case(canonical)
+    rx_cui = DRUG_RXCUI_MAP.get(canonical, "")
+    return display_name, canonical, rx_cui
 
 
 def _to_title_case(value: str) -> str:
@@ -77,7 +190,11 @@ def _require_user(
 ) -> User:
     user = db.execute(select(User).where(User.email == token.sub)).scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Không tìm thấy người dùng")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Không tìm thấy người dùng",
+        )
+    ensure_medical_disclaimer_consent(db, user_id=user.id)
     return user
 
 
@@ -106,10 +223,11 @@ def _detect_drugs_from_text(text: str) -> list[CabinetScanDetection]:
             if not re.search(pattern, normalized_text, flags=re.IGNORECASE):
                 continue
 
+            display_name, normalized_name, _rx_cui = _resolve_dictionary_mapping(canonical)
             detections.append(
                 CabinetScanDetection(
-                    drug_name=_to_title_case(canonical),
-                    normalized_name=_normalize_text(canonical),
+                    drug_name=display_name,
+                    normalized_name=normalized_name,
                     confidence=0.94 if alias == canonical else 0.82,
                     evidence=alias,
                 )
@@ -145,7 +263,14 @@ def _collect_text_candidates(payload: Any) -> list[str]:
 
         for key, nested in value.items():
             lowered = key.lower()
-            if lowered in {"text", "ocr_text", "full_text", "plain_text", "combined_ocr", "content"}:
+            if lowered in {
+                "text",
+                "ocr_text",
+                "full_text",
+                "plain_text",
+                "combined_ocr",
+                "content",
+            }:
                 walk(nested)
                 continue
             if lowered == "lines" and isinstance(nested, list):
@@ -211,7 +336,11 @@ def _post_tgc_ocr_json(
     return httpx.post(url, json=payload, headers=headers, timeout=timeout_seconds)
 
 
-def _scan_with_tgc_ocr(file_bytes: bytes, file_name: str, content_type: str) -> tuple[str, str, str]:
+def _scan_with_tgc_ocr(
+    file_bytes: bytes,
+    file_name: str,
+    content_type: str,
+) -> tuple[str, str, str]:
     settings = get_settings()
     endpoints = _parse_ocr_endpoints(settings.tgc_ocr_endpoints)
     if not endpoints:
@@ -311,7 +440,7 @@ def add_cabinet_item(
     user = _require_user(token, db)
     cabinet = _get_or_create_cabinet(db, user.id)
 
-    normalized = _normalize_text(payload.drug_name)
+    _, normalized, mapped_rxcui = _resolve_dictionary_mapping(payload.drug_name)
     existing = db.execute(
         select(MedicineItem).where(
             MedicineItem.cabinet_id == cabinet.id,
@@ -319,7 +448,10 @@ def add_cabinet_item(
         )
     ).scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Thuốc đã tồn tại trong tủ thuốc")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Thuốc đã tồn tại trong tủ thuốc",
+        )
 
     item = MedicineItem(
         cabinet_id=cabinet.id,
@@ -329,7 +461,7 @@ def add_cabinet_item(
         dosage_form=payload.dosage_form.strip(),
         quantity=payload.quantity,
         source=payload.source,
-        rx_cui=payload.rx_cui.strip(),
+        rx_cui=payload.rx_cui.strip() or mapped_rxcui,
         ocr_confidence=payload.ocr_confidence,
         expires_on=payload.expires_on,
         note=payload.note.strip(),
@@ -366,16 +498,23 @@ def delete_cabinet_item(
 @router.post("/cabinet/scan-text", response_model=CabinetScanTextResponse)
 def scan_cabinet_text(
     payload: CabinetScanTextRequest,
-    _token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
+    db: Session = Depends(get_db),
 ) -> CabinetScanTextResponse:
-    return CabinetScanTextResponse(detections=_detect_drugs_from_text(payload.text), extracted_text=payload.text)
+    _require_user(token, db)
+    return CabinetScanTextResponse(
+        detections=_detect_drugs_from_text(payload.text),
+        extracted_text=payload.text,
+    )
 
 
 @router.post("/cabinet/scan-file", response_model=CabinetScanTextResponse)
 async def scan_cabinet_file(
     file: UploadFile = File(...),
-    _token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
+    db: Session = Depends(get_db),
 ) -> CabinetScanTextResponse:
+    _require_user(token, db)
     file_name = file.filename or "uploaded-receipt"
     content_type = file.content_type or "application/octet-stream"
     file_bytes = await file.read()
@@ -418,7 +557,9 @@ def import_detections(
 
     inserted = 0
     for detection in payload.detections:
-        normalized = _normalize_text(detection.normalized_name or detection.drug_name)
+        _, normalized, mapped_rxcui = _resolve_dictionary_mapping(
+            detection.normalized_name or detection.drug_name
+        )
         if not normalized or normalized in existing_names:
             continue
         item = MedicineItem(
@@ -426,6 +567,7 @@ def import_detections(
             drug_name=detection.drug_name.strip(),
             normalized_name=normalized,
             source="ocr",
+            rx_cui=mapped_rxcui,
             ocr_confidence=detection.confidence,
             note=f"Phát hiện OCR: {detection.evidence}",
             updated_at=datetime.now(tz=UTC),
@@ -446,6 +588,7 @@ def run_auto_ddi_check(
 ) -> dict[str, Any]:
     user = _require_user(token, db)
     cabinet = _get_or_create_cabinet(db, user.id)
+    control_tower = get_control_tower_config_service().load(db)
     medication_names = db.execute(
         select(MedicineItem.normalized_name).where(MedicineItem.cabinet_id == cabinet.id)
     ).scalars().all()
@@ -455,6 +598,7 @@ def run_auto_ddi_check(
         "labs": payload.labs,
         "medications": sorted(set(medication_names)),
         "allergies": payload.allergies,
+        "external_ddi_enabled": control_tower.careguard_runtime.external_ddi_enabled,
     }
     return proxy_ml_post("/v1/careguard/analyze", request_payload)
 
@@ -462,6 +606,11 @@ def run_auto_ddi_check(
 @router.post("/analyze")
 def careguard_analyze(
     payload: dict[str, Any],
-    _token: TokenPayload = Depends(require_roles("normal", "doctor")),
+    token: TokenPayload = Depends(require_roles("normal", "doctor")),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return proxy_ml_post("/v1/careguard/analyze", payload)
+    _require_user(token, db)
+    control_tower = get_control_tower_config_service().load(db)
+    request_payload = dict(payload)
+    request_payload["external_ddi_enabled"] = control_tower.careguard_runtime.external_ddi_enabled
+    return proxy_ml_post("/v1/careguard/analyze", request_payload)

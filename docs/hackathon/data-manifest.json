@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-03-30T04:01:09.896439+00:00",
+  "items": [
+    {
+      "name": "VN Drug Dictionary",
+      "path": "services/api/src/clara_api/api/v1/endpoints/careguard.py",
+      "checksum_md5": "bb6905447fccbf57c1ad4629bc43b54e",
+      "coverage": {
+        "canonical_keys": 56,
+        "alias_entries": 217
+      },
+      "license": "Internal Team Asset for Demo",
+      "source": "CLARA internal mapping"
+    },
+    {
+      "name": "Local DDI Fallback Rules",
+      "path": "services/ml/src/clara_ml/agents/careguard.py",
+      "checksum_md5": "c4b11421e3298231d001268d4d899a2e",
+      "coverage": {
+        "ddi_pairs": 62
+      },
+      "license": "Internal Team Asset for Demo",
+      "source": "CLARA internal safety rules"
+    },
+    {
+      "name": "Hard Legal Guard Patterns",
+      "path": "services/ml/src/clara_ml/main.py",
+      "checksum_md5": "fbba0cf9a8c6162668e699cc3f294941",
+      "license": "Internal Team Asset for Demo",
+      "source": "CLARA runtime policy"
+    },
+    {
+      "name": "DDI Test Set (50 cases)",
+      "path": "data/demo/ddi_internal_test_set.json",
+      "checksum_md5": "c997b03c4d0667b7b17d19fccf7d0fb2",
+      "license": "Internal Team Asset for Demo",
+      "source": "Generated from local DDI rules"
+    },
+    {
+      "name": "Refusal Prompt Set (10 prompts)",
+      "path": "data/demo/chatbot_refusal_prompts_10.json",
+      "checksum_md5": "f6786f3b4bf898e224a66d96ee438649",
+      "license": "Internal Team Asset for Demo",
+      "source": "Hackathon red-team prompt set"
+    }
+  ]
+}

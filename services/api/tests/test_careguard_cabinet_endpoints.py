@@ -5,10 +5,39 @@ from clara_api.main import app
 client = TestClient(app)
 
 
-def _login(email: str) -> str:
+def _login_without_consent(email: str) -> str:
     response = client.post("/api/v1/auth/login", json={"email": email, "password": "secret123"})
     assert response.status_code == 200
     return response.json()["access_token"]
+
+
+def _login(email: str) -> str:
+    response = client.post("/api/v1/auth/login", json={"email": email, "password": "secret123"})
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+    status_response = client.get(
+        "/api/v1/auth/consent-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert status_response.status_code == 200
+    required_version = status_response.json()["required_version"]
+    accept_response = client.post(
+        "/api/v1/auth/consent",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"consent_version": required_version, "accepted": True},
+    )
+    assert accept_response.status_code == 200
+    return token
+
+
+def test_cabinet_requires_consent_gate() -> None:
+    token = _login_without_consent("consent-required@example.com")
+    response = client.get(
+        "/api/v1/careguard/cabinet",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 428
+    assert "miễn trừ trách nhiệm y tế" in response.json()["detail"]
 
 
 def test_cabinet_lifecycle() -> None:
@@ -141,3 +170,4 @@ def test_auto_ddi_proxy_payload(monkeypatch) -> None:
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert "medications" in payload
+    assert payload["external_ddi_enabled"] is False

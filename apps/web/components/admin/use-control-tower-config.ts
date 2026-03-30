@@ -88,7 +88,10 @@ function normalizeConfig(input: ControlTowerConfig): ControlTowerConfig {
   const sources = Array.isArray(input.rag_sources) ? input.rag_sources : [];
   return {
     rag_sources: sortSources(sources.map(normalizeSource)),
-    rag_flow: normalizeFlow(input.rag_flow)
+    rag_flow: normalizeFlow(input.rag_flow),
+    careguard_runtime: {
+      external_ddi_enabled: Boolean(input.careguard_runtime?.external_ddi_enabled)
+    }
   };
 }
 

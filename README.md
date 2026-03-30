@@ -117,6 +117,7 @@ Xem `.env.example` để cấu hình:
 
 - Key API: `OPENAI_API_KEY`, `NCBI_API_KEY`, `WHO_ICD11_CLIENT_ID`, `WHO_ICD11_CLIENT_SECRET`
 - Database URLs: `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`, `NEO4J_URI`
+- Consent gate: `MEDICAL_DISCLAIMER_VERSION`
 - Port override cho Compose nếu máy local bị trùng cổng.
 
 ## 10. Deploy Nginx cho domain

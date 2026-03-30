@@ -129,6 +129,20 @@ def test_routed_chat_infer_emergency_fast_path():
     assert body["retrieved_ids"] == []
 
 
+def test_routed_chat_infer_blocks_prescription_and_dosage_requests():
+    response = client.post(
+        "/v1/chat/routed",
+        json={"query": "Tôi nên uống mấy viên warfarin mỗi ngày, kê đơn giúp tôi."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "medical_policy_refusal"
+    assert body["model_used"] == "legal-hard-guard-v1"
+    assert body["emergency"] is False
+    assert body["retrieved_ids"] == []
+    assert "không có thẩm quyền kê đơn" in body["answer"].lower()
+
+
 def test_research_tier2_returns_progressive_schema():
     response = client.post(
         "/v1/research/tier2",

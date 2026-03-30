@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 
 from clara_api.core.auth_email import dispatch_action_email, should_expose_action_token_preview
 from clara_api.core.config import get_settings
+from clara_api.core.consent import (
+    MEDICAL_CONSENT_TYPE,
+    get_latest_user_consent,
+    required_medical_disclaimer_version,
+)
 from clara_api.core.passwords import hash_password, verify_password
 from clara_api.core.rbac import get_current_token
 from clara_api.core.security import (
@@ -18,10 +23,13 @@ from clara_api.core.security import (
     create_refresh_token,
     decode_refresh_token,
 )
-from clara_api.db.models import AuthToken, User
+from clara_api.db.models import AuthToken, User, UserConsent
 from clara_api.db.session import get_db
 from clara_api.schemas import (
     ChangePasswordRequest,
+    ConsentAcceptRequest,
+    ConsentAcceptResponse,
+    ConsentStatusResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -209,7 +217,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
 
     token = create_access_token(subject=user.email, role=user.role)
     refresh_token = create_refresh_token(subject=user.email, role=user.role)
-    return LoginResponse(access_token=token, refresh_token=refresh_token, role=user.role)  # type: ignore[arg-type]
+    return LoginResponse(
+        access_token=token,
+        refresh_token=refresh_token,
+        role=user.role,  # type: ignore[arg-type]
+    )
 
 
 @router.post("/refresh", response_model=LoginResponse)
@@ -356,3 +368,74 @@ def me(
         "is_email_verified": user.is_email_verified,
         "status": user.status,
     }
+
+
+@router.get("/consent-status", response_model=ConsentStatusResponse)
+def get_consent_status(
+    token_payload: TokenPayload = Depends(get_current_token),
+    db: Session = Depends(get_db),
+) -> ConsentStatusResponse:
+    user = db.execute(select(User).where(User.email == token_payload.sub)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Người dùng không tồn tại"
+        )
+
+    required_version = required_medical_disclaimer_version()
+    latest = get_latest_user_consent(db, user_id=user.id, consent_type=MEDICAL_CONSENT_TYPE)
+    accepted = bool(latest and latest.consent_version == required_version)
+    return ConsentStatusResponse(
+        consent_type=MEDICAL_CONSENT_TYPE,
+        required_version=required_version,
+        accepted=accepted,
+        accepted_version=latest.consent_version if latest else None,
+        accepted_at=latest.accepted_at if latest else None,
+    )
+
+
+@router.post("/consent", response_model=ConsentAcceptResponse)
+def accept_consent(
+    payload: ConsentAcceptRequest,
+    token_payload: TokenPayload = Depends(get_current_token),
+    db: Session = Depends(get_db),
+) -> ConsentAcceptResponse:
+    if not payload.accepted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bạn cần xác nhận đồng ý để tiếp tục",
+        )
+
+    required_version = required_medical_disclaimer_version()
+    if payload.consent_version != required_version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Phiên bản consent không hợp lệ. Yêu cầu: {required_version}",
+        )
+
+    user = db.execute(select(User).where(User.email == token_payload.sub)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Người dùng không tồn tại"
+        )
+
+    latest = get_latest_user_consent(db, user_id=user.id, consent_type=MEDICAL_CONSENT_TYPE)
+    if latest and latest.consent_version == required_version:
+        return ConsentAcceptResponse(
+            consent_type=MEDICAL_CONSENT_TYPE,
+            consent_version=latest.consent_version,
+            accepted_at=latest.accepted_at,
+        )
+
+    consent = UserConsent(
+        user_id=user.id,
+        consent_type=MEDICAL_CONSENT_TYPE,
+        consent_version=required_version,
+    )
+    db.add(consent)
+    db.commit()
+    db.refresh(consent)
+    return ConsentAcceptResponse(
+        consent_type=consent.consent_type,
+        consent_version=consent.consent_version,
+        accepted_at=consent.accepted_at,
+    )

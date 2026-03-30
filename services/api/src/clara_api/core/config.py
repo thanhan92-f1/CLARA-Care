@@ -72,6 +72,10 @@ class Settings(BaseSettings):
         default="/reset-password",
         validation_alias="AUTH_RESET_PASSWORD_PATH",
     )
+    medical_disclaimer_version: str = Field(
+        default="2026-04-v1",
+        validation_alias="MEDICAL_DISCLAIMER_VERSION",
+    )
     smtp_host: str = Field(default="", validation_alias="SMTP_HOST")
     smtp_port: int = Field(default=587, validation_alias="SMTP_PORT", gt=0)
     smtp_username: str = Field(default="", validation_alias="SMTP_USERNAME")

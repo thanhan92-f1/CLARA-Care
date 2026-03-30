@@ -95,7 +95,10 @@ export default function ControlTowerPage() {
         const response = await getControlTowerConfig();
         setConfig({
           rag_sources: sortSources(response.rag_sources ?? []),
-          rag_flow: response.rag_flow
+          rag_flow: response.rag_flow,
+          careguard_runtime: {
+            external_ddi_enabled: Boolean(response.careguard_runtime?.external_ddi_enabled)
+          }
         });
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Không thể tải cấu hình control tower.");
@@ -155,6 +158,18 @@ export default function ControlTowerPage() {
     });
   };
 
+  const onToggleExternalDdi = () => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        careguard_runtime: {
+          external_ddi_enabled: !prev.careguard_runtime.external_ddi_enabled
+        }
+      };
+    });
+  };
+
   const onSave = async () => {
     if (!config) return;
     setIsSaving(true);
@@ -164,7 +179,10 @@ export default function ControlTowerPage() {
       const updated = await updateControlTowerConfig(config);
       setConfig({
         rag_sources: sortSources(updated.rag_sources ?? []),
-        rag_flow: updated.rag_flow
+        rag_flow: updated.rag_flow,
+        careguard_runtime: {
+          external_ddi_enabled: Boolean(updated.careguard_runtime?.external_ddi_enabled)
+        }
       });
       setMessage("Đã lưu cấu hình nguồn RAG và flow trả lời.");
     } catch (cause) {
@@ -383,6 +401,32 @@ export default function ControlTowerPage() {
                   />
                 </div>
               </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">CareGuard Runtime</p>
+                <h3 className="text-sm font-semibold text-slate-900">External DDI Source</h3>
+                <p className="text-xs text-slate-500">Bật/tắt gọi RxNav + openFDA ngay tại runtime, không cần restart service.</p>
+              </div>
+              <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <span className="text-sm font-medium text-slate-900">External DDI enabled</span>
+                <span className="inline-flex items-center gap-2">
+                  <span
+                    className={`text-[11px] font-semibold uppercase tracking-wide ${
+                      config?.careguard_runtime.external_ddi_enabled ? "text-emerald-700" : "text-slate-500"
+                    }`}
+                  >
+                    {config?.careguard_runtime.external_ddi_enabled ? "On" : "Off"}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config?.careguard_runtime.external_ddi_enabled)}
+                    onChange={onToggleExternalDdi}
+                    className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                </span>
+              </label>
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">

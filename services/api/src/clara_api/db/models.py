@@ -58,6 +58,21 @@ class AuthToken(Base):
     user: Mapped[User] = relationship("User")
 
 
+class UserConsent(Base):
+    __tablename__ = "user_consents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    consent_type: Mapped[str] = mapped_column(String(64), default="medical_disclaimer", index=True)
+    consent_version: Mapped[str] = mapped_column(String(32), index=True)
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    user: Mapped[User] = relationship("User")
+
+
 class MedicineCabinet(Base):
     __tablename__ = "medicine_cabinets"
 

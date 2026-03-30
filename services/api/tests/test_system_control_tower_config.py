@@ -31,6 +31,7 @@ def test_control_tower_config_get_and_put() -> None:
     payload = get_response.json()
     assert "rag_sources" in payload
     assert "rag_flow" in payload
+    assert "careguard_runtime" in payload
 
     payload["rag_flow"]["deepseek_fallback_enabled"] = True
     put_response = client.put(
@@ -41,3 +42,24 @@ def test_control_tower_config_get_and_put() -> None:
     assert put_response.status_code == 200
     updated = put_response.json()
     assert updated["rag_flow"]["deepseek_fallback_enabled"] is True
+
+
+def test_careguard_runtime_toggle_get_and_put() -> None:
+    token = _login("dr@doctor.clara")
+
+    get_response = client.get(
+        "/api/v1/system/careguard/runtime",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get_response.status_code == 200
+    payload = get_response.json()
+    assert "external_ddi_enabled" in payload
+
+    put_response = client.put(
+        "/api/v1/system/careguard/runtime",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"external_ddi_enabled": True},
+    )
+    assert put_response.status_code == 200
+    updated = put_response.json()
+    assert updated["external_ddi_enabled"] is True

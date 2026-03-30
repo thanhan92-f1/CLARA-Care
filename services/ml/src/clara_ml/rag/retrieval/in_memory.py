@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from clara_ml.config import settings
 from clara_ml.rag.embedder import HttpEmbeddingClient
 
@@ -13,12 +11,17 @@ from .text_utils import dedupe_documents
 
 
 class InMemoryRetriever:
-    def __init__(self, documents: list[Document], embedder: HttpEmbeddingClient | None = None) -> None:
+    def __init__(
+        self,
+        documents: list[Document],
+        embedder: HttpEmbeddingClient | None = None,
+    ) -> None:
         self.builder = DocumentBuilder()
         self.external_gateway = ExternalSourceGateway()
         self.scorer = DocumentScorer(embedder=embedder)
         self.documents = [
-            self.builder.normalized_document(doc, default_source="internal") for doc in documents
+            self.builder.normalized_document(doc, default_source="internal")
+            for doc in documents
         ]
 
     def retrieve_external_scientific(

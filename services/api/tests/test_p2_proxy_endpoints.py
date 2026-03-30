@@ -10,7 +10,20 @@ client = TestClient(app)
 def _login(email: str) -> str:
     response = client.post("/api/v1/auth/login", json={"email": email, "password": "secret"})
     assert response.status_code == 200
-    return response.json()["access_token"]
+    token = response.json()["access_token"]
+    status_response = client.get(
+        "/api/v1/auth/consent-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert status_response.status_code == 200
+    required_version = status_response.json()["required_version"]
+    accept_response = client.post(
+        "/api/v1/auth/consent",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"consent_version": required_version, "accepted": True},
+    )
+    assert accept_response.status_code == 200
+    return token
 
 
 @pytest.mark.parametrize(
@@ -59,6 +72,8 @@ def test_new_proxy_endpoints_success(
     expected_payload = dict(request_payload)
     if api_path == "/api/v1/research/tier2":
         expected_payload["role"] = "researcher"
+    if api_path == "/api/v1/careguard/analyze":
+        expected_payload["external_ddi_enabled"] = False
     assert captured["json"] == expected_payload
     timeout = captured["timeout"]
     assert isinstance(timeout, (int, float))  # noqa: UP038
