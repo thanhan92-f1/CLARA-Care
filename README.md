@@ -86,14 +86,14 @@ Trigger:
 - Pull Request
 - Manual (`workflow_dispatch`)
 
-Các bước:
+Các job chính:
 
-1. Setup Python 3.11
-2. Install tooling (`ruff`, `mypy`, `pytest`)
-3. Run `docs-check`
-4. Run `ruff`
-5. Run `mypy`
-6. Run `pytest`
+1. `quality`: `docs-check` + `ruff` + `mypy`
+2. `api-tests`: chỉ chạy khi thay đổi `services/api/**`
+3. `ml-tests`: chỉ chạy khi thay đổi `services/ml/**`
+4. `web-lint-build`: `npm ci` + `npm run lint` + `npm run build` trong `apps/web`
+5. `security-audit`: `pip-audit` + `npm audit --omit=dev`
+6. `docker-compose-smoke`: build nhanh `api/ml/web` từ `docker-compose.app.yml`
 
 ## 8. Pre-commit
 
