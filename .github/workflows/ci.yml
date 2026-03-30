@@ -22,6 +22,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       ci: ${{ steps.filter.outputs.ci }}
       python: ${{ steps.filter.outputs.python }}
+      python_changed_files: ${{ steps.filter.outputs.python_changed_files }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +31,7 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          list-files: shell
           filters: |
             api:
               - 'services/api/**'
@@ -53,6 +55,9 @@ jobs:
               - 'services/**/*.py'
               - 'scripts/**/*.py'
               - 'services/**/pyproject.toml'
+            python_changed:
+              - 'services/**/*.py'
+              - 'scripts/**/*.py'
 
   quality:
     name: docs-check + ruff + mypy
@@ -91,30 +96,23 @@ jobs:
 
       - name: Run Ruff
         run: |
-          targets=()
-          for d in services/api/src services/api/tests services/ml/src services/ml/tests scripts; do
-            if [ -d "$d" ]; then
-              targets+=("$d")
-            fi
-          done
-          if [ "${#targets[@]}" -gt 0 ]; then
-            ruff check "${targets[@]}"
+          files="${{ needs.changes.outputs.python_changed_files }}"
+          if [ -n "$files" ]; then
+            # dorny/paths-filter list-files=shell returns shell-escaped file list
+            # shellcheck disable=SC2086
+            ruff check $files
           else
-            echo "No Python source directories found. Skip Ruff."
+            echo "No changed Python files. Skip Ruff."
           fi
 
       - name: Run mypy
         run: |
-          targets=()
-          for d in services/api/src services/ml/src; do
-            if [ -d "$d" ]; then
-              targets+=("$d")
-            fi
-          done
-          if [ "${#targets[@]}" -gt 0 ]; then
-            mypy "${targets[@]}" --ignore-missing-imports
+          files="${{ needs.changes.outputs.python_changed_files }}"
+          if [ -n "$files" ]; then
+            # shellcheck disable=SC2086
+            mypy $files --ignore-missing-imports
           else
-            echo "No mypy targets found. Skip mypy."
+            echo "No changed Python files. Skip mypy."
           fi
 
   api-tests:
@@ -134,12 +132,13 @@ jobs:
       - name: Install pytest
         run: |
           python -m pip install --upgrade pip
-          pip install "pytest==8.3.2"
+          pip install -e "services/api[dev]"
 
       - name: Run API pytest
         run: |
           if [ -d "services/api/tests" ]; then
-            pytest -q services/api/tests
+            cd services/api
+            pytest -q tests
           else
             echo "No services/api/tests directory found. Skip API pytest."
           fi
@@ -161,12 +160,13 @@ jobs:
       - name: Install pytest
         run: |
           python -m pip install --upgrade pip
-          pip install "pytest==8.3.2"
+          pip install -e "services/ml[dev]"
 
       - name: Run ML pytest
         run: |
           if [ -d "services/ml/tests" ]; then
-            pytest -q services/ml/tests
+            cd services/ml
+            pytest -q tests
           else
             echo "No services/ml/tests directory found. Skip ML pytest."
           fi

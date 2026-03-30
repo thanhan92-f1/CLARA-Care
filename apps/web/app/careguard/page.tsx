@@ -506,7 +506,8 @@ export default function CareguardPage() {
                 >
                   <p className="font-medium text-slate-900">{item.name}</p>
                   <p className="text-xs text-slate-500">
-                    khớp theo "{item.evidence}" | độ tin cậy {(item.confidence * 100).toFixed(0)}%
+                    khớp theo &quot;{item.evidence}&quot; | độ tin cậy {(item.confidence * 100).toFixed(0)}
+                    %
                   </p>
                 </li>
               ))}
