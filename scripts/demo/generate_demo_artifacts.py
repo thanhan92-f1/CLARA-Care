@@ -28,6 +28,8 @@ def parse_annassign_literal(path: Path, var_name: str) -> Any:
     for node in module.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if node.target.id == var_name:
+                if node.value is None:
+                    continue
                 return ast.literal_eval(node.value)
     raise RuntimeError(f"Cannot find {var_name} in {path}")
 

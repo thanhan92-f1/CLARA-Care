@@ -42,7 +42,7 @@ def test_new_proxy_endpoints_success(
 ) -> None:
     token = _login(email)
     captured: dict[str, object] = {}
-    request_payload = {"sample": "value"}
+    request_payload: dict[str, object] = {"sample": "value"}
     upstream_payload = {"ok": True, "endpoint": ml_path}
 
     class _MockResponse:

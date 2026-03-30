@@ -15,12 +15,24 @@ from clara_api.schemas import CareguardRuntimeConfig, SystemControlTowerConfig
 
 router = APIRouter()
 
+
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
 
 
 def _utc_ago_iso(*, minutes: int = 0, hours: int = 0) -> str:
     return (datetime.now(tz=UTC) - timedelta(minutes=minutes, hours=hours)).isoformat()
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
 
 
 @router.get("/metrics")
@@ -137,7 +149,9 @@ def get_ecosystem(
     summary = {
         "partners_total": len(partner_health),
         "partners_down": sum(1 for partner in partner_health if partner["status"] == "down"),
-        "trust_low_count": sum(1 for score in data_trust_scores if int(score["trust_score"]) < 60),
+        "trust_low_count": sum(
+            1 for score in data_trust_scores if _to_float(score.get("trust_score")) < 60
+        ),
         "critical_alert_count": sum(
             1 for alert in federation_alerts if alert["severity"] == "critical"
         ),
