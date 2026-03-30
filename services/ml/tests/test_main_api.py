@@ -118,6 +118,20 @@ def test_routed_chat_infer_returns_routing_and_answer():
     assert "factcheck" in body
 
 
+def test_routed_chat_infer_uses_smalltalk_fastpath_for_greeting():
+    response = client.post("/v1/chat/routed", json={"query": "hi"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "general_guidance"
+    assert body["model_used"] == "smalltalk-fastpath-v1"
+    assert body["retrieved_ids"] == []
+    assert "chào" in body["answer"].lower()
+    assert any(
+        event.get("stage") == "smalltalk_fastpath" and event.get("status") == "completed"
+        for event in body["flow_events"]
+    )
+
+
 def test_routed_chat_infer_emergency_fast_path():
     response = client.post("/v1/chat/routed", json={"query": "Kho tho, dau nguc du doi, xin giup."})
     assert response.status_code == 200
@@ -200,6 +214,14 @@ def test_research_tier2_returns_progressive_schema():
     assert len(body["citations"]) >= 1
     assert isinstance(body["answer"], str)
     assert body["answer"]
+    assert isinstance(body.get("flow_events"), list)
+    assert any(event.get("stage") == "planner" for event in body["flow_events"])
+    assert any(event.get("stage") == "verification" for event in body["flow_events"])
+    assert all("payload" in event for event in body["flow_events"] if isinstance(event, dict))
+    assert isinstance(body["metadata"].get("planner_trace"), dict)
+    assert isinstance(body["metadata"].get("retrieval_trace"), dict)
+    assert isinstance(body["metadata"].get("verifier_trace"), dict)
+    assert body["metadata"]["verification_status"]["verdict"] in {"pass", "warn", "fail"}
 
 
 def test_careguard_analyze_returns_risk_and_alerts():

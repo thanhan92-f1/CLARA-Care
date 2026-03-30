@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 from clara_ml.rag.embedder import HttpEmbeddingClient
 
@@ -31,9 +31,13 @@ class DocumentScorer:
         top_k: int,
         *,
         source_policies: dict[str, dict[str, float | bool]] | None = None,
+        score_trace: list[dict[str, Any]] | None = None,
     ) -> list[Document]:
         if top_k <= 0:
             return []
+
+        if score_trace is not None:
+            score_trace.clear()
 
         normalized_docs = [self._normalize_document(doc) for doc in documents]
         if not normalized_docs:
@@ -48,12 +52,21 @@ class DocumentScorer:
 
         source_policies = source_policies or {}
         scored: list[tuple[float, Document]] = []
+        trace_rows: list[dict[str, Any]] = []
 
         for doc, doc_vector in zip(normalized_docs, doc_vectors):
             base_score = sum(a * b for a, b in zip(query_vector, doc_vector))
             source_key = str(doc.metadata.get("source") or "").strip().lower()
             policy = source_policies.get(source_key, {"enabled": True, "weight": 1.0})
             if not bool(policy.get("enabled", True)):
+                trace_rows.append(
+                    {
+                        "doc_id": doc.id,
+                        "source": source_key or "unknown",
+                        "excluded": True,
+                        "reason": "source_disabled_by_policy",
+                    }
+                )
                 continue
 
             policy_weight = safe_weight(policy.get("weight", 1.0), default=1.0)
@@ -74,6 +87,16 @@ class DocumentScorer:
                 * pdf_factor
             )
 
+            score_breakdown = {
+                "base_score": float(base_score),
+                "policy_weight": float(policy_weight),
+                "doc_weight": float(doc_weight),
+                "source_bias": float(source_bias),
+                "trust_factor": float(trust_factor),
+                "tag_factor": float(tag_factor),
+                "pdf_factor": float(pdf_factor),
+                "final_score": float(score),
+            }
             doc.metadata["weight"] = doc_weight
             doc.metadata["policy_weight"] = policy_weight
             doc.metadata["source_bias"] = source_bias
@@ -81,7 +104,24 @@ class DocumentScorer:
             doc.metadata["tag_factor"] = tag_factor
             doc.metadata["pdf_factor"] = pdf_factor
             doc.metadata["score"] = float(score)
+            doc.metadata["score_breakdown"] = score_breakdown
+            trace_rows.append(
+                {
+                    "doc_id": doc.id,
+                    "source": source_key or "unknown",
+                    "excluded": False,
+                    **score_breakdown,
+                }
+            )
             scored.append((score, doc))
 
         scored.sort(key=lambda item: item[0], reverse=True)
-        return [doc for _, doc in scored[:top_k]]
+        selected_docs = [doc for _, doc in scored[:top_k]]
+
+        if score_trace is not None:
+            selected_ids = {doc.id for doc in selected_docs}
+            for row in trace_rows:
+                row["selected"] = row.get("doc_id") in selected_ids
+            score_trace.extend(trace_rows)
+
+        return selected_docs

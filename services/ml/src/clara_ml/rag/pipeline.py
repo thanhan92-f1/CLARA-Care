@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, List, Protocol
+from uuid import uuid4
 
 from clara_ml.config import settings
 from clara_ml.llm.deepseek_client import DeepSeekClient, DeepSeekResponse
@@ -20,6 +22,7 @@ class RagResult:
     retrieved_context: List[dict[str, Any]] = field(default_factory=list)
     context_debug: dict[str, Any] = field(default_factory=dict)
     flow_events: List[dict[str, Any]] = field(default_factory=list)
+    trace: dict[str, Any] = field(default_factory=dict)
 
 
 class LlmGenerator(Protocol):
@@ -85,6 +88,65 @@ class RagPipelineP1:
             counts[source] = counts.get(source, 0) + 1
         return counts
 
+    @staticmethod
+    def _trace_doc_rows(docs: List[Document], *, limit: int = 5) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for doc in docs[: max(int(limit), 1)]:
+            metadata = doc.metadata or {}
+            raw_score = metadata.get("score", 0.0)
+            try:
+                parsed_score = float(raw_score)
+            except (TypeError, ValueError):
+                parsed_score = 0.0
+            rows.append(
+                {
+                    "id": doc.id,
+                    "source": str(metadata.get("source") or "unknown"),
+                    "score": parsed_score,
+                    "url": str(metadata.get("url") or ""),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_planner_hints(hints: object) -> dict[str, Any]:
+        if not isinstance(hints, dict):
+            return {
+                "internal_top_k": 3,
+                "hybrid_top_k": 3,
+                "query_focus": "default",
+                "reason_codes": [],
+            }
+
+        def _as_int(value: object, default: int, *, min_value: int = 1, max_value: int = 12) -> int:
+            try:
+                parsed = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+            return max(min_value, min(max_value, parsed))
+
+        reason_codes_raw = hints.get("reason_codes")
+        reason_codes: list[str] = []
+        if isinstance(reason_codes_raw, list):
+            for item in reason_codes_raw[:8]:
+                text = str(item).strip()
+                if text:
+                    reason_codes.append(text)
+
+        return {
+            "internal_top_k": _as_int(hints.get("internal_top_k"), 3),
+            "hybrid_top_k": _as_int(hints.get("hybrid_top_k"), 3),
+            "query_focus": str(hints.get("query_focus") or "default"),
+            "reason_codes": reason_codes,
+        }
+
+    @staticmethod
+    def _extract_retriever_trace(retriever: object) -> dict[str, Any]:
+        raw_trace = getattr(retriever, "last_trace", None)
+        if isinstance(raw_trace, dict):
+            return dict(raw_trace)
+        return {}
+
     def _flow_event(
         self,
         *,
@@ -92,13 +154,26 @@ class RagPipelineP1:
         status: str,
         docs: List[Document],
         note: str,
+        component: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        enriched_payload = {
+            "document_count": len(docs),
+            "source_counts": self._source_counts(docs),
+            "retrieved_ids": [doc.id for doc in docs[:8]],
+        }
+        if isinstance(payload, dict):
+            enriched_payload.update(payload)
         return {
+            "event_id": f"evt-{uuid4().hex[:10]}",
             "stage": stage,
             "timestamp": self._now_iso(),
             "status": status,
             "source_count": len(self._source_counts(docs)),
             "note": note,
+            "detail": note,
+            "component": component or "rag_pipeline",
+            "payload": enriched_payload,
         }
 
     def _context_relevance(self, query: str, docs: List[Document]) -> float:
@@ -196,15 +271,21 @@ class RagPipelineP1:
         docs: List[Document],
         low_context_before_external: bool,
         external_attempted: bool,
+        planner_hints: dict[str, Any],
+        retrieval_trace: dict[str, Any],
     ) -> dict[str, Any]:
-        return {
+        context_debug = {
             "relevance": round(float(relevance), 4),
             "low_context_threshold": round(float(threshold), 4),
             "used_stages": used_stages,
             "source_counts": self._source_counts(docs),
             "low_context_before_external": low_context_before_external,
             "external_attempted": external_attempted,
+            "planner_hints": planner_hints,
+            "retrieval_trace": retrieval_trace,
+            "trace_version": "rag-v2",
         }
+        return context_debug
 
     @staticmethod
     def _serialize_context(docs: List[Document]) -> List[dict[str, Any]]:
@@ -233,29 +314,78 @@ class RagPipelineP1:
         file_retrieval_enabled: bool = True,
         rag_sources: object = None,
         uploaded_documents: object = None,
+        planner_hints: dict[str, Any] | None = None,
     ) -> RagResult:
+        run_started = perf_counter()
+        planner_active = isinstance(planner_hints, dict) and bool(planner_hints)
+        normalized_hints = self._normalize_planner_hints(planner_hints)
+        internal_top_k = int(normalized_hints["internal_top_k"])
+        hybrid_top_k = int(normalized_hints["hybrid_top_k"])
         threshold = max(0.0, min(1.0, low_context_threshold))
         used_stages: list[str] = ["internal_retrieval"]
+        if planner_active:
+            used_stages.insert(0, "planner")
         external_attempted = False
         flow_events: list[dict[str, Any]] = []
+        retrieval_trace: dict[str, Any] = {
+            "planner_hints": normalized_hints,
+            "internal_top_k": internal_top_k,
+            "hybrid_top_k": hybrid_top_k,
+            "external_attempted": False,
+            "relevance": 0.0,
+            "documents": [],
+        }
 
+        if planner_active:
+            flow_events.append(
+                self._flow_event(
+                    stage="planner",
+                    status="completed",
+                    docs=[],
+                    note="Planner selected retrieval strategy.",
+                    component="planner",
+                    payload={
+                        "query_focus": normalized_hints.get("query_focus"),
+                        "reason_codes": normalized_hints.get("reason_codes"),
+                        "internal_top_k": internal_top_k,
+                        "hybrid_top_k": hybrid_top_k,
+                    },
+                )
+            )
+
+        flow_events.append(
+            self._flow_event(
+                stage="internal_retrieval",
+                status="started",
+                docs=[],
+                note="Internal retrieval started.",
+                component="retrieval",
+                payload={"top_k": internal_top_k},
+            )
+        )
         docs = self.retriever.retrieve_internal(
             query,
+            top_k=internal_top_k,
             file_retrieval_enabled=file_retrieval_enabled,
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
         )
+        retrieval_trace["internal"] = self._extract_retriever_trace(self.retriever)
         flow_events.append(
             self._flow_event(
                 stage="internal_retrieval",
                 status="completed",
                 docs=docs,
                 note=f"Retrieved {len(docs)} internal document(s).",
+                component="retrieval",
+                payload={"top_docs": self._trace_doc_rows(docs)},
             )
         )
 
         relevance_score = self._context_relevance(query, docs)
+        retrieval_trace["relevance"] = round(float(relevance_score), 4)
         low_context_before_external = relevance_score < threshold
+        retrieval_trace["low_context_before_external"] = low_context_before_external
 
         if (
             low_context_before_external
@@ -270,28 +400,40 @@ class RagPipelineP1:
                     status="started",
                     docs=docs,
                     note="Low context detected; expanding retrieval via external medical connectors.",
+                    component="retrieval",
+                    payload={
+                        "top_k": hybrid_top_k,
+                        "web_retrieval_enabled": web_retrieval_enabled,
+                    },
                 )
             )
             try:
                 docs = self.retriever.retrieve(
                     query,
+                    top_k=hybrid_top_k,
                     scientific_retrieval_enabled=True,
                     web_retrieval_enabled=web_retrieval_enabled,
                     file_retrieval_enabled=file_retrieval_enabled,
                     rag_sources=rag_sources,
                     uploaded_documents=uploaded_documents,
                 )
+                retrieval_trace["hybrid"] = self._extract_retriever_trace(self.retriever)
                 relevance_score = self._context_relevance(query, docs)
+                retrieval_trace["relevance"] = round(float(relevance_score), 4)
                 flow_events.append(
                     self._flow_event(
                         stage="external_scientific_retrieval",
                         status="completed",
                         docs=docs,
                         note=f"External retrieval merged; {len(docs)} document(s) retained after re-ranking.",
+                        component="retrieval",
+                        payload={"top_docs": self._trace_doc_rows(docs)},
                     )
                 )
             except Exception as exc:
                 used_stages.append("external_scientific_retrieval_error")
+                retrieval_trace["hybrid"] = self._extract_retriever_trace(self.retriever)
+                retrieval_trace["hybrid_error"] = exc.__class__.__name__
                 flow_events.append(
                     self._flow_event(
                         stage="external_scientific_retrieval",
@@ -301,11 +443,54 @@ class RagPipelineP1:
                             "External retrieval failed; falling back to available context. "
                             f"error={exc.__class__.__name__}"
                         ),
+                        component="retrieval",
+                        payload={"error": exc.__class__.__name__},
                     )
                 )
 
         has_relevant_context = relevance_score >= threshold
         ids = [d.id for d in docs]
+        retrieval_trace["external_attempted"] = external_attempted
+        retrieval_trace["documents"] = self._trace_doc_rows(docs, limit=8)
+        retrieval_trace["document_count"] = len(docs)
+
+        def _build_result(
+            *,
+            answer: str,
+            model_used: str,
+            generation_trace: dict[str, Any],
+        ) -> RagResult:
+            context_debug = self._build_context_debug(
+                relevance=relevance_score,
+                threshold=threshold,
+                used_stages=used_stages,
+                docs=docs,
+                low_context_before_external=low_context_before_external,
+                external_attempted=external_attempted,
+                planner_hints=normalized_hints,
+                retrieval_trace=retrieval_trace,
+            )
+            context_debug["pipeline_duration_ms"] = round((perf_counter() - run_started) * 1000.0, 3)
+            trace = {
+                "planner": {
+                    "query_focus": normalized_hints.get("query_focus"),
+                    "reason_codes": normalized_hints.get("reason_codes"),
+                    "internal_top_k": internal_top_k,
+                    "hybrid_top_k": hybrid_top_k,
+                },
+                "retrieval": retrieval_trace,
+                "generation": generation_trace,
+            }
+            return RagResult(
+                query=query,
+                retrieved_ids=ids,
+                answer=answer,
+                model_used=model_used,
+                retrieved_context=self._serialize_context(docs),
+                context_debug=context_debug,
+                flow_events=flow_events,
+                trace=trace,
+            )
 
         if self._llm_client and self._deepseek_api_key:
             try:
@@ -317,26 +502,20 @@ class RagPipelineP1:
                             status="completed",
                             docs=docs,
                             note="Low-context fallback disabled; returned deterministic local synthesis.",
+                            component="generation",
+                            payload={"fallback_mode": "forced_local", "has_relevant_context": False},
                         )
                     )
                     answer = self._postprocess_answer(
                         self._local_synthesis(query, docs), query, docs
                     )
-                    return RagResult(
-                        query=query,
-                        retrieved_ids=ids,
+                    return _build_result(
                         answer=answer,
                         model_used="local-synth-v1-no-fallback",
-                        retrieved_context=self._serialize_context(docs),
-                        context_debug=self._build_context_debug(
-                            relevance=relevance_score,
-                            threshold=threshold,
-                            used_stages=used_stages,
-                            docs=docs,
-                            low_context_before_external=low_context_before_external,
-                            external_attempted=external_attempted,
-                        ),
-                        flow_events=flow_events,
+                        generation_trace={
+                            "mode": "local_synthesis",
+                            "fallback_reason": "deepseek_fallback_disabled",
+                        },
                     )
 
                 used_stages.append("llm_generation")
@@ -346,6 +525,11 @@ class RagPipelineP1:
                         status="started",
                         docs=docs,
                         note="Generating answer with LLM.",
+                        component="generation",
+                        payload={
+                            "has_relevant_context": has_relevant_context,
+                            "prompt_mode": "retrieval" if has_relevant_context else "no_rag",
+                        },
                     )
                 )
                 prompt = (
@@ -365,25 +549,20 @@ class RagPipelineP1:
                         status="completed",
                         docs=docs,
                         note="LLM answer generated successfully.",
+                        component="generation",
+                        payload={"model": response.model or self._llm_client.model},
                     )
                 )
-                return RagResult(
-                    query=query,
-                    retrieved_ids=ids,
+                return _build_result(
                     answer=self._postprocess_answer(response.content, query, docs),
                     model_used=response.model or self._llm_client.model,
-                    retrieved_context=self._serialize_context(docs),
-                    context_debug=self._build_context_debug(
-                        relevance=relevance_score,
-                        threshold=threshold,
-                        used_stages=used_stages,
-                        docs=docs,
-                        low_context_before_external=low_context_before_external,
-                        external_attempted=external_attempted,
-                    ),
-                    flow_events=flow_events,
+                    generation_trace={
+                        "mode": "llm",
+                        "model": response.model or self._llm_client.model,
+                        "has_relevant_context": has_relevant_context,
+                    },
                 )
-            except Exception:
+            except Exception as exc:
                 used_stages.append("llm_error_fallback")
                 flow_events.append(
                     self._flow_event(
@@ -391,6 +570,8 @@ class RagPipelineP1:
                         status="error",
                         docs=docs,
                         note="LLM generation failed; switching to deterministic fallback.",
+                        component="generation",
+                        payload={"error": exc.__class__.__name__},
                     )
                 )
 
@@ -401,23 +582,17 @@ class RagPipelineP1:
                 status="completed",
                 docs=docs,
                 note="Returned deterministic local synthesis.",
+                component="generation",
+                payload={"fallback_mode": "local_synth"},
             )
         )
-        return RagResult(
-            query=query,
-            retrieved_ids=ids,
+        return _build_result(
             answer=self._postprocess_answer(self._local_synthesis(query, docs), query, docs),
             model_used="local-synth-v1",
-            retrieved_context=self._serialize_context(docs),
-            context_debug=self._build_context_debug(
-                relevance=relevance_score,
-                threshold=threshold,
-                used_stages=used_stages,
-                docs=docs,
-                low_context_before_external=low_context_before_external,
-                external_attempted=external_attempted,
-            ),
-            flow_events=flow_events,
+            generation_trace={
+                "mode": "local_synthesis",
+                "fallback_reason": "llm_unavailable_or_failed",
+            },
         )
 
 

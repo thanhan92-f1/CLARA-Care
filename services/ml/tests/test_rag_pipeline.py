@@ -112,3 +112,16 @@ def test_rag_pipeline_survives_external_retrieval_exception():
         event.get("stage") == "external_scientific_retrieval" and event.get("status") == "error"
         for event in result.flow_events
     )
+    assert all("payload" in event for event in result.flow_events if isinstance(event, dict))
+
+
+def test_rag_pipeline_context_debug_includes_retrieval_trace():
+    pipe = RagPipelineP0(deepseek_api_key="")
+    result = pipe.run("tuong tac warfarin va nsaid")
+
+    retrieval_trace = result.context_debug.get("retrieval_trace")
+    assert isinstance(retrieval_trace, dict)
+    assert retrieval_trace.get("document_count") == len(result.retrieved_ids)
+    assert isinstance(result.trace, dict)
+    assert isinstance(result.trace.get("planner"), dict)
+    assert isinstance(result.trace.get("retrieval"), dict)

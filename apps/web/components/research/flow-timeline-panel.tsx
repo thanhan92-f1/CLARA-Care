@@ -65,7 +65,7 @@ function normalizeStatus(status?: string): ResearchFlowStageStatus {
 function resolveModeLabel(mode: FlowTimelineMode): string {
   if (mode === "flow-events") return "Realtime flow events";
   if (mode === "metadata-stages") return "Server stage summary";
-  if (mode === "local-fallback") return "Local fallback progress";
+  if (mode === "local-fallback") return "Client-side simulation";
   return "Waiting";
 }
 
@@ -74,6 +74,35 @@ function formatEventTime(value?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
   return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function formatPayloadPreview(payload?: Record<string, unknown>): string {
+  if (!payload) return "";
+
+  const parts: string[] = [];
+  if (typeof payload.top_k === "number") {
+    parts.push(`top_k=${payload.top_k}`);
+  }
+  if (typeof payload.source_count === "number") {
+    parts.push(`source_count=${payload.source_count}`);
+  }
+  if (Array.isArray(payload.top_docs) && payload.top_docs.length > 0) {
+    parts.push(`top_docs=${payload.top_docs.length}`);
+  }
+  if (typeof payload.error === "string" && payload.error.trim()) {
+    parts.push(`error=${payload.error}`);
+  }
+  if (parts.length > 0) return parts.join(" · ");
+
+  const keys = Object.keys(payload).slice(0, 3);
+  return keys.join(", ");
+}
+
+function isErrorDetail(detail?: string): boolean {
+  const text = (detail ?? "").toLowerCase();
+  return ["error", "failed", "timeout", "exception", "refused"].some((token) =>
+    text.includes(token)
+  );
 }
 
 export default function FlowTimelinePanel({
@@ -132,7 +161,11 @@ export default function FlowTimelinePanel({
           })}
         </ol>
       ) : (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Chưa có dữ liệu timeline cho phiên hiện tại.</p>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          {isProcessing
+            ? "Đang khởi tạo timeline..."
+            : "Backend chưa trả telemetry flow cho phiên này, nên không hiển thị stage giả lập sau khi hoàn tất."}
+        </p>
       )}
 
       {events.length ? (
@@ -141,14 +174,36 @@ export default function FlowTimelinePanel({
           <ul className="mt-2 space-y-1.5">
             {events.slice(-6).map((event) => {
               const status = STATUS_META[normalizeStatus(event.status)];
+              const payloadPreview = formatPayloadPreview(event.payload);
               return (
                 <li key={event.id} className="text-xs text-slate-600 dark:text-slate-300">
-                  <span className="font-semibold text-slate-700 dark:text-slate-200">{event.label}</span>
-                  <span className="mx-1">·</span>
-                  <span className={["rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase", status.badgeClass].join(" ")}>
-                    {status.label}
-                  </span>
-                  {event.timestamp ? <span className="ml-1 text-[11px] opacity-80">{formatEventTime(event.timestamp)}</span> : null}
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">{event.label}</span>
+                    {event.component ? (
+                      <span className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                        {event.component}
+                      </span>
+                    ) : null}
+                    <span className={["rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase", status.badgeClass].join(" ")}>
+                      {status.label}
+                    </span>
+                    {event.timestamp ? <span className="text-[11px] opacity-80">{formatEventTime(event.timestamp)}</span> : null}
+                  </div>
+                  {event.detail ? (
+                    <p
+                      className={[
+                        "mt-0.5 text-[11px]",
+                        isErrorDetail(event.detail)
+                          ? "font-medium text-rose-700 dark:text-rose-300"
+                          : "text-slate-500 dark:text-slate-400"
+                      ].join(" ")}
+                    >
+                      {event.detail}
+                    </p>
+                  ) : null}
+                  {payloadPreview ? (
+                    <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{payloadPreview}</p>
+                  ) : null}
                 </li>
               );
             })}

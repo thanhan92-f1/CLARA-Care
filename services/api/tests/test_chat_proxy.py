@@ -111,6 +111,28 @@ def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
     assert body["attributions"][0]["channel"] == "chat"
 
 
+def test_chat_returns_smalltalk_safe_fallback_for_greeting(monkeypatch) -> None:
+    token = _login("dr@doctor.clara")
+
+    def _fake_post(_url: str, *, json: dict[str, object], timeout: float) -> object:
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.chat.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/chat/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hi"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "doctor"
+    assert body["model_used"] == "api-safe-smalltalk-v1"
+    assert "chào" in body["reply"].lower()
+    assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")
+
+
 def test_chat_recovers_with_safe_mode_retry_when_primary_5xx(monkeypatch) -> None:
     token = _login("dr@doctor.clara")
     captured_payloads: list[dict[str, object]] = []

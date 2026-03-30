@@ -300,10 +300,218 @@ def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "answer": fallback_answer,
         "summary": fallback_answer,
         "metadata": {},
+        "context_debug": {},
+        "flow_events": [],
         "citations": [],
         "fallback": True,
         "source_mode": payload.get("source_mode"),
     }
+
+
+def _first_dict(*values: Any) -> dict[str, Any] | None:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _first_value(
+    sources: list[dict[str, Any] | None],
+    *,
+    keys: tuple[str, ...],
+) -> Any:
+    for source in sources:
+        if source is None:
+            continue
+        for key in keys:
+            if key in source and source[key] is not None:
+                return source[key]
+    return None
+
+
+def _build_tier2_telemetry(
+    *,
+    normalized: dict[str, Any],
+    metadata_obj: dict[str, Any] | None,
+    context_debug_obj: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    telemetry_root = _first_dict(
+        normalized.get("telemetry"),
+        metadata_obj.get("telemetry") if metadata_obj else None,
+        normalized.get("debug_telemetry"),
+        metadata_obj.get("debug_telemetry") if metadata_obj else None,
+        context_debug_obj.get("telemetry") if context_debug_obj else None,
+    )
+    telemetry = dict(telemetry_root) if telemetry_root else {}
+    retrieval_trace = (
+        context_debug_obj.get("retrieval_trace")
+        if context_debug_obj and isinstance(context_debug_obj.get("retrieval_trace"), dict)
+        else {}
+    )
+    retriever_debug = (
+        retrieval_trace.get("retriever_debug")
+        if isinstance(retrieval_trace.get("retriever_debug"), dict)
+        else {}
+    )
+
+    debug_obj = _first_dict(
+        normalized.get("debug"),
+        metadata_obj.get("debug") if metadata_obj else None,
+    )
+    sources: list[dict[str, Any] | None] = [
+        telemetry,
+        normalized,
+        metadata_obj,
+        context_debug_obj,
+        debug_obj,
+    ]
+
+    if "keywords" not in telemetry:
+        keywords = _first_value(
+            sources,
+            keys=(
+                "keywords",
+                "query_keywords",
+                "keyword_list",
+                "matched_keywords",
+                "intent_keywords",
+            ),
+        )
+        if keywords is not None:
+            telemetry["keywords"] = keywords
+
+    if "docs" not in telemetry:
+        docs = _first_value(
+            sources,
+            keys=(
+                "docs",
+                "documents",
+                "retrieved_docs",
+                "retrieved_context",
+                "context_docs",
+                "context_documents",
+                "evidence_docs",
+                "top_docs",
+                "candidates",
+            ),
+        )
+        if docs is None:
+            docs = _first_value(
+                [retriever_debug],
+                keys=("top_documents", "documents", "context_docs"),
+            )
+        if docs is not None:
+            telemetry["docs"] = docs
+
+    if "scores" not in telemetry:
+        scores = _first_value(
+            sources,
+            keys=(
+                "scores",
+                "score_breakdown",
+                "score_map",
+                "metrics",
+                "context_scores",
+                "ranking_scores",
+                "source_scores",
+            ),
+        )
+        if scores is not None:
+            telemetry["scores"] = scores
+        else:
+            score_map: dict[str, Any] = {}
+            relevance = _first_value(
+                sources,
+                keys=("relevance", "context_relevance", "retrieval_score"),
+            )
+            threshold = _first_value(sources, keys=("low_context_threshold", "threshold"))
+            if relevance is not None:
+                score_map["relevance"] = relevance
+            if threshold is not None:
+                score_map["low_context_threshold"] = threshold
+            if score_map:
+                telemetry["scores"] = score_map
+
+    if "source_reasoning" not in telemetry:
+        source_reasoning = _first_value(
+            sources,
+            keys=(
+                "source_reasoning",
+                "source_reasonings",
+                "reasoning_by_source",
+                "per_source_reasoning",
+                "source_notes",
+            ),
+        )
+        if source_reasoning is None:
+            source_reasoning = _first_value(
+                [retriever_debug],
+                keys=("score_trace", "final_score_trace"),
+            )
+        if source_reasoning is not None:
+            telemetry["source_reasoning"] = source_reasoning
+
+    if "errors" not in telemetry:
+        errors = _first_value(
+            sources,
+            keys=(
+                "errors",
+                "error",
+                "error_list",
+                "source_errors",
+                "retrieval_errors",
+                "failed_sources",
+            ),
+        )
+        if errors is None:
+            errors = _first_value([retriever_debug], keys=("source_errors",))
+        if errors is not None:
+            telemetry["errors"] = errors
+        elif isinstance(normalized.get("fallback_reason"), str):
+            telemetry["errors"] = [normalized["fallback_reason"]]
+
+    return telemetry or None
+
+
+def _normalize_tier2_response(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+
+    metadata = normalized.get("metadata")
+    metadata_obj = metadata if isinstance(metadata, dict) else None
+    if metadata is not None and metadata_obj is None:
+        normalized["metadata"] = {}
+
+    if "context_debug" not in normalized and metadata_obj is not None:
+        nested_context_debug = metadata_obj.get("context_debug")
+        if isinstance(nested_context_debug, dict):
+            normalized["context_debug"] = nested_context_debug
+
+    context_debug_obj = normalized.get("context_debug")
+    if not isinstance(context_debug_obj, dict):
+        context_debug_obj = None
+
+    if "flow_events" not in normalized and metadata_obj is not None:
+        nested_flow_events = metadata_obj.get("flow_events")
+        if isinstance(nested_flow_events, list):
+            normalized["flow_events"] = nested_flow_events
+
+    if "source_errors" not in normalized:
+        source_errors = _first_value(
+            [metadata_obj, context_debug_obj],
+            keys=("source_errors",),
+        )
+        if source_errors is not None:
+            normalized["source_errors"] = source_errors
+
+    telemetry = _build_tier2_telemetry(
+        normalized=normalized,
+        metadata_obj=metadata_obj,
+        context_debug_obj=context_debug_obj,
+    )
+    if telemetry is not None:
+        normalized["telemetry"] = telemetry
+
+    return normalized
 
 
 @router.get("/knowledge-sources")
@@ -563,8 +771,9 @@ def research_tier2(
         upstream_payload["uploaded_documents"] = uploaded_documents
     upstream_payload["role"] = token.role
 
-    return proxy_ml_post(
+    response = proxy_ml_post(
         "/v1/research/tier2",
         upstream_payload,
         fail_soft_payload=_research_tier2_fallback_payload(payload),
     )
+    return _normalize_tier2_response(response)

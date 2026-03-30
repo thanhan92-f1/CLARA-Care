@@ -230,3 +230,68 @@ def test_research_tier2_returns_fail_soft_payload_with_retry(
     assert payload["citations"] == []
     assert payload["fallback_reason"] == "ConnectError"
     assert call_count["count"] == 2
+
+
+def test_research_tier2_exposes_telemetry_details_from_context_debug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+
+    upstream_payload = {
+        "answer": "ok",
+        "metadata": {
+            "context_debug": {
+                "query_keywords": ["warfarin", "ibuprofen"],
+                "retrieved_context": [
+                    {
+                        "id": "doc-1",
+                        "source": "pubmed",
+                        "score": 0.91,
+                        "reasoning": "Matched DDI keyword overlap",
+                    }
+                ],
+                "score_breakdown": {
+                    "relevance": 0.91,
+                    "coverage": 0.73,
+                },
+                "source_reasoning": [
+                    {
+                        "source": "pubmed",
+                        "reasoning": "High confidence RCT source",
+                        "score": 0.91,
+                    }
+                ],
+                "source_errors": {"openfda": ["timeout"]},
+            }
+        },
+    }
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return upstream_payload
+
+    def _fake_post(url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "warfarin ibuprofen ddi"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["context_debug"]["query_keywords"] == ["warfarin", "ibuprofen"]
+    assert payload["source_errors"] == {"openfda": ["timeout"]}
+
+    telemetry = payload["telemetry"]
+    assert telemetry["keywords"] == ["warfarin", "ibuprofen"]
+    assert telemetry["docs"][0]["id"] == "doc-1"
+    assert telemetry["scores"]["relevance"] == 0.91
+    assert telemetry["source_reasoning"][0]["source"] == "pubmed"
+    assert telemetry["errors"] == {"openfda": ["timeout"]}

@@ -14,6 +14,10 @@ type DebugHintsPanelProps = {
   routingIntent?: string;
   routingConfidence?: number;
   pipeline?: string;
+  telemetryKeywordCount?: number;
+  telemetryDocCount?: number;
+  telemetryErrorCount?: number;
+  telemetryTopError?: string;
 };
 
 function formatConfidence(value?: number): string {
@@ -36,7 +40,11 @@ export default function DebugHintsPanel({
   routingRole,
   routingIntent,
   routingConfidence,
-  pipeline
+  pipeline,
+  telemetryKeywordCount,
+  telemetryDocCount,
+  telemetryErrorCount,
+  telemetryTopError
 }: DebugHintsPanelProps) {
   if (!enabled) return null;
 
@@ -58,6 +66,10 @@ export default function DebugHintsPanel({
         <p>routing_intent: {routingIntent ?? "n/a"}</p>
         <p>routing_confidence: {formatConfidence(routingConfidence)}</p>
         <p>pipeline: {pipeline ?? "n/a"}</p>
+        <p>telemetry_keywords: {telemetryKeywordCount ?? 0}</p>
+        <p>telemetry_docs: {telemetryDocCount ?? 0}</p>
+        <p>telemetry_errors: {telemetryErrorCount ?? 0}</p>
+        <p>telemetry_top_error: {telemetryTopError ?? "n/a"}</p>
       </div>
     </section>
   );

@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import httpx
@@ -24,6 +25,27 @@ _SAFE_MODE_NOTICE = (
     "Hệ thống truy xuất chuyên sâu đang bận hoặc tạm thời không kết nối được nguồn RAG. "
     "Tạm thời dùng chế độ an toàn để phản hồi nhanh."
 )
+_GREETING_HINTS: tuple[str, ...] = (
+    "hi",
+    "hello",
+    "hey",
+    "xin chao",
+    "chao",
+    "alo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+)
+
+
+def _is_general_greeting(message: str) -> bool:
+    normalized = " ".join(str(message).lower().split())
+    if not normalized:
+        return False
+    token_count = len([token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]+", normalized) if token])
+    if token_count == 0 or token_count > 5:
+        return False
+    return any(hint in normalized for hint in _GREETING_HINTS)
 
 
 def _normalize_citation_rows(citations_payload: Any) -> list[dict[str, str]]:
@@ -91,6 +113,22 @@ def _build_chat_attribution(
 
 
 def _safe_chat_fallback(message: str, role: str, reason: str) -> dict[str, Any]:
+    if _is_general_greeting(message):
+        return {
+            "role": role,
+            "intent": "general_guidance",
+            "confidence": 0.9,
+            "emergency": False,
+            "answer": (
+                "Chào bạn, CLARA đang sẵn sàng. "
+                "Bạn có thể gửi danh sách thuốc hoặc câu hỏi về tương tác thuốc để mình hỗ trợ."
+            ),
+            "retrieved_ids": [],
+            "model_used": "api-safe-smalltalk-v1",
+            "fallback_reason": reason,
+            "query_echo": message,
+        }
+
     return {
         "role": role,
         "intent": "general_guidance",

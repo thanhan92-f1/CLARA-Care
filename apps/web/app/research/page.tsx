@@ -5,13 +5,12 @@ import HistoryPanel from "@/components/research/history-panel";
 import { useResearchFlow } from "@/components/research/hooks/use-research-flow";
 import { useResearchKnowledgeSources } from "@/components/research/hooks/use-research-knowledge-sources";
 import { useResearchUploads } from "@/components/research/hooks/use-research-uploads";
-import { LOCAL_FLOW_BLUEPRINT, ROLE_LABELS, SUGGESTED_QUERIES } from "@/components/research/lib/research-page-constants";
+import { ROLE_LABELS, SUGGESTED_QUERIES } from "@/components/research/lib/research-page-constants";
 import {
   conversationLabel,
   createConversationItem,
   formatHistoryTime,
-  resolveFlowModeFromResult,
-  buildLocalFlowStages
+  resolveFlowModeFromResult
 } from "@/components/research/lib/research-page-helpers";
 import { ResearchMainCard, ResearchWorkspaceHeader } from "@/components/research/lib/research-page-sections";
 import { ConversationItem, FlowVisibilityMode, ResearchResult } from "@/components/research/lib/research-page-types";
@@ -60,6 +59,17 @@ export default function ResearchPage() {
 
   const evidenceCitations = useMemo<Tier2Citation[]>(() => activeTier2Result?.citations ?? [], [activeTier2Result]);
   const evidenceSteps = useMemo<Tier2Step[]>(() => activeTier2Result?.steps ?? [], [activeTier2Result]);
+  const activeTelemetry = useMemo(
+    () =>
+      activeTier2Result?.telemetry ?? {
+        keywords: [],
+        docs: [],
+        scores: [],
+        sourceReasoning: [],
+        errors: []
+      },
+    [activeTier2Result]
+  );
 
   const persistedFlowStages = useMemo<ResearchFlowStage[]>(() => activeTier2Result?.flowStages ?? [], [activeTier2Result]);
   const persistedFlowEvents = useMemo<ResearchFlowEvent[]>(() => activeTier2Result?.flowEvents ?? [], [activeTier2Result]);
@@ -133,12 +143,9 @@ export default function ResearchPage() {
             ? "flow-events"
             : normalized.flowStages.length > 0
               ? "metadata-stages"
-              : "local-fallback";
+              : "idle";
 
-        const resolvedStages =
-          normalized.flowStages.length > 0
-            ? normalized.flowStages
-            : buildLocalFlowStages(LOCAL_FLOW_BLUEPRINT.length - 1, "completed");
+        const resolvedStages = normalized.flowStages.length > 0 ? normalized.flowStages : [];
 
         flow.setResolvedFlow({
           mode: resolvedMode,
@@ -237,6 +244,7 @@ export default function ResearchPage() {
             flowStages={timelineStages}
             flowEvents={timelineEvents}
             flowMode={timelineMode}
+            telemetry={activeTelemetry}
             isSubmitting={isSubmitting}
             knowledgeSources={sources.knowledgeSources}
             selectedSourceIds={sources.selectedSourceIds}
@@ -272,7 +280,11 @@ export default function ResearchPage() {
               routingRole: activeTier2Result?.debug.routing?.role,
               routingIntent: activeTier2Result?.debug.routing?.intent,
               routingConfidence: activeTier2Result?.debug.routing?.confidence,
-              pipeline: activeTier2Result?.debug.pipeline
+              pipeline: activeTier2Result?.debug.pipeline,
+              telemetryKeywordCount: activeTier2Result?.debug.telemetryKeywordCount ?? activeTelemetry.keywords.length,
+              telemetryDocCount: activeTier2Result?.debug.telemetryDocCount ?? activeTelemetry.docs.length,
+              telemetryErrorCount: activeTier2Result?.debug.telemetryErrorCount ?? activeTelemetry.errors.length,
+              telemetryTopError: activeTelemetry.errors[0]
             }}
           />
         </aside>

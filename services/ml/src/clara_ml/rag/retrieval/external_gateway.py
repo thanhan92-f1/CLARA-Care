@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from time import perf_counter
 from typing import Any
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -458,27 +459,127 @@ class ExternalSourceGateway:
         return docs
 
     def retrieve_scientific(self, query: str, *, top_k: int, timeout_seconds: float) -> list[Document]:
+        return self.retrieve_scientific_with_telemetry(
+            query,
+            top_k=top_k,
+            timeout_seconds=timeout_seconds,
+            telemetry=None,
+        )
+
+    def retrieve_scientific_with_telemetry(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        timeout_seconds: float,
+        telemetry: dict[str, Any] | None,
+    ) -> list[Document]:
         if top_k <= 0:
+            if telemetry is not None:
+                telemetry.clear()
+                telemetry.update(
+                    {
+                        "query": query,
+                        "requested_top_k": int(top_k),
+                        "provider_events": [],
+                        "total_documents": 0,
+                        "timeout_seconds": float(timeout_seconds),
+                    }
+                )
             return []
 
         docs: list[Document] = []
-        tasks = [
-            lambda: self.retrieve_pubmed(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_europe_pmc(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_openalex(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_crossref(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_clinicaltrials(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_openfda(query, top_k=top_k, timeout_seconds=timeout_seconds),
-            lambda: self.retrieve_dailymed(query, top_k=top_k, timeout_seconds=timeout_seconds),
+        provider_events: list[dict[str, Any]] = []
+        tasks: list[tuple[str, Any]] = [
+            ("pubmed", lambda: self.retrieve_pubmed(query, top_k=top_k, timeout_seconds=timeout_seconds)),
+            (
+                "europe_pmc",
+                lambda: self.retrieve_europe_pmc(query, top_k=top_k, timeout_seconds=timeout_seconds),
+            ),
+            ("openalex", lambda: self.retrieve_openalex(query, top_k=top_k, timeout_seconds=timeout_seconds)),
+            ("crossref", lambda: self.retrieve_crossref(query, top_k=top_k, timeout_seconds=timeout_seconds)),
+            (
+                "clinicaltrials",
+                lambda: self.retrieve_clinicaltrials(query, top_k=top_k, timeout_seconds=timeout_seconds),
+            ),
+            ("openfda", lambda: self.retrieve_openfda(query, top_k=top_k, timeout_seconds=timeout_seconds)),
+            ("dailymed", lambda: self.retrieve_dailymed(query, top_k=top_k, timeout_seconds=timeout_seconds)),
         ]
 
+        def _run_provider(provider_name: str, provider_task: Any) -> tuple[str, list[Document], str | None, float]:
+            started = perf_counter()
+            try:
+                result = provider_task()
+                if not isinstance(result, list):
+                    return provider_name, [], "invalid_result_type", (perf_counter() - started) * 1000.0
+                return provider_name, result, None, (perf_counter() - started) * 1000.0
+            except Exception as exc:
+                return provider_name, [], exc.__class__.__name__, (perf_counter() - started) * 1000.0
+
         with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-            futures = [executor.submit(task) for task in tasks]
-            for future in as_completed(futures, timeout=max(timeout_seconds * 3.0, 2.0)):
-                try:
-                    result = future.result(timeout=max(timeout_seconds, 0.5))
+            futures = {
+                executor.submit(_run_provider, provider_name, provider_task): provider_name
+                for provider_name, provider_task in tasks
+            }
+            try:
+                for future in as_completed(futures, timeout=max(timeout_seconds * 3.0, 2.0)):
+                    provider_name = futures[future]
+                    try:
+                        name, result, error_name, duration_ms = future.result(
+                            timeout=max(timeout_seconds, 0.5)
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        provider_events.append(
+                            {
+                                "provider": provider_name,
+                                "status": "error",
+                                "error": exc.__class__.__name__,
+                                "duration_ms": 0.0,
+                                "documents": 0,
+                            }
+                        )
+                        continue
+
                     docs.extend(result)
-                except Exception:
-                    continue
+                    provider_events.append(
+                        {
+                            "provider": name,
+                            "status": "error" if error_name else "completed",
+                            "error": error_name,
+                            "duration_ms": round(float(duration_ms), 3),
+                            "documents": len(result),
+                        }
+                    )
+            except FuturesTimeoutError:
+                for future, provider_name in futures.items():
+                    if future.done():
+                        continue
+                    provider_events.append(
+                        {
+                            "provider": provider_name,
+                            "status": "timeout",
+                            "error": "TimeoutError",
+                            "duration_ms": round(max(timeout_seconds * 1000.0, 1.0), 3),
+                            "documents": 0,
+                        }
+                    )
+
+        if telemetry is not None:
+            by_source: dict[str, int] = {}
+            for doc in docs:
+                source_name = str((doc.metadata or {}).get("source") or "unknown")
+                by_source[source_name] = by_source.get(source_name, 0) + 1
+            telemetry.clear()
+            telemetry.update(
+                {
+                    "query": query,
+                    "requested_top_k": int(top_k),
+                    "provider_events": provider_events,
+                    "provider_count": len(provider_events),
+                    "documents_by_source": by_source,
+                    "total_documents": len(docs),
+                    "timeout_seconds": float(timeout_seconds),
+                }
+            )
 
         return docs

@@ -55,6 +55,17 @@ _LEGAL_GUARD_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "dosage_request",
     ),
 ]
+_GREETING_HINTS: tuple[str, ...] = (
+    "hi",
+    "hello",
+    "hey",
+    "xin chao",
+    "chao",
+    "alo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+)
 
 
 def _now_iso() -> str:
@@ -104,6 +115,20 @@ def _as_list(value: object) -> list:
     if isinstance(value, tuple):
         return list(value)
     return []
+
+
+def _query_token_count(query: str) -> int:
+    return len([token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]+", query) if token])
+
+
+def _is_general_greeting(query: str) -> bool:
+    normalized = " ".join(query.lower().split())
+    if not normalized:
+        return False
+    token_count = _query_token_count(normalized)
+    if token_count == 0 or token_count > 5:
+        return False
+    return any(hint in normalized for hint in _GREETING_HINTS)
 
 
 def _detect_legal_guard_violation(query: str) -> str | None:
@@ -294,6 +319,58 @@ def routed_chat_infer(payload: dict) -> dict:
         route.intent = default_by_role.get(route.role, "symptom_triage")
         route.confidence = min(route.confidence, 0.6)
 
+    if route.intent == "general_guidance" and _is_general_greeting(pii.redacted_text):
+        return {
+            "role": route.role,
+            "intent": route.intent,
+            "confidence": route.confidence,
+            "emergency": False,
+            "answer": (
+                "Chào bạn, mình là CLARA. "
+                "Bạn có thể gửi danh sách thuốc hoặc câu hỏi về tương tác thuốc "
+                "để mình hỗ trợ an toàn."
+            ),
+            "retrieved_ids": [],
+            "model_used": "smalltalk-fastpath-v1",
+            "flow_events": [
+                _flow_event(
+                    stage="smalltalk_fastpath",
+                    status="completed",
+                    source_count=0,
+                    note="Greeting intent detected; bypassed retrieval and generation.",
+                )
+            ],
+            "flow_applied": {
+                "role_router_enabled": role_router_enabled,
+                "intent_router_enabled": intent_router_enabled,
+                "verification_enabled": verification_enabled,
+                "deepseek_fallback_enabled": deepseek_fallback_enabled,
+                "low_context_threshold": low_context_threshold,
+                "scientific_retrieval_enabled": False,
+                "web_retrieval_enabled": False,
+                "file_retrieval_enabled": False,
+                "rag_sources_count": len(rag_sources),
+                "uploaded_documents_count": len(uploaded_documents),
+                "retrieval_profile": "smalltalk_fastpath",
+                "query_token_count": _query_token_count(pii.redacted_text),
+            },
+        }
+
+    retrieval_profile = "standard"
+    query_token_count = _query_token_count(pii.redacted_text)
+    adjusted_scientific_retrieval_enabled = scientific_retrieval_enabled
+    adjusted_web_retrieval_enabled = web_retrieval_enabled
+    adjusted_file_retrieval_enabled = file_retrieval_enabled
+
+    if route.intent == "general_guidance" and query_token_count <= 5:
+        retrieval_profile = "smalltalk_minimal"
+        adjusted_scientific_retrieval_enabled = False
+        adjusted_web_retrieval_enabled = False
+        adjusted_file_retrieval_enabled = bool(uploaded_documents)
+    elif route.intent == "lifestyle_guidance" and route.role == "normal":
+        retrieval_profile = "lifestyle_grounded"
+        adjusted_web_retrieval_enabled = False
+
     degraded_mode = False
     degraded_reason = ""
     try:
@@ -301,9 +378,9 @@ def routed_chat_infer(payload: dict) -> dict:
             pii.redacted_text,
             low_context_threshold=low_context_threshold,
             deepseek_fallback_enabled=deepseek_fallback_enabled,
-            scientific_retrieval_enabled=scientific_retrieval_enabled,
-            web_retrieval_enabled=web_retrieval_enabled,
-            file_retrieval_enabled=file_retrieval_enabled,
+            scientific_retrieval_enabled=adjusted_scientific_retrieval_enabled,
+            web_retrieval_enabled=adjusted_web_retrieval_enabled,
+            file_retrieval_enabled=adjusted_file_retrieval_enabled,
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
         )
@@ -334,6 +411,22 @@ def routed_chat_infer(payload: dict) -> dict:
         )
 
     flow_events = list(rag_result.flow_events)
+    if retrieval_profile != "standard":
+        flow_events.insert(
+            0,
+            _flow_event(
+                stage="retrieval_policy",
+                status="completed",
+                source_count=0,
+                note=(
+                    f"Applied retrieval profile={retrieval_profile}; "
+                    f"scientific={adjusted_scientific_retrieval_enabled}, "
+                    f"web={adjusted_web_retrieval_enabled}, "
+                    f"file={adjusted_file_retrieval_enabled}."
+                ),
+            ),
+        )
+
     if degraded_mode:
         flow_events.append(
             _flow_event(
@@ -383,11 +476,13 @@ def routed_chat_infer(payload: dict) -> dict:
             "verification_enabled": verification_enabled,
             "deepseek_fallback_enabled": deepseek_fallback_enabled,
             "low_context_threshold": low_context_threshold,
-            "scientific_retrieval_enabled": scientific_retrieval_enabled,
-            "web_retrieval_enabled": web_retrieval_enabled,
-            "file_retrieval_enabled": file_retrieval_enabled,
+            "scientific_retrieval_enabled": adjusted_scientific_retrieval_enabled,
+            "web_retrieval_enabled": adjusted_web_retrieval_enabled,
+            "file_retrieval_enabled": adjusted_file_retrieval_enabled,
             "rag_sources_count": len(rag_sources),
             "uploaded_documents_count": len(uploaded_documents),
+            "retrieval_profile": retrieval_profile,
+            "query_token_count": query_token_count,
         },
     }
 
