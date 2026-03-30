@@ -94,6 +94,32 @@ Các job chính:
 4. `web-lint-build`: `npm ci` + `npm run lint` + `npm run build` trong `apps/web`
 5. `security-audit`: `pip-audit` + `npm audit --omit=dev`
 6. `docker-compose-smoke`: build nhanh `api/ml/web` từ `docker-compose.app.yml`
+7. `container-scan`: quét image bằng Trivy (HIGH/CRITICAL)
+8. `required-ci-gates`: gate tổng để branch protection chỉ cần yêu cầu 1 check bắt buộc
+
+Chính sách blocking/advisory:
+
+- `pull_request`: `security-audit` + `docker-compose-smoke` + `container-scan` chạy advisory.
+- `push main`/`workflow_dispatch`: các job trên trở thành blocking qua `required-ci-gates`.
+
+## 7.1 Release + CD
+
+- Release workflow: `.github/workflows/release.yml`
+  - Semver tag (`vX.Y.Z`)
+  - Auto release notes
+  - Build/push GHCR images theo tag + SHA
+  - Upload image manifest artifact
+- CD workflow: `.github/workflows/cd.yml`
+  - Deploy staging (manual approve qua environment)
+  - Smoke checks API/ML/Web
+  - Promote production (manual approve + smoke)
+  - Hỗ trợ rollback bằng tag cũ
+
+Tài liệu chi tiết:
+
+- `docs/devops/release-process.md`
+- `docs/devops/cd-pipeline.md`
+- `docs/devops/branch-protection.md`
 
 ## 8. Pre-commit
 

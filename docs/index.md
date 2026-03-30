@@ -28,6 +28,11 @@ Mục tiêu của bản gọn:
 - `docs/research/data/vn-medical-acquired-report-2026-03-29.json`
 - `docs/research/data/vn-medical-pdf-sources-phase1-part1-2026-03-29.csv`
 
+6. DevOps vận hành:
+- `docs/devops/release-process.md`
+- `docs/devops/cd-pipeline.md`
+- `docs/devops/branch-protection.md`
+
 ## 2) Tài liệu cũ đã lưu trữ (archive)
 
 - Toàn bộ tài liệu không thuộc bộ chính đã được chuyển vào:
