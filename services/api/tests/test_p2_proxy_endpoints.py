@@ -60,7 +60,9 @@ def test_new_proxy_endpoints_success(
     if api_path == "/api/v1/research/tier2":
         expected_payload["role"] = "researcher"
     assert captured["json"] == expected_payload
-    assert float(captured["timeout"]) > 0
+    timeout = captured["timeout"]
+    assert isinstance(timeout, (int, float))  # noqa: UP038
+    assert timeout > 0
 
 
 @pytest.mark.parametrize(

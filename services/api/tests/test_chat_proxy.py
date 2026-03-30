@@ -75,7 +75,9 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
         source["id"] for source in rag_sources if isinstance(source, dict) and "id" in source
     }
     assert {"pubmed", "rxnorm", "openfda", "davidrug"}.issubset(source_ids)
-    assert float(captured["timeout"]) > 0
+    timeout = captured["timeout"]
+    assert isinstance(timeout, (int, float))  # noqa: UP038
+    assert timeout > 0
 
 
 def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
