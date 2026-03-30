@@ -92,10 +92,29 @@ def _build_plan_steps(
         base_steps[0],
         PlanStep(
             step="decompose_research",
-            objective="Break the research topic into sub-queries and evidence hypotheses.",
+            objective=(
+                "Break the research topic into sub-queries, evidence hypotheses, "
+                "and counter-hypotheses."
+            ),
             output="Prioritized sub-query list with expected evidence direction.",
         ),
+        PlanStep(
+            step="breadth_scan",
+            objective=(
+                "Run broad retrieval across guideline, trial, review and safety sources "
+                "to maximize evidence recall."
+            ),
+            output="Breadth-first evidence pool with source quality metadata.",
+        ),
         base_steps[1],
+        PlanStep(
+            step="counter_evidence_scan",
+            objective=(
+                "Search explicitly for contradictory findings, subgroup caveats "
+                "and negative outcomes."
+            ),
+            output="Contradiction candidates and uncertainty notes.",
+        ),
         PlanStep(
             step="cross_source_verification",
             objective=(
@@ -146,6 +165,9 @@ def _build_planner_hints(
     if deep_mode:
         internal_top_k = min(12, internal_top_k + 2)
         hybrid_top_k = min(12, hybrid_top_k + 3)
+        target_pass_count = 8 if evidence_query else 7
+    else:
+        target_pass_count = 1
 
     return {
         "internal_top_k": max(1, min(12, internal_top_k)),
@@ -160,7 +182,10 @@ def _build_planner_hints(
         "web_retrieval_enabled": deep_mode,
         "file_retrieval_enabled": True,
         "research_mode": research_mode,
-        "deep_pass_count": 3 if deep_mode else 1,
+        "deep_pass_count": target_pass_count,
+        "reasoning_style": (
+            "agentic_deep_research_v2" if deep_mode else "targeted_fast_research_v1"
+        ),
     }
 
 
@@ -419,13 +444,23 @@ def _normalize_retrieval_events(
 
 def _build_deep_subqueries(topic: str, keywords: list[str], pass_count: int) -> list[str]:
     cleaned_keywords = [item.strip() for item in keywords if isinstance(item, str) and item.strip()]
-    base = [topic]
-    if cleaned_keywords:
-        base.append(f"{topic} evidence and contraindications for {' '.join(cleaned_keywords[:3])}")
-        base.append(f"{topic} guideline comparison and risk factors")
-    else:
-        base.append(f"{topic} evidence and contraindications")
-        base.append(f"{topic} guideline comparison and risk factors")
+    keyword_hint = " ".join(cleaned_keywords[:4]).strip()
+    base = [
+        topic,
+        f"{topic} guideline recommendations and first-line safety considerations",
+        f"{topic} systematic review and meta-analysis clinical outcomes",
+        f"{topic} adverse events contraindications interaction risks",
+        f"{topic} subgroup analysis older adults CKD liver disease polypharmacy",
+        f"{topic} contradictory findings limitations and uncertainty analysis",
+        f"{topic} clinical decision criteria patient-centered recommendation framework",
+    ]
+    if keyword_hint:
+        base.extend(
+            [
+                f"{topic} evidence profile for {keyword_hint}",
+                f"{topic} mechanism and pharmacology context for {keyword_hint}",
+            ]
+        )
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -438,6 +473,62 @@ def _build_deep_subqueries(topic: str, keywords: list[str], pass_count: int) -> 
         if len(deduped) >= pass_count:
             break
     return deduped
+
+
+def _deep_research_methodology(*, topic: str, subqueries: list[str]) -> dict[str, Any]:
+    return {
+        "id": "agentic-deep-research-v2",
+        "inspired_patterns": [
+            "query_decomposition",
+            "breadth_first_retrieval",
+            "iterative_multi_pass_search",
+            "counter_evidence_scan",
+            "cross_source_consensus",
+            "citation_first_synthesis",
+        ],
+        "query": topic,
+        "subquery_count": len(subqueries),
+        "subqueries": subqueries,
+        "stages": [
+            {
+                "name": "scope_and_hypothesis",
+                "goal": "Chuẩn hóa câu hỏi, tách giả thuyết chính/phản biện.",
+            },
+            {
+                "name": "evidence_collection",
+                "goal": "Thu thập bằng chứng đa nguồn theo nhiều pass.",
+            },
+            {
+                "name": "contradiction_audit",
+                "goal": "Tìm bất đồng, ngoại lệ theo nhóm bệnh nền.",
+            },
+            {
+                "name": "consensus_and_translation",
+                "goal": "Tổng hợp điểm đồng thuận và khuyến nghị an toàn có điều kiện.",
+            },
+        ],
+    }
+
+
+def _resolve_deep_pass_count(payload: dict[str, Any], default_count: int) -> int:
+    metadata_obj = payload.get("metadata")
+    metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
+    candidates = [
+        payload.get("deep_pass_count"),
+        payload.get("deep_passes"),
+        payload.get("pass_count"),
+        metadata.get("deep_pass_count"),
+        metadata.get("deep_passes"),
+        metadata.get("pass_count"),
+    ]
+
+    for raw in candidates:
+        try:
+            parsed = int(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        return max(1, min(12, parsed))
+    return max(1, min(12, int(default_count)))
 
 
 def _merge_retrieved_context(
@@ -524,8 +615,14 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     ]
 
     pipeline = RagPipelineP1()
-    deep_pass_count = int(planner_hints.get("deep_pass_count", 1))
+    deep_pass_count = _resolve_deep_pass_count(
+        payload,
+        int(planner_hints.get("deep_pass_count", 1)),
+    )
+    planner_hints["deep_pass_count"] = deep_pass_count
     deep_subqueries: list[str] = [topic]
+    deep_research_profiles: list[dict[str, Any]] = []
+    deep_research_method: dict[str, Any] = {}
     deep_pass_summaries: list[dict[str, Any]] = []
     deep_pass_contexts: list[list[dict[str, Any]]] = []
     deep_pass_flow_events: list[dict[str, Any]] = []
@@ -537,6 +634,34 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             deep_pass_count,
         )
         deep_subqueries = subqueries
+        deep_research_method = _deep_research_methodology(topic=topic, subqueries=subqueries)
+        deep_research_profiles = [
+            {
+                "profile": "hypothesis_decomposition",
+                "goal": "Tách giả thuyết chính và giả thuyết phản biện.",
+                "subquery": subqueries[0] if len(subqueries) > 0 else topic,
+            },
+            {
+                "profile": "breadth_first_evidence_scan",
+                "goal": "Mở rộng recall từ guideline/review/trial/safety notes.",
+                "subquery": subqueries[1] if len(subqueries) > 1 else topic,
+            },
+            {
+                "profile": "counter_evidence_search",
+                "goal": "Tìm bằng chứng trái chiều và điều kiện ngoại lệ.",
+                "subquery": subqueries[2] if len(subqueries) > 2 else topic,
+            },
+            {
+                "profile": "cross_source_consistency",
+                "goal": "Đối chiếu mức nhất quán giữa nhiều nguồn.",
+                "subquery": subqueries[3] if len(subqueries) > 3 else topic,
+            },
+            {
+                "profile": "clinical_synthesis",
+                "goal": "Tổng hợp thành khuyến nghị có điều kiện áp dụng.",
+                "subquery": subqueries[4] if len(subqueries) > 4 else topic,
+            },
+        ]
         flow_events.append(
             _flow_event(
                 stage="deep_research",
@@ -548,6 +673,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                     "pass_count": len(subqueries),
                     "subqueries": subqueries,
                     "keywords": planner_hints.get("keywords", []),
+                    "profiles": deep_research_profiles,
+                    "methodology": deep_research_method,
                 },
             )
         )
@@ -669,6 +796,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 payload={
                     "pass_count": len(deep_pass_summaries),
                     "keywords": planner_hints.get("keywords", []),
+                    "profiles": deep_research_profiles,
+                    "methodology": deep_research_method,
                 },
             )
         )
@@ -737,6 +866,22 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "severity": factcheck_result.severity,
                 "supported_claims": factcheck_result.supported_claims,
                 "total_claims": factcheck_result.total_claims,
+            },
+        )
+    )
+    flow_events.append(
+        _flow_event(
+            stage="verification_matrix",
+            status="completed",
+            source_count=factcheck_result.evidence_count,
+            note="Verification matrix generated from supported/unsupported claims.",
+            component="verifier",
+            payload={
+                "supported_claims": factcheck_result.supported_claims,
+                "unsupported_claims": len(factcheck_result.unsupported_claims),
+                "total_claims": factcheck_result.total_claims,
+                "severity": factcheck_result.severity,
+                "confidence": factcheck_result.confidence,
             },
         )
     )
@@ -851,6 +996,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             **search_plan,
             "subqueries": deep_subqueries,
             "research_mode": research_mode,
+            "profiles": deep_research_profiles,
         },
         "source_attempts": source_attempts,
         "index_summary": index_summary,
@@ -871,6 +1017,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "source_reasoning": source_reasoning,
         "errors": aggregated_errors,
         "deep_pass_summaries": deep_pass_summaries,
+        "deep_research_profiles": deep_research_profiles,
+        "deep_research_methodology": deep_research_method,
     }
 
     return {
@@ -906,6 +1054,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "trace": trace_bundle,
             "flow_events": flow_events,
             "telemetry": telemetry,
+            "deep_research_methodology": deep_research_method,
             "routing": {
                 "role": route.role,
                 "intent": route.intent,

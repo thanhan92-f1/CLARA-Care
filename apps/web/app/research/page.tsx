@@ -9,6 +9,7 @@ import { ROLE_LABELS, SUGGESTED_QUERIES } from "@/components/research/lib/resear
 import {
   conversationLabel,
   createConversationItem,
+  createConversationItemFromPersisted,
   formatHistoryTime,
   resolveFlowModeFromResult
 } from "@/components/research/lib/research-page-helpers";
@@ -26,6 +27,8 @@ import {
   ResearchTier,
   Tier2Citation,
   Tier2Step,
+  createResearchConversation,
+  listResearchConversations,
   normalizeResearchTier2,
   runResearchTier2
 } from "@/lib/research";
@@ -126,6 +129,37 @@ export default function ResearchPage() {
     setRole(getRole());
   }, []);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadHistory = async () => {
+      try {
+        const rows = await listResearchConversations(80);
+        if (isCancelled) return;
+        const items = rows.map((row) => createConversationItemFromPersisted(row));
+        setHistory(items);
+        if (items.length === 0) return;
+        const latest = items[0];
+        setActiveConversationId(latest.id);
+        setLastQuery(latest.query);
+        setResult(latest.result);
+        setSelectedTier(latest.result.tier);
+      } catch (historyError) {
+        if (isCancelled) return;
+        setError(
+          historyError instanceof Error
+            ? `Không thể tải lịch sử hội thoại từ database: ${historyError.message}`
+            : "Không thể tải lịch sử hội thoại từ database."
+        );
+      }
+    };
+
+    void loadHistory();
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = query.trim();
@@ -182,9 +216,22 @@ export default function ResearchPage() {
 
       setResult(nextResult);
 
-      const conversation = createConversationItem(message, nextResult);
+      let conversation = createConversationItem(message, nextResult);
+      try {
+        const persisted = await createResearchConversation(
+          message,
+          nextResult as unknown as Record<string, unknown>
+        );
+        conversation = createConversationItemFromPersisted(persisted);
+      } catch (persistError) {
+        setError(
+          persistError instanceof Error
+            ? `Đã trả lời nhưng lưu conversation thất bại: ${persistError.message}`
+            : "Đã trả lời nhưng lưu conversation thất bại."
+        );
+      }
 
-      setHistory((prev) => [conversation, ...prev]);
+      setHistory((prev) => [conversation, ...prev.filter((item) => item.id !== conversation.id)]);
       setActiveConversationId(conversation.id);
       setQuery("");
     } catch (submitError) {

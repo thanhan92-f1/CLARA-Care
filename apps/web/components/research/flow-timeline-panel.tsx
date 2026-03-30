@@ -70,9 +70,9 @@ function normalizeStatus(status?: string): ResearchFlowStageStatus {
 function resolveModeLabel(mode: FlowTimelineMode): string {
   if (mode === "flow-events") return "Realtime flow events";
   if (mode === "metadata-stages") return "Server stage summary";
-  if (mode === "local-fallback") return "Legacy local fallback";
+  if (mode === "local-fallback") return "Fallback cục bộ";
   if (mode === "server-await") return "Server reasoning in progress";
-  return "Waiting";
+  return "Đang chờ";
 }
 
 function formatEventTime(value?: string): string {
@@ -112,7 +112,16 @@ function formatPayloadPreview(payload?: Record<string, unknown>): string {
   }
   if (parts.length > 0) return parts.join(" · ");
 
-  const keys = Object.keys(payload).slice(0, 3);
+  const keyMap: Record<string, string> = {
+    confidence: "độ tin cậy",
+    severity: "mức độ",
+    supported_claims: "claim hỗ trợ",
+    total_claims: "tổng claim",
+    evidence_count: "số bằng chứng",
+  };
+  const keys = Object.keys(payload)
+    .slice(0, 3)
+    .map((item) => keyMap[item] ?? item);
   return keys.join(", ");
 }
 

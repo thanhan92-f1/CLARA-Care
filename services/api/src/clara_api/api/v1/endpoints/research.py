@@ -1,5 +1,5 @@
+import json
 import math
-import re
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
-from clara_api.db.models import KnowledgeDocument, KnowledgeSource, SystemSetting, User
+from clara_api.db.models import (
+    KnowledgeDocument,
+    KnowledgeSource,
+    Query as QueryModel,
+    SessionModel,
+    SystemSetting,
+    User,
+)
 from clara_api.db.session import get_db
 from clara_api.schemas import (
     KnowledgeDocumentResponse,
@@ -21,6 +28,9 @@ from clara_api.schemas import (
     KnowledgeSourceCreateRequest,
     KnowledgeSourceResponse,
     KnowledgeSourceUpdateRequest,
+    ResearchConversationCreateRequest,
+    ResearchConversationListResponse,
+    ResearchConversationResponse,
     SourceHubCatalogEntry,
     SourceHubRecord,
     SourceHubRecordsResponse,
@@ -181,6 +191,66 @@ def _get_user_by_token(db: Session, token: TokenPayload) -> User:
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Người dùng không tồn tại"
         )
     return user
+
+
+def _coerce_stored_result(raw_text: str) -> dict[str, Any]:
+    stripped = raw_text.strip()
+    if not stripped:
+        return {"tier": "tier1", "answer": ""}
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return {"tier": "tier1", "answer": stripped}
+
+    if not isinstance(parsed, dict):
+        return {"tier": "tier1", "answer": stripped}
+
+    payload = parsed.get("result")
+    result = payload if isinstance(payload, dict) else parsed
+    if "tier" not in result:
+        if any(key in result for key in ("citations", "flowEvents", "flow_events", "telemetry")):
+            result = {"tier": "tier2", **result}
+        else:
+            result = {"tier": "tier1", **result}
+    return result
+
+
+def _serialize_research_conversation(
+    *,
+    session_obj: SessionModel,
+    query_obj: QueryModel,
+) -> ResearchConversationResponse:
+    result_payload = _coerce_stored_result(query_obj.response_text)
+    tier = str(result_payload.get("tier") or "tier1").strip().lower()
+    if tier not in {"tier1", "tier2"}:
+        tier = "tier1"
+        result_payload["tier"] = tier
+
+    created_at = query_obj.created_at or session_obj.created_at
+    if created_at is None:
+        created_at = datetime.now(tz=UTC)
+
+    return ResearchConversationResponse(
+        id=session_obj.id,
+        query_id=query_obj.id,
+        query=query_obj.user_input,
+        result=result_payload,
+        tier=tier,
+        created_at=created_at,
+    )
+
+
+def _validate_result_payload(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result)
+    tier = str(payload.get("tier") or "").strip().lower()
+    if tier not in {"tier1", "tier2"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="result.tier phải là 'tier1' hoặc 'tier2'.",
+        )
+    payload["tier"] = tier
+    return payload
 
 
 def _get_owned_source(db: Session, *, source_id: int, owner_user_id: int) -> KnowledgeSource:
@@ -732,6 +802,14 @@ def _http_get_text(url: str, *, params: dict[str, Any] | None = None) -> str:
     return response.text
 
 
+def _http_post_json(url: str, *, payload: dict[str, Any]) -> dict[str, Any]:
+    with httpx.Client(timeout=_SOURCE_HUB_TIMEOUT_SECONDS) as client:
+        response = client.post(url, json=payload)
+    response.raise_for_status()
+    body = response.json()
+    return body if isinstance(body, dict) else {}
+
+
 def _fetch_pubmed_records(
     query: str, limit: int, synced_at: str
 ) -> tuple[list[SourceHubRecord], list[str]]:
@@ -899,35 +977,81 @@ def _fetch_davidrug_records(
     query: str, limit: int, synced_at: str
 ) -> tuple[list[SourceHubRecord], list[str]]:
     warnings: list[str] = []
-    html = _http_get_text(
-        "https://dichvucong.dav.gov.vn/congbothuoc/index",
-        params={"keyword": query},
+    payload = _http_post_json(
+        "https://dichvucong.dav.gov.vn/api/services/app/soDangKy/GetAllPublicServerPaging",
+        payload={
+            "filterText": query,
+            "SoDangKyThuoc": {},
+            "KichHoat": True,
+            "skipCount": 0,
+            "maxResultCount": max(1, min(100, int(limit))),
+            "sorting": None,
+        },
     )
+    result_obj = payload.get("result")
+    result = result_obj if isinstance(result_obj, dict) else {}
+    rows_obj = result.get("items")
+    rows = rows_obj if isinstance(rows_obj, list) else []
+    if not rows:
+        warnings.append("DAVIDrug không có kết quả phù hợp cho query này.")
+        return [], warnings
 
-    title_match = re.search(r"<title>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
-    page_title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else "DAVIDrug"
-    query_pattern = re.compile(re.escape(query), flags=re.IGNORECASE)
-    matches_count = len(query_pattern.findall(html))
+    records: list[SourceHubRecord] = []
+    for index, item in enumerate(rows[:limit]):
+        if not isinstance(item, dict):
+            continue
+        external_id = _to_text(item.get("id")) or _to_text(item.get("soDangKy"))
+        title = _to_text(item.get("tenThuoc")) or f"DAVIDrug record {index + 1}"
+        so_dang_ky = _to_text(item.get("soDangKy"))
 
-    snippet = f"Trang: {page_title}. Số lần xuất hiện chuỗi query trong HTML: {matches_count}."
-    if matches_count == 0:
-        warnings.append(
-            "DAVIDrug không trả kết quả có cấu trúc; hiện lưu snapshot HTML để theo dõi."
+        company_obj = item.get("congTyDangKy")
+        company = company_obj if isinstance(company_obj, dict) else {}
+        registrant = _to_text(company.get("tenCongTyDangKy"))
+
+        info_obj = item.get("thongTinThuocCoBan")
+        info = info_obj if isinstance(info_obj, dict) else {}
+        active_ingredient = _to_text(info.get("hoatChatChinh"))
+
+        snippet_parts = [
+            part
+            for part in (
+                f"SĐK: {so_dang_ky}" if so_dang_ky else "",
+                f"Hoạt chất: {active_ingredient}" if active_ingredient else "",
+                f"Đơn vị đăng ký: {registrant}" if registrant else "",
+            )
+            if part
+        ]
+        snippet = " | ".join(snippet_parts)[:300] or None
+
+        register_obj = item.get("thongTinDangKyThuoc")
+        register = register_obj if isinstance(register_obj, dict) else {}
+        published_at = _to_text(register.get("ngayCapSoDangKy")) or None
+
+        record_id = f"davidrug:{external_id or index}"
+        records.append(
+            SourceHubRecord(
+                id=record_id,
+                source="davidrug",
+                title=title,
+                url="https://dichvucong.dav.gov.vn/congbothuoc/index",
+                snippet=snippet,
+                external_id=external_id or None,
+                query=query,
+                published_at=published_at,
+                synced_at=synced_at,
+                metadata={
+                    "so_dang_ky": so_dang_ky,
+                    "dang_bao_che": _to_text(info.get("dangBaoChe")) or None,
+                    "ham_luong": _to_text(info.get("hamLuong")) or None,
+                    "active_ingredient": active_ingredient or None,
+                    "registrant": registrant or None,
+                },
+            )
         )
 
-    record = SourceHubRecord(
-        id=f"davidrug:{hash((query, synced_at))}",
-        source="davidrug",
-        title=f"DAVIDrug snapshot - {query}",
-        url="https://dichvucong.dav.gov.vn/congbothuoc/index",
-        snippet=snippet,
-        external_id=None,
-        query=query,
-        published_at=None,
-        synced_at=synced_at,
-        metadata={"html_length": len(html), "query_hits": matches_count},
-    )
-    return [record][:limit], warnings
+    if not records:
+        warnings.append("DAVIDrug trả dữ liệu không hợp lệ sau khi parse.")
+    return records, warnings
 
 
 def _fetch_source_hub_records(
@@ -943,6 +1067,111 @@ def _fetch_source_hub_records(
     if source == "davidrug":
         return _fetch_davidrug_records(query, limit, synced_at)
     return [], [f"Nguồn không được hỗ trợ: {source}"]
+
+
+@router.get("/conversations")
+def list_research_conversations(
+    limit: int = 50,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+) -> ResearchConversationListResponse:
+    user = _get_user_by_token(db, token)
+    safe_limit = max(1, min(200, int(limit)))
+
+    sessions = (
+        db.execute(
+            select(SessionModel)
+            .where(SessionModel.user_id == user.id)
+            .order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+            .limit(max(safe_limit * 3, safe_limit))
+        )
+        .scalars()
+        .all()
+    )
+
+    items: list[ResearchConversationResponse] = []
+    for session_obj in sessions:
+        query_obj = db.execute(
+            select(QueryModel)
+            .where(QueryModel.session_id == session_obj.id)
+            .order_by(QueryModel.created_at.desc(), QueryModel.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if query_obj is None:
+            continue
+        items.append(_serialize_research_conversation(session_obj=session_obj, query_obj=query_obj))
+        if len(items) >= safe_limit:
+            break
+
+    return ResearchConversationListResponse(items=items)
+
+
+@router.post("/conversations")
+def create_research_conversation(
+    payload: ResearchConversationCreateRequest,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+) -> ResearchConversationResponse:
+    user = _get_user_by_token(db, token)
+    query_text = payload.query.strip()
+    if not query_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="query không được rỗng.",
+        )
+
+    result_payload = _validate_result_payload(payload.result)
+    try:
+        stored_result = json.dumps({"result": result_payload}, ensure_ascii=False)
+    except TypeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"result chứa dữ liệu không thể lưu JSON: {exc}",
+        ) from exc
+
+    session_obj = SessionModel(
+        user_id=user.id,
+        title=query_text[:255],
+    )
+    db.add(session_obj)
+    db.flush()
+
+    query_obj = QueryModel(
+        session_id=session_obj.id,
+        role=token.role,
+        user_input=query_text,
+        response_text=stored_result,
+    )
+    db.add(query_obj)
+    db.commit()
+    db.refresh(session_obj)
+    db.refresh(query_obj)
+
+    return _serialize_research_conversation(session_obj=session_obj, query_obj=query_obj)
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_research_conversation(
+    conversation_id: int,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    user = _get_user_by_token(db, token)
+    session_obj = db.execute(
+        select(SessionModel).where(
+            SessionModel.id == conversation_id,
+            SessionModel.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+    if session_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation không tồn tại.",
+        )
+
+    db.delete(session_obj)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.get("/knowledge-sources")

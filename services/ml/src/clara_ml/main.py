@@ -5,10 +5,11 @@ from pathlib import Path
 import re
 from time import perf_counter
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 
 from clara_ml.agents.careguard import run_careguard_analyze
 from clara_ml.agents.council import run_council
+from clara_ml.agents.council_intake import run_council_intake
 from clara_ml.agents.research_tier2 import run_research_tier2
 from clara_ml.agents.scribe_soap import run_scribe_soap
 from clara_ml.config import settings
@@ -522,3 +523,32 @@ async def ws_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"token": token})
     await websocket.send_json({"event": "done"})
     await websocket.close()
+
+
+@app.post("/v1/council/intake")
+async def council_intake(
+    transcript: str = Form(default=""),
+    audio_file: UploadFile | None = File(default=None),
+) -> dict:
+    transcript_text = transcript.strip()
+    audio_bytes: bytes | None = None
+    audio_filename = "audio-input"
+    audio_content_type = "application/octet-stream"
+
+    if audio_file is not None and audio_file.filename:
+        audio_bytes = await audio_file.read()
+        audio_filename = audio_file.filename or audio_filename
+        audio_content_type = audio_file.content_type or audio_content_type
+
+    if not transcript_text and not audio_bytes:
+        raise HTTPException(status_code=400, detail="Either transcript or audio_file is required.")
+
+    try:
+        return run_council_intake(
+            transcript=transcript_text,
+            audio_bytes=audio_bytes,
+            audio_filename=audio_filename,
+            audio_content_type=audio_content_type,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

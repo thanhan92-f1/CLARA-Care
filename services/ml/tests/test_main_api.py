@@ -418,3 +418,64 @@ def test_council_run_emergency_escalation_on_red_flags():
     assert body["emergency_escalation"]["action"] == "immediate_emergency_referral"
     assert body["estimated_duration_minutes"] == 5
     assert "Emergency escalation triggered" in body["final_recommendation"]
+
+
+def test_council_intake_transcript_only_success(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, object] = {}
+
+    def _fake_run_council_intake(**kwargs):
+        captured.update(kwargs)
+        return {
+            "transcript": "bn đau đầu 2 ngày",
+            "symptoms": ["đau đầu"],
+            "labs": [],
+            "medications": [],
+            "history": ["tăng huyết áp"],
+            "text_fields": {
+                "symptoms_input": "đau đầu",
+                "labs_input": "",
+                "medications_input": "",
+                "history_input": "tăng huyết áp",
+            },
+            "warnings": [],
+            "model_used": "deepseek-v3.2",
+        }
+
+    monkeypatch.setattr("clara_ml.main.run_council_intake", _fake_run_council_intake)
+
+    response = client.post(
+        "/v1/council/intake",
+        data={"transcript": "bn đau đầu 2 ngày"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text_fields"]["symptoms_input"] == "đau đầu"
+    assert body["model_used"] == "deepseek-v3.2"
+
+    assert captured["transcript"] == "bn đau đầu 2 ngày"
+    assert captured["audio_bytes"] is None
+    assert captured["audio_filename"] == "audio-input"
+    assert captured["audio_content_type"] == "application/octet-stream"
+
+
+def test_council_intake_missing_input_returns_400():
+    response = client.post("/v1/council/intake")
+
+    assert response.status_code == 400
+    assert "Either transcript or audio_file is required" in response.json()["detail"]
+
+
+def test_council_intake_runtime_error_returns_400(monkeypatch: pytest.MonkeyPatch):
+    def _fake_run_council_intake(**_kwargs):
+        raise RuntimeError("deepseek unavailable")
+
+    monkeypatch.setattr("clara_ml.main.run_council_intake", _fake_run_council_intake)
+
+    response = client.post(
+        "/v1/council/intake",
+        data={"transcript": "bn khó thở"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "deepseek unavailable"

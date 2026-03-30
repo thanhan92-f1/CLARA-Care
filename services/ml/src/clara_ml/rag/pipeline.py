@@ -70,7 +70,10 @@ class RagPipelineP1:
     def _local_synthesis(query: str, docs: List[Document]) -> str:
         sources = ", ".join(doc.id for doc in docs) if docs else "none"
         snippets = " | ".join(f"{doc.id}: {doc.text}" for doc in docs)
-        return f"Tra loi tam thoi (local): query='{query}'. Sources=[{sources}]. Summary={snippets}"
+        return (
+            f"Trả lời tạm thời (local): query='{query}'. "
+            f"Sources=[{sources}]. Summary={snippets}"
+        )
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
@@ -210,10 +213,19 @@ class RagPipelineP1:
     def _build_prompt(cls, query: str, docs: List[Document]) -> str:
         context = "\n".join(cls._format_doc_context(doc) for doc in docs)
         return (
-            "Answer using only retrieved context.\n"
-            "If context is insufficient, still provide a concise safe answer "
-            "using general medical knowledge.\n"
-            "Do not answer that there is no context; provide useful next steps safely.\n"
+            "You are CLARA Deep Research medical assistant.\n"
+            "Use retrieved context as primary evidence and avoid unsupported claims.\n"
+            "If context is weak, provide a conservative safety-first answer with clear uncertainty.\n"
+            "Do not say 'no context'; still provide practical next steps safely.\n"
+            "Output MUST be valid GitHub-Flavored Markdown (GFM) in Vietnamese.\n"
+            "Response structure:\n"
+            "1) ## Kết luận nhanh\n"
+            "2) ## Phân tích chi tiết\n"
+            "3) ## Khuyến nghị an toàn\n"
+            "4) ## Nguồn tham chiếu\n"
+            "If comparing >=2 options, include a Markdown table with columns: Tiêu chí | Phương án A | Phương án B | Ghi chú.\n"
+            "If explaining process/flow/decision path, include a mermaid flowchart block.\n"
+            "Cite evidence inline with source ids like [source-id].\n"
             f"User query: {query}\n"
             f"Retrieved context:\n{context}"
         )
@@ -221,14 +233,13 @@ class RagPipelineP1:
     @staticmethod
     def _build_no_rag_prompt(query: str) -> str:
         return (
-            "User asks a health/medical question.\n"
-            "Retrieved context is empty or irrelevant.\n"
-            "Provide a useful, concise, safety-first answer in Vietnamese.\n"
-            "Do not claim you cannot answer due to missing context.\n"
-            "If the query is comparative (e.g., compares diets/treatments), "
-            "provide a balanced comparison and practical decision criteria.\n"
-            "Only include urgent warning signs when the query is about symptoms or acute risk.\n"
-            "Suggest consulting a clinician when needed.\n"
+            "User asks a health/medical question with low/empty retrieved context.\n"
+            "Provide a concise safety-first answer in Vietnamese.\n"
+            "Do not refuse solely due to missing context.\n"
+            "Be explicit about uncertainty and avoid diagnostic/prescription overreach.\n"
+            "If comparative question, provide balanced criteria and a Markdown table.\n"
+            "If process/workflow explanation is needed, include mermaid flowchart.\n"
+            "Output MUST be valid GitHub-Flavored Markdown (GFM).\n"
             f"User query: {query}"
         )
 
@@ -237,16 +248,16 @@ class RagPipelineP1:
         if docs:
             source_ids = ", ".join(doc.id for doc in docs[:3])
             return (
-                "Thong tin hien co cho thay can danh gia theo muc tieu dieu tri, "
-                "benh nen va thuoc dang dung. "
-                f"Nguon tham chieu gan nhat: {source_ids}. "
-                "Ban nen theo doi trieu chung bat thuong, tranh tu y tang lieu, "
-                "va trao doi bac si/duoc si de ca nhan hoa khuyen nghi."
+                "Thông tin hiện có cho thấy cần đánh giá theo mục tiêu điều trị, "
+                "bệnh nền và thuốc đang dùng. "
+                f"Nguồn tham chiếu gần nhất: {source_ids}. "
+                "Bạn nên theo dõi triệu chứng bất thường, tránh tự ý tăng liều, "
+                "và trao đổi bác sĩ/dược sĩ để cá nhân hóa khuyến nghị."
             )
         return (
-            "Voi cau hoi nay, ban co the ap dung nguyen tac an toan: "
-            "dung thuoc dung lieu, theo doi trieu chung bat thuong, "
-            "va uu tien tham van bac si neu co benh nen hoac dang dung nhieu thuoc."
+            "Với câu hỏi này, bạn có thể áp dụng nguyên tắc an toàn: "
+            "dùng thuốc đúng liều, theo dõi triệu chứng bất thường, "
+            "và ưu tiên tham vấn bác sĩ nếu có bệnh nền hoặc đang dùng nhiều thuốc."
         )
 
     @classmethod
@@ -874,7 +885,11 @@ class RagPipelineP1:
                 response = self._llm_client.generate(
                     prompt=prompt,
                     system_prompt=(
-                        "You are CLARA clinical assistant. Be concise, safe, and cite source ids."
+                        "You are CLARA clinical assistant. "
+                        "Be concise, safe, and citation-grounded. "
+                        "Return GFM markdown. Use markdown table for comparisons. "
+                        "Use mermaid flowchart only when process explanation is needed. "
+                        "Do not prescribe dosage or diagnose."
                     ),
                 )
                 flow_events.append(

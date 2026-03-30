@@ -35,7 +35,7 @@ def decode_access_token(token: str) -> TokenPayload:
     settings = get_settings()
     try:
         data = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
-        if data.get("typ") not in {"access", None}:
+        if data.get("typ") != "access":
             raise JWTError("Token type không hợp lệ")
         return TokenPayload(data)
     except JWTError as exc:

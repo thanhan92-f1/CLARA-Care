@@ -59,11 +59,12 @@ export default function AdminAnswerFlowPanel() {
     return "cần kiểm tra";
   }, [config, enabledFlowCount]);
 
+  const lowContextThreshold = config?.rag_flow.low_context_threshold;
   useEffect(() => {
-    if (!config) return;
-    const next = Math.max(0, Math.min(1, config.rag_flow.low_context_threshold + 0.15));
+    if (typeof lowContextThreshold !== "number") return;
+    const next = Math.max(0, Math.min(1, lowContextThreshold + 0.15));
     setDebugLowContextScore(next);
-  }, [config?.rag_flow.low_context_threshold]);
+  }, [lowContextThreshold]);
 
   return (
     <div className="space-y-4">

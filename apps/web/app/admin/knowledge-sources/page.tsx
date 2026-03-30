@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AdminShell from "@/components/admin/admin-shell";
 import {
   KnowledgeSource,
@@ -37,25 +37,24 @@ export default function AdminKnowledgeSourcesPage() {
     [sources, activeSourceId]
   );
 
-  const loadSources = async () => {
+  const loadSources = useCallback(async () => {
     setIsLoadingSources(true);
     setError("");
     try {
       const items = await listKnowledgeSources();
       setSources(items);
-      if (items.length && !activeSourceId) {
-        setActiveSourceId(items[0].id);
-      }
-      if (!items.length) {
-        setActiveSourceId(null);
-        setDocuments([]);
-      }
+      setActiveSourceId((current) => {
+        if (!items.length) return null;
+        if (current && items.some((source) => source.id === current)) return current;
+        return items[0].id;
+      });
+      if (!items.length) setDocuments([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể tải knowledge sources.");
     } finally {
       setIsLoadingSources(false);
     }
-  };
+  }, []);
 
   const loadDocuments = async (sourceId: number) => {
     setIsLoadingDocs(true);
@@ -72,7 +71,7 @@ export default function AdminKnowledgeSourcesPage() {
 
   useEffect(() => {
     void loadSources();
-  }, []);
+  }, [loadSources]);
 
   useEffect(() => {
     if (!activeSourceId) return;

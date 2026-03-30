@@ -1,5 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import { clearTokens, getAccessToken, getRefreshToken, setAccessToken } from "@/lib/auth-store";
+import { clearTokens, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "@/lib/auth-store";
 
 type RetryableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
@@ -45,11 +45,15 @@ api.interceptors.response.use(
         );
 
         const nextAccessToken = refreshResponse.data?.access_token as string | undefined;
+        const nextRefreshToken = refreshResponse.data?.refresh_token as string | undefined;
         if (!nextAccessToken) {
           throw new Error("Không nhận được access token mới.");
         }
 
         setAccessToken(nextAccessToken);
+        if (nextRefreshToken) {
+          setRefreshToken(nextRefreshToken);
+        }
         originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
         return api(originalRequest);
       } catch {

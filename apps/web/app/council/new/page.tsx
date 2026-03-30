@@ -8,6 +8,7 @@ import { parseFreeTextList, parseLabsInput } from "@/lib/careguard";
 import {
   clearCouncilDraft,
   CouncilCaseDraft,
+  extractCouncilIntake,
   loadCouncilDraft,
   normalizeCouncilRunResult,
   runCouncil,
@@ -19,6 +20,8 @@ type SpecialistOption = {
   id: string;
   label: string;
 };
+
+type IntakeMode = "transcript" | "audio";
 
 const SPECIALIST_OPTIONS: SpecialistOption[] = [
   { id: "cardiology", label: "Tim mạch" },
@@ -45,6 +48,14 @@ export default function CouncilNewPage() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2>(1);
   const [draft, setDraft] = useState<CouncilCaseDraft>(DEFAULT_DRAFT);
+
+  const [intakeMode, setIntakeMode] = useState<IntakeMode>("transcript");
+  const [transcriptInput, setTranscriptInput] = useState("");
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractNotice, setExtractNotice] = useState("");
+  const [extractWarnings, setExtractWarnings] = useState<string[]>([]);
+
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -106,6 +117,46 @@ export default function CouncilNewPage() {
     });
   };
 
+  const onExtractIntake = async () => {
+    setError("");
+    setExtractNotice("");
+    setExtractWarnings([]);
+
+    if (intakeMode === "transcript" && !transcriptInput.trim()) {
+      setError("Vui lòng dán transcript trước khi chạy chuẩn hóa.");
+      return;
+    }
+    if (intakeMode === "audio" && !audioFile && !transcriptInput.trim()) {
+      setError("Vui lòng upload audio hoặc dán transcript hỗ trợ.");
+      return;
+    }
+
+    setIsExtracting(true);
+    try {
+      const result = await extractCouncilIntake({
+        transcript: transcriptInput,
+        audioFile: intakeMode === "audio" ? audioFile : null,
+      });
+
+      setDraft((current) => ({
+        ...current,
+        symptomsInput: result.symptomsInput,
+        labsInput: result.labsInput,
+        medicationsInput: result.medicationsInput,
+        historyInput: result.historyInput,
+      }));
+      if (result.transcript) {
+        setTranscriptInput(result.transcript);
+      }
+      setExtractWarnings(result.warnings);
+      setExtractNotice(`Đã chuẩn hóa hồ sơ bằng ${result.modelUsed}. Bạn có thể chỉnh tay trước khi sang bước 2.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không thể chuẩn hóa dữ liệu intake lúc này.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -157,8 +208,8 @@ export default function CouncilNewPage() {
 
   return (
     <PageShell
-      title="Tạo Ca Hội Chẩn"
-      description="Wizard 2 bước: nhập hồ sơ ca bệnh trước, sau đó chọn chuyên khoa và chạy hội chẩn đa tác nhân."
+      title="Case Builder"
+      description="Bước 1 thu nhận dữ liệu từ transcript/audio và chuẩn hóa bằng DeepSeek v3.2, sau đó qua bước 2 để chọn chuyên khoa hội chẩn."
     >
       <form onSubmit={onSubmit} className="space-y-5">
         <section className="chrome-panel rounded-[1.8rem] p-5 sm:p-6">
@@ -201,57 +252,163 @@ export default function CouncilNewPage() {
         </section>
 
         {step === 1 ? (
-          <section className="grid gap-4 md:grid-cols-2">
-            <label className="chrome-panel rounded-[1.4rem] p-4">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">Triệu chứng</span>
-              <textarea
-                value={draft.symptomsInput}
-                onChange={(event) => setDraft((current) => ({ ...current, symptomsInput: event.target.value }))}
-                placeholder="Đau ngực, khó thở, sốt..."
-                className="mt-2 min-h-[150px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
-              />
-            </label>
+          <div className="space-y-4">
+            <section className="chrome-panel rounded-[1.6rem] p-5 sm:p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Intake nguồn dữ liệu</p>
+                  <h3 className="mt-1 text-xl font-semibold text-[var(--text-primary)]">Upload audio hoặc dán transcript</h3>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">DeepSeek v3.2 sẽ chuẩn hóa thành 4 phần: Triệu chứng, Chỉ số xét nghiệm, Thuốc đang dùng, Bệnh sử.</p>
+                </div>
 
-            <label className="chrome-panel rounded-[1.4rem] p-4">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">Chỉ số xét nghiệm</span>
-              <textarea
-                value={draft.labsInput}
-                onChange={(event) => setDraft((current) => ({ ...current, labsInput: event.target.value }))}
-                placeholder="troponin=1.2, CRP=45, creatinine=2.0"
-                className="mt-2 min-h-[150px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
-              />
-            </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIntakeMode("transcript")}
+                    className={`min-h-[44px] rounded-xl border px-4 text-sm font-semibold ${
+                      intakeMode === "transcript"
+                        ? "border-cyan-400 bg-cyan-100 text-cyan-900 dark:border-cyan-500 dark:bg-cyan-950/45 dark:text-cyan-100"
+                        : "border-[color:var(--shell-border)] bg-[var(--surface-panel)] text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Dán transcript
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIntakeMode("audio")}
+                    className={`min-h-[44px] rounded-xl border px-4 text-sm font-semibold ${
+                      intakeMode === "audio"
+                        ? "border-cyan-400 bg-cyan-100 text-cyan-900 dark:border-cyan-500 dark:bg-cyan-950/45 dark:text-cyan-100"
+                        : "border-[color:var(--shell-border)] bg-[var(--surface-panel)] text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Upload audio
+                  </button>
+                </div>
+              </div>
 
-            <label className="chrome-panel rounded-[1.4rem] p-4">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">Thuốc đang dùng</span>
-              <textarea
-                value={draft.medicationsInput}
-                onChange={(event) => setDraft((current) => ({ ...current, medicationsInput: event.target.value }))}
-                placeholder="Warfarin, Metformin..."
-                className="mt-2 min-h-[150px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
-              />
-            </label>
+              {intakeMode === "transcript" ? (
+                <div className="mt-4 space-y-3">
+                  <textarea
+                    value={transcriptInput}
+                    onChange={(event) => setTranscriptInput(event.target.value)}
+                    placeholder="Dán transcript hội thoại lâm sàng tại đây..."
+                    className="min-h-[220px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void onExtractIntake()}
+                    disabled={isExtracting}
+                    className="inline-flex min-h-[48px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {isExtracting ? "Đang chuẩn hóa..." : "Chuẩn hóa 4 trường bằng DeepSeek v3.2"}
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-2xl border border-dashed border-cyan-300/60 bg-cyan-500/10 p-5">
+                    <label htmlFor="council-audio-file" className="block text-sm font-semibold text-[var(--text-primary)]">
+                      Upload audio intake (wav, mp3, m4a, webm)
+                    </label>
+                    <input
+                      id="council-audio-file"
+                      type="file"
+                      accept="audio/*,.wav,.mp3,.m4a,.webm"
+                      onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}
+                      className="mt-3 block w-full text-sm text-[var(--text-secondary)] file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-700"
+                    />
+                    {audioFile ? (
+                      <p className="mt-2 text-xs text-[var(--text-secondary)]">Đã chọn: {audioFile.name}</p>
+                    ) : (
+                      <p className="mt-2 text-xs text-[var(--text-secondary)]">Bạn có thể thêm transcript bên dưới để tăng độ chính xác.</p>
+                    )}
+                  </div>
 
-            <label className="chrome-panel rounded-[1.4rem] p-4">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">Bệnh sử</span>
-              <textarea
-                value={draft.historyInput}
-                onChange={(event) => setDraft((current) => ({ ...current, historyInput: event.target.value }))}
-                placeholder="Tăng huyết áp, đái tháo đường type 2..."
-                className="mt-2 min-h-[150px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
-              />
-            </label>
+                  <textarea
+                    value={transcriptInput}
+                    onChange={(event) => setTranscriptInput(event.target.value)}
+                    placeholder="(Tùy chọn) Dán transcript hỗ trợ nếu có..."
+                    className="min-h-[130px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)]"
+                  />
 
-            <div className="md:col-span-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setStep(2)}
-                className="inline-flex min-h-[48px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white"
-              >
-                Tiếp tục bước 2
-              </button>
-            </div>
-          </section>
+                  <button
+                    type="button"
+                    onClick={() => void onExtractIntake()}
+                    disabled={isExtracting}
+                    className="inline-flex min-h-[48px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {isExtracting ? "Đang xử lý audio + chuẩn hóa..." : "Phân tích audio và chuẩn hóa 4 trường"}
+                  </button>
+                </div>
+              )}
+
+              {extractNotice ? (
+                <p className="mt-3 rounded-xl border border-emerald-300/45 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-700/45 dark:bg-emerald-950/20 dark:text-emerald-300">
+                  {extractNotice}
+                </p>
+              ) : null}
+
+              {extractWarnings.length ? (
+                <ul className="mt-3 list-disc space-y-1 rounded-xl border border-amber-300/45 bg-amber-50 px-6 py-3 text-sm text-amber-700 dark:border-amber-700/45 dark:bg-amber-950/20 dark:text-amber-300">
+                  {extractWarnings.map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+
+            <section className="grid gap-4 md:grid-cols-2">
+              <label className="chrome-panel rounded-[1.4rem] p-4">
+                <span className="text-sm font-semibold text-[var(--text-primary)]">Triệu chứng</span>
+                <textarea
+                  value={draft.symptomsInput}
+                  onChange={(event) => setDraft((current) => ({ ...current, symptomsInput: event.target.value }))}
+                  placeholder="Đau ngực, khó thở, sốt..."
+                  className="mt-2 min-h-[160px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                />
+              </label>
+
+              <label className="chrome-panel rounded-[1.4rem] p-4">
+                <span className="text-sm font-semibold text-[var(--text-primary)]">Chỉ số xét nghiệm</span>
+                <textarea
+                  value={draft.labsInput}
+                  onChange={(event) => setDraft((current) => ({ ...current, labsInput: event.target.value }))}
+                  placeholder="troponin=1.2, CRP=45, creatinine=2.0"
+                  className="mt-2 min-h-[160px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                />
+              </label>
+
+              <label className="chrome-panel rounded-[1.4rem] p-4">
+                <span className="text-sm font-semibold text-[var(--text-primary)]">Thuốc đang dùng</span>
+                <textarea
+                  value={draft.medicationsInput}
+                  onChange={(event) => setDraft((current) => ({ ...current, medicationsInput: event.target.value }))}
+                  placeholder="Warfarin, Metformin..."
+                  className="mt-2 min-h-[160px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                />
+              </label>
+
+              <label className="chrome-panel rounded-[1.4rem] p-4">
+                <span className="text-sm font-semibold text-[var(--text-primary)]">Bệnh sử</span>
+                <textarea
+                  value={draft.historyInput}
+                  onChange={(event) => setDraft((current) => ({ ...current, historyInput: event.target.value }))}
+                  placeholder="Tăng huyết áp, đái tháo đường type 2..."
+                  className="mt-2 min-h-[160px] w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                />
+              </label>
+
+              <div className="md:col-span-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  className="inline-flex min-h-[48px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white"
+                >
+                  Tiếp tục bước 2
+                </button>
+              </div>
+            </section>
+          </div>
         ) : (
           <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <article className="chrome-panel rounded-[1.4rem] p-5">
@@ -330,6 +487,10 @@ export default function CouncilNewPage() {
                   onClick={() => {
                     clearCouncilDraft();
                     setDraft(DEFAULT_DRAFT);
+                    setTranscriptInput("");
+                    setAudioFile(null);
+                    setExtractNotice("");
+                    setExtractWarnings([]);
                   }}
                   className="text-sm font-medium text-[var(--text-secondary)] underline underline-offset-2"
                 >

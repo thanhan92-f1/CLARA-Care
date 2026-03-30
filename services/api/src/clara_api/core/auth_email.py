@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 def should_expose_action_token_preview(settings: Settings) -> bool:
+    if settings.environment.lower() == "production":
+        return False
     if settings.auth_expose_action_token_preview:
         return True
     return settings.auth_email_delivery_mode == "preview"

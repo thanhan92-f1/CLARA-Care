@@ -1,3 +1,5 @@
+from typing import Any
+
 import httpx
 from fastapi.testclient import TestClient
 
@@ -71,6 +73,85 @@ def test_council_run_forbidden_for_non_doctor() -> None:
         "/api/v1/council/run",
         headers={"Authorization": f"Bearer {token}"},
         json={"topic": "polypharmacy"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_council_intake_success(monkeypatch) -> None:
+    token = _login("dr@doctor.clara")
+    captured: dict[str, Any] = {}
+    upstream_payload = {
+        "transcript": "bn đau đầu",
+        "normalized": {
+            "symptoms": ["đau đầu"],
+            "labs": {},
+            "medications": [],
+            "history": [],
+        },
+        "text_fields": {
+            "symptoms_input": "đau đầu",
+            "labs_input": "",
+            "medications_input": "",
+            "history_input": "",
+        },
+    }
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return upstream_payload
+
+    def _fake_post(
+        url: str,
+        *,
+        data: dict[str, str],
+        files: dict[str, tuple[str, bytes, str]] | None,
+        timeout: float,
+    ) -> _MockResponse:
+        captured["url"] = url
+        captured["data"] = data
+        captured["files"] = files
+        captured["timeout"] = timeout
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.council.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/council/intake",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"transcript": "bn đau đầu"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == upstream_payload
+    assert str(captured["url"]).endswith("/v1/council/intake")
+    assert captured["data"] == {"transcript": "bn đau đầu"}
+    assert captured["files"] is None
+    assert float(captured["timeout"]) > 0
+
+
+def test_council_intake_missing_input_returns_400() -> None:
+    token = _login("dr@doctor.clara")
+
+    response = client.post(
+        "/api/v1/council/intake",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Either transcript or audio_file is required" in response.json()["detail"]
+
+
+def test_council_intake_forbidden_for_non_doctor() -> None:
+    token = _login("alice@research.clara")
+
+    response = client.post(
+        "/api/v1/council/intake",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"transcript": "bn đau đầu"},
     )
 
     assert response.status_code == 403

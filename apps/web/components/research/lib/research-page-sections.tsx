@@ -259,11 +259,14 @@ export function ResearchMainCard({
             {result.verificationStatus ? (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200">
                 <p className="font-semibold">
-                  FIDES-lite: {result.verificationStatus.verdict ?? "n/a"} | confidence:{" "}
+                  FIDES-lite: {result.verificationStatus.verdict ?? "n/a"} | độ tin cậy:{" "}
                   {typeof result.verificationStatus.confidence === "number"
                     ? result.verificationStatus.confidence.toFixed(2)
                     : "n/a"}
-                  {result.verificationStatus.severity ? ` | severity: ${result.verificationStatus.severity}` : ""}
+                  {result.verificationStatus.severity ? ` | mức độ: ${result.verificationStatus.severity}` : ""}
+                  {typeof result.verificationStatus.evidenceCount === "number"
+                    ? ` | số bằng chứng: ${result.verificationStatus.evidenceCount}`
+                    : ""}
                 </p>
                 {result.verificationStatus.note ? (
                   <p className="mt-1 text-slate-600 dark:text-slate-300">{result.verificationStatus.note}</p>

@@ -1,8 +1,15 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { BarBlocks, Sparkline } from "@/components/admin/admin-visuals";
 import { FLOW_FLAG_META } from "@/components/admin/admin-config-meta";
 import useControlTowerConfig from "@/components/admin/use-control-tower-config";
+import {
+  KnowledgeSource,
+  SourceHubCatalogEntry,
+  listKnowledgeSources,
+  listSourceHubCatalog
+} from "@/lib/research";
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -10,10 +17,51 @@ function pct(value: number): string {
 
 export default function AdminOverviewPanel() {
   const { config, error, isLoading, reload } = useControlTowerConfig();
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
+  const [sourceHubCatalog, setSourceHubCatalog] = useState<SourceHubCatalogEntry[]>([]);
+  const [inventoryError, setInventoryError] = useState("");
+  const [isInventoryLoading, setIsInventoryLoading] = useState(true);
+  const [inventoryReloadTick, setInventoryReloadTick] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadInventory = async () => {
+      setIsInventoryLoading(true);
+      setInventoryError("");
+      try {
+        const [knowledge, catalog] = await Promise.all([
+          listKnowledgeSources(),
+          listSourceHubCatalog()
+        ]);
+        if (!active) return;
+        setKnowledgeSources(knowledge);
+        setSourceHubCatalog(catalog);
+      } catch (cause) {
+        if (!active) return;
+        setInventoryError(
+          cause instanceof Error
+            ? cause.message
+            : "Không thể tải danh mục nguồn tổng hợp cho admin dashboard."
+        );
+      } finally {
+        if (active) setIsInventoryLoading(false);
+      }
+    };
+
+    void loadInventory();
+    return () => {
+      active = false;
+    };
+  }, [inventoryReloadTick]);
 
   const totalSources = config?.rag_sources.length ?? 0;
   const enabledSources = config?.rag_sources.filter((source) => source.enabled).length ?? 0;
   const categoryCount = new Set(config?.rag_sources.map((source) => source.category) ?? []).size;
+  const totalKnowledgeSources = knowledgeSources.length;
+  const activeKnowledgeSources = knowledgeSources.filter((source) => source.is_active).length;
+  const totalSourceHubCatalog = sourceHubCatalog.length;
+  const liveSourceHubCatalog = sourceHubCatalog.filter((source) => source.supports_live_sync).length;
 
   const flowEnabledCount = config
     ? Object.keys(FLOW_FLAG_META).filter((key) => config.rag_flow[key as keyof typeof FLOW_FLAG_META]).length
@@ -31,6 +79,39 @@ export default function AdminOverviewPanel() {
         flowEnabledCount * 22
       ]
     : [];
+  const unifiedRows = useMemo(() => {
+    const ragRows = (config?.rag_sources ?? []).map((source) => ({
+      key: `rag-${source.id}`,
+      group: "RAG",
+      name: source.name,
+      id: source.id,
+      status: source.enabled ? "enabled" : "disabled",
+      meta1: source.category,
+      meta2: `priority=${source.priority} | weight=${source.weight.toFixed(2)}`
+    }));
+    const knowledgeRows = knowledgeSources.map((source) => ({
+      key: `knowledge-${source.id}`,
+      group: "Knowledge",
+      name: source.name,
+      id: String(source.id),
+      status: source.is_active ? "active" : "inactive",
+      meta1: "knowledge_source",
+      meta2: `documents=${source.documents_count}`
+    }));
+    const sourceHubRows = sourceHubCatalog.map((source) => ({
+      key: `source-hub-${source.key}`,
+      group: "SourceHub",
+      name: source.label,
+      id: source.key,
+      status: source.supports_live_sync ? "live-sync" : "catalog-only",
+      meta1: source.description,
+      meta2: source.default_query ? `default_query=${source.default_query}` : "-"
+    }));
+    return [...ragRows, ...knowledgeRows, ...sourceHubRows];
+  }, [config?.rag_sources, knowledgeSources, sourceHubCatalog]);
+  const totalUnifiedSources = unifiedRows.length;
+  const totalActiveUnifiedSources =
+    enabledSources + activeKnowledgeSources + liveSourceHubCatalog;
 
   return (
     <div className="space-y-4">
@@ -43,6 +124,18 @@ export default function AdminOverviewPanel() {
             className="rounded-lg border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-700"
           >
             Retry
+          </button>
+        </div>
+      ) : null}
+      {inventoryError ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span>{inventoryError}</span>
+          <button
+            type="button"
+            onClick={() => setInventoryReloadTick((prev) => prev + 1)}
+            className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-700"
+          >
+            Reload
           </button>
         </div>
       ) : null}
@@ -139,6 +232,32 @@ export default function AdminOverviewPanel() {
         </article>
       </section>
 
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-wider text-slate-500">Knowledge Sources</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-900">{totalKnowledgeSources}</p>
+          <p className="mt-1 text-xs text-slate-600">Active {activeKnowledgeSources}</p>
+        </article>
+
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-wider text-slate-500">Source Hub Catalog</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-900">{totalSourceHubCatalog}</p>
+          <p className="mt-1 text-xs text-slate-600">Live sync {liveSourceHubCatalog}</p>
+        </article>
+
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-wider text-slate-500">Unified Sources</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-900">{totalUnifiedSources}</p>
+          <p className="mt-1 text-xs text-slate-600">RAG + Knowledge + SourceHub</p>
+        </article>
+
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-wider text-slate-500">Unified Active</p>
+          <p className="mt-2 text-3xl font-semibold text-emerald-600">{totalActiveUnifiedSources}</p>
+          <p className="mt-1 text-xs text-slate-600">Đang usable trong pipeline</p>
+        </article>
+      </section>
+
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -168,34 +287,45 @@ export default function AdminOverviewPanel() {
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-900">Live Snapshot</h3>
-        {isLoading ? (
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">Unified Source Inventory</h3>
+          <span className="text-xs text-slate-500">Hiển thị toàn bộ source hiện có</span>
+        </div>
+        {isLoading || isInventoryLoading ? (
           <div className="mt-3 h-24 animate-pulse rounded-xl bg-slate-100" />
         ) : (
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-3 max-h-[32rem] overflow-auto rounded-xl border border-slate-200">
             <table className="min-w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
+                <tr className="sticky top-0 border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                  <th className="px-2 py-2">Group</th>
                   <th className="px-2 py-2">Source</th>
-                  <th className="px-2 py-2">Category</th>
-                  <th className="px-2 py-2">Priority</th>
+                  <th className="px-2 py-2">Id</th>
+                  <th className="px-2 py-2">Meta</th>
+                  <th className="px-2 py-2">Detail</th>
                   <th className="px-2 py-2">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {(config?.rag_sources ?? []).slice(0, 6).map((source) => (
-                  <tr key={source.id} className="border-b border-slate-100 last:border-0">
+                {unifiedRows.map((source) => (
+                  <tr key={source.key} className="border-b border-slate-100 last:border-0">
+                    <td className="px-2 py-2 text-slate-600">{source.group}</td>
                     <td className="px-2 py-2 font-medium text-slate-800">{source.name}</td>
-                    <td className="px-2 py-2 text-slate-600">{source.category}</td>
-                    <td className="px-2 py-2 text-slate-600">{source.priority}</td>
+                    <td className="px-2 py-2 font-mono text-xs text-slate-600">{source.id}</td>
+                    <td className="px-2 py-2 text-slate-600">{source.meta1}</td>
+                    <td className="px-2 py-2 text-slate-600">{source.meta2}</td>
                     <td className="px-2 py-2">
                       <span
                         className={[
                           "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                          source.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                          source.status === "enabled" ||
+                          source.status === "active" ||
+                          source.status === "live-sync"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-slate-100 text-slate-600"
                         ].join(" ")}
                       >
-                        {source.enabled ? "enabled" : "disabled"}
+                        {source.status}
                       </span>
                     </td>
                   </tr>

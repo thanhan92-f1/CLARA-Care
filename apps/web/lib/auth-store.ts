@@ -32,6 +32,7 @@ export function clearTokens(): void {
   if (!isBrowser()) return;
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+  window.localStorage.removeItem(ROLE_KEY);
 }
 
 export function getRole(): UserRole {

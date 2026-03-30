@@ -9,6 +9,21 @@ export type CouncilRunRequest = {
   specialists: string[];
 };
 
+export type CouncilIntakeRequest = {
+  transcript?: string;
+  audioFile?: File | null;
+};
+
+export type CouncilIntakeResult = {
+  transcript: string;
+  symptomsInput: string;
+  labsInput: string;
+  medicationsInput: string;
+  historyInput: string;
+  modelUsed: string;
+  warnings: string[];
+};
+
 export type CouncilReasoningLog = {
   specialist: string;
   reasoning: string;
@@ -214,6 +229,34 @@ function parseBoolean(value: unknown): boolean {
   return ["true", "1", "yes", "y", "emergency", "urgent", "escalate", "escalated"].includes(normalized);
 }
 
+function parseStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asText(item))
+    .filter((item): item is string => Boolean(item));
+}
+
+function formatLabsInput(value: unknown): string {
+  const rows = Array.isArray(value) ? value : [];
+  const formattedRows = rows
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) return "";
+      const name = asText(record.name) ?? asText(record.key) ?? asText(record.lab) ?? "";
+      const val = asText(record.value) ?? asText(record.result) ?? "";
+      const unit = asText(record.unit) ?? "";
+      const raw = asText(record.raw) ?? "";
+      if (name && val) {
+        return unit ? `${name}=${val} ${unit}` : `${name}=${val}`;
+      }
+      if (name && raw) return `${name}: ${raw}`;
+      if (raw) return raw;
+      return "";
+    })
+    .filter(Boolean);
+  return formattedRows.join("\n");
+}
+
 export async function runCouncil(payload: CouncilRunRequest): Promise<CouncilRunRawResponse> {
   const response = await api.post<CouncilRunRawResponse>("/council/run", {
     symptoms: payload.symptoms,
@@ -225,6 +268,46 @@ export async function runCouncil(payload: CouncilRunRequest): Promise<CouncilRun
   });
 
   return response.data;
+}
+
+export async function extractCouncilIntake(payload: CouncilIntakeRequest): Promise<CouncilIntakeResult> {
+  const formData = new FormData();
+  const transcript = (payload.transcript ?? "").trim();
+  if (transcript) {
+    formData.append("transcript", transcript);
+  }
+  if (payload.audioFile) {
+    formData.append("audio_file", payload.audioFile);
+  }
+
+  const response = await api.post<unknown>("/council/intake", formData, {
+    headers: { "Content-Type": "multipart/form-data" }
+  });
+  const root = asRecord(response.data) ?? {};
+  const textFields = asRecord(root.text_fields);
+
+  const symptomsInput =
+    asText(textFields?.symptoms_input) ??
+    parseStringArray(root.symptoms).join("\n");
+  const labsInput =
+    asText(textFields?.labs_input) ??
+    formatLabsInput(root.labs);
+  const medicationsInput =
+    asText(textFields?.medications_input) ??
+    parseStringArray(root.medications).join("\n");
+  const historyInput =
+    asText(textFields?.history_input) ??
+    parseStringArray(root.history).join("\n");
+
+  return {
+    transcript: asText(root.transcript) ?? transcript,
+    symptomsInput,
+    labsInput,
+    medicationsInput,
+    historyInput,
+    modelUsed: asText(root.model_used) ?? "deepseek-v3.2",
+    warnings: parseStringArray(root.warnings)
+  };
 }
 
 export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilRunResult {

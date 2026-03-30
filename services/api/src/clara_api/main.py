@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,15 +17,22 @@ from clara_api.db.base import Base
 from clara_api.db.session import SessionLocal, engine
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
 
+raw_origins = [origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()]
+cors_allow_all_origins = "*" in raw_origins
+cors_origins = ["*"] if cors_allow_all_origins else raw_origins
+cors_methods = [method.strip().upper() for method in settings.cors_allowed_methods.split(",") if method.strip()]
+cors_headers = [header.strip() for header in settings.cors_allowed_headers.split(",") if header.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins or ["*"],
+    allow_credentials=False if cors_allow_all_origins else settings.cors_allow_credentials,
+    allow_methods=cors_methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=cors_headers or ["Authorization", "Content-Type"],
 )
 app.add_middleware(AuthContextMiddleware)
 app.add_middleware(RateLimiterMiddleware)
@@ -49,7 +58,23 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(_request: Request, exc: Exception):
-    return JSONResponse(status_code=500, content={"detail": f"Lỗi hệ thống: {exc}"})
+    logger.exception("Unhandled API error")
+    if settings.debug or not settings.secure_error_messages:
+        return JSONResponse(status_code=500, content={"detail": f"Lỗi hệ thống: {exc}"})
+    return JSONResponse(status_code=500, content={"detail": "Lỗi hệ thống nội bộ"})
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault("Cache-Control", "no-store")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 @app.get("/health")

@@ -221,7 +221,7 @@ def run_fides_lite(
             unsupported_claims=[],
             evidence_count=len(evidence_texts),
             severity="low",
-            note="Khong co atomic claim de kiem chung.",
+            note="Không có mệnh đề trọng yếu để kiểm chứng.",
             fide_report=_build_fide_report(
                 claims_count=0,
                 evidence_count=len(evidence_texts),
@@ -229,7 +229,7 @@ def run_fides_lite(
                 verdict="pass",
                 severity="low",
                 confidence=0.55,
-                note="Khong co atomic claim de kiem chung.",
+                note="Không có mệnh đề trọng yếu để kiểm chứng.",
                 unsupported_claims=[],
                 citation_present=_has_citations(answer, context_ids),
                 mode=normalized_mode,
@@ -247,7 +247,7 @@ def run_fides_lite(
             unsupported_claims=claims[:3],
             evidence_count=0,
             severity="high",
-            note="Khong co evidence retrieval de fact-check.",
+            note="Không có bằng chứng truy xuất để fact-check.",
             fide_report=_build_fide_report(
                 claims_count=len(claims),
                 evidence_count=0,
@@ -255,7 +255,7 @@ def run_fides_lite(
                 verdict="warn",
                 severity="high",
                 confidence=0.35,
-                note="Khong co evidence retrieval de fact-check.",
+                note="Không có bằng chứng truy xuất để fact-check.",
                 unsupported_claims=claims[:3],
                 citation_present=_has_citations(answer, context_ids),
                 mode=normalized_mode,
@@ -295,22 +295,22 @@ def run_fides_lite(
     if contradicted_claims:
         verdict = "fail"
         severity = "high"
-        note = "Phat hien claim co dau hieu mau thuan voi evidence truy xuat."
+        note = "Phát hiện claim có dấu hiệu mâu thuẫn với bằng chứng truy xuất."
     elif support_ratio >= pass_threshold:
         verdict = "pass"
         severity = "low"
         if citation_present:
-            note = "Da doi chieu voi evidence retrieval va dat nguong ho tro cao."
+            note = "Đã đối chiếu với evidence retrieval và đạt ngưỡng hỗ trợ cao."
         else:
-            note = "Claim duoc ho tro tot, nhung cau tra loi chua ghi ro citation."
+            note = "Claim được hỗ trợ tốt, nhưng câu trả lời chưa ghi rõ citation."
     elif support_ratio >= warn_threshold:
         verdict = "warn"
         severity = "medium"
-        note = "Mot phan claim chua du bang chung, can hien thi canh bao."
+        note = "Một phần claim chưa đủ bằng chứng, cần hiển thị cảnh báo."
     else:
         verdict = "warn"
         severity = "high"
-        note = "Da so claim khong duoc ho tro boi evidence retrieval."
+        note = "Đa số claim không được hỗ trợ bởi evidence retrieval."
 
     unsupported_bundle = unsupported_claims + [
         f"[contradiction] {claim}" for claim in contradicted_claims

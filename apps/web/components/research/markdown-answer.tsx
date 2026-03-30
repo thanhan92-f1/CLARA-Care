@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export type MarkdownAnswerCitation = {
   title: string;
@@ -10,194 +14,164 @@ export type MarkdownAnswerProps = {
   citations: MarkdownAnswerCitation[];
 };
 
-type MarkdownBlock =
-  | { type: "h1"; text: string }
-  | { type: "h2"; text: string }
-  | { type: "paragraph"; text: string }
-  | { type: "list"; items: string[] };
+type MermaidBlockProps = {
+  code: string;
+};
 
-function parseMarkdownBlocks(answer: string): MarkdownBlock[] {
-  const lines = answer.replace(/\r\n/g, "\n").split("\n");
-  const blocks: MarkdownBlock[] = [];
-  let paragraphBuffer: string[] = [];
+function MermaidBlock({ code }: MermaidBlockProps) {
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string>("");
 
-  const flushParagraph = () => {
-    const merged = paragraphBuffer.join(" ").trim();
-    if (merged) {
-      blocks.push({ type: "paragraph", text: merged });
-    }
-    paragraphBuffer = [];
-  };
+  useEffect(() => {
+    let cancelled = false;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = lines[index].trim();
+    async function renderMermaid() {
+      try {
+        const mermaidModule = await import("mermaid");
+        const mermaid = mermaidModule.default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "default",
+        });
 
-    if (!trimmed) {
-      flushParagraph();
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,2})\s+(.+)$/);
-    if (headingMatch) {
-      flushParagraph();
-      blocks.push({
-        type: headingMatch[1] === "#" ? "h1" : "h2",
-        text: headingMatch[2].trim()
-      });
-      continue;
-    }
-
-    const listMatch = trimmed.match(/^[-*]\s+(.+)$/);
-    if (listMatch) {
-      flushParagraph();
-
-      const items = [listMatch[1].trim()];
-      while (index + 1 < lines.length) {
-        const nextLine = lines[index + 1].trim();
-        const nextListMatch = nextLine.match(/^[-*]\s+(.+)$/);
-        if (!nextListMatch) {
-          break;
+        const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`;
+        const renderResult = await mermaid.render(id, code);
+        if (!cancelled) {
+          setSvg(renderResult.svg);
+          setError("");
         }
-
-        items.push(nextListMatch[1].trim());
-        index += 1;
+      } catch (cause) {
+        if (!cancelled) {
+          setSvg("");
+          setError(cause instanceof Error ? cause.message : "Không thể render Mermaid.");
+        }
       }
-
-      blocks.push({ type: "list", items });
-      continue;
     }
 
-    paragraphBuffer.push(trimmed);
+    void renderMermaid();
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+        Lỗi Mermaid: {error}
+      </div>
+    );
   }
 
-  flushParagraph();
-  return blocks;
+  if (!svg) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+        Đang dựng sơ đồ Mermaid...
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/70"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
 }
 
-function renderInlineMarkdown(text: string, citations: MarkdownAnswerCitation[], keyPrefix: string): ReactNode[] {
-  const tokenRegex = /(`([^`]+)`)|(\[([^\]]+)\]\(([^)\s]+)\))|(\[(\d+)\])|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)/g;
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  let tokenIndex = 0;
-  let match: RegExpExecArray | null = null;
-
-  while ((match = tokenRegex.exec(text)) !== null) {
-    const start = match.index;
-    if (start > cursor) {
-      nodes.push(text.slice(cursor, start));
-    }
-
-    const tokenKey = `${keyPrefix}-${tokenIndex}`;
-
-    if (match[1]) {
-      nodes.push(
-        <code
-          key={tokenKey}
-          className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[0.82em] text-slate-100"
-        >
-          {match[2]}
-        </code>
-      );
-    } else if (match[3]) {
-      nodes.push(
-        <a
-          key={tokenKey}
-          href={match[5]}
-          target="_blank"
-          rel="noreferrer"
-          className="font-medium text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-800"
-        >
-          {match[4]}
-        </a>
-      );
-    } else if (match[6]) {
-      const citationNumber = Number(match[7]);
-      const citation = citations[citationNumber - 1];
-      const href = citation?.url ?? `#citation-${citationNumber}`;
-      const isExternal = Boolean(citation?.url);
-
-      nodes.push(
-        <a
-          key={tokenKey}
-          href={href}
-          target={isExternal ? "_blank" : undefined}
-          rel={isExternal ? "noreferrer" : undefined}
-          title={citation?.title ?? `Citation ${citationNumber}`}
-          className="ml-0.5 inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[0.82em] font-semibold text-sky-700 hover:border-sky-300 hover:bg-sky-100"
-        >
-          [{citationNumber}]
-        </a>
-      );
-    } else if (match[8]) {
-      nodes.push(
-        <strong key={tokenKey} className="font-semibold text-[var(--text-primary)]">
-          {renderInlineMarkdown(match[9], citations, `${tokenKey}-strong`)}
-        </strong>
-      );
-    } else if (match[10]) {
-      nodes.push(
-        <em key={tokenKey} className="italic">
-          {renderInlineMarkdown(match[11], citations, `${tokenKey}-italic`)}
-        </em>
-      );
-    }
-
-    cursor = tokenRegex.lastIndex;
-    tokenIndex += 1;
-  }
-
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
-  }
-
-  return nodes;
+function normalizeAnswer(answer: string): string {
+  return answer.replace(/\r\n/g, "\n").trim();
 }
 
 export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProps) {
-  const blocks = parseMarkdownBlocks(answer);
+  const normalized = useMemo(() => normalizeAnswer(answer), [answer]);
+  const citationMap = useMemo(
+    () =>
+      citations.reduce<Record<string, MarkdownAnswerCitation>>((acc, item, index) => {
+        acc[String(index + 1)] = item;
+        return acc;
+      }, {}),
+    [citations]
+  );
 
-  if (!answer.trim()) {
+  if (!normalized) {
     return null;
   }
 
   return (
-    <div className="space-y-3 text-sm leading-7 text-[var(--text-secondary)]">
-      {blocks.map((block, blockIndex) => {
-        if (block.type === "h1") {
-          return (
-            <h1 key={`block-${blockIndex}`} className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">
-              {renderInlineMarkdown(block.text, citations, `h1-${blockIndex}`)}
-            </h1>
-          );
-        }
+    <div className="prose prose-slate max-w-none dark:prose-invert prose-p:leading-7 prose-li:leading-7 prose-headings:tracking-tight">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => {
+            const text =
+              Array.isArray(children) && typeof children[0] === "string" ? children[0] : "";
+            const citationMatch = text.match(/^\[(\d+)\]$/);
+            const citation = citationMatch ? citationMap[citationMatch[1]] : undefined;
+            const resolvedHref = href || citation?.url || "#";
+            const external = resolvedHref.startsWith("http://") || resolvedHref.startsWith("https://");
+            return (
+              <a
+                {...props}
+                href={resolvedHref}
+                target={external ? "_blank" : undefined}
+                rel={external ? "noreferrer" : undefined}
+                title={citation?.title}
+              >
+                {children}
+              </a>
+            );
+          },
+          code: ({ className, children, ...props }) => {
+            const code = String(children).replace(/\n$/, "");
+            const language = className?.replace("language-", "").trim().toLowerCase();
+            const inline = !className;
 
-        if (block.type === "h2") {
-          return (
-            <h2 key={`block-${blockIndex}`} className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">
-              {renderInlineMarkdown(block.text, citations, `h2-${blockIndex}`)}
-            </h2>
-          );
-        }
+            if (!inline && language === "mermaid") {
+              return <MermaidBlock code={code} />;
+            }
 
-        if (block.type === "list") {
-          return (
-            <ul key={`block-${blockIndex}`} className="list-disc space-y-1 pl-5 marker:text-[var(--text-muted)]">
-              {block.items.map((item, itemIndex) => (
-                <li key={`block-${blockIndex}-item-${itemIndex}`}>
-                  {renderInlineMarkdown(item, citations, `li-${blockIndex}-${itemIndex}`)}
-                </li>
-              ))}
-            </ul>
-          );
-        }
+            if (inline) {
+              return (
+                <code
+                  {...props}
+                  className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[0.82em] text-slate-100"
+                >
+                  {children}
+                </code>
+              );
+            }
 
-        return (
-          <p key={`block-${blockIndex}`}>
-            {renderInlineMarkdown(block.text, citations, `p-${blockIndex}`)}
-          </p>
-        );
-      })}
+            return (
+              <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-900 p-3 text-slate-100 dark:border-slate-700">
+                <code {...props} className={className}>
+                  {code}
+                </code>
+              </pre>
+            );
+          },
+          table: ({ children }) => (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border border-slate-300 bg-slate-100 px-2 py-1 text-left font-semibold dark:border-slate-600 dark:bg-slate-800">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border border-slate-300 px-2 py-1 align-top dark:border-slate-700">{children}</td>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-4 border-sky-400 bg-sky-50/60 px-3 py-2 text-slate-700 dark:bg-sky-950/20 dark:text-slate-200">
+              {children}
+            </blockquote>
+          ),
+        }}
+      >
+        {normalized}
+      </ReactMarkdown>
     </div>
   );
 }

@@ -257,6 +257,15 @@ export type SourceHubSyncResult = {
   warnings: string[];
 };
 
+export type PersistedResearchConversation = {
+  id: string;
+  queryId?: string;
+  query: string;
+  result: Record<string, unknown>;
+  tier: ResearchTier;
+  createdAt: number;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -280,6 +289,15 @@ function asId(value: unknown): string | undefined {
   if (text) return text;
   const numeric = asNumber(value);
   return numeric !== undefined ? String(numeric) : undefined;
+}
+
+function asTimestampMs(value: unknown): number | undefined {
+  const numeric = asNumber(value);
+  if (numeric !== undefined) return numeric > 1e12 ? numeric : numeric * 1000;
+  const text = asText(value);
+  if (!text) return undefined;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function uniqueIds(ids: string[]): string[] {
@@ -1422,6 +1440,58 @@ function parseSourceHubRecord(item: unknown): SourceHubRecord | null {
   };
 }
 
+function parseConversationResultPayload(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parseConversationResultPayload(parsed);
+    } catch {
+      return { tier: "tier1", answer: value };
+    }
+  }
+
+  const record = asRecord(value);
+  if (!record) return null;
+  const nestedResult = asRecord(record.result);
+  const payload = nestedResult ?? record;
+
+  const tierText = (asText(payload.tier) ?? "").toLowerCase();
+  if (tierText === "tier1" || tierText === "tier2") {
+    return { ...payload, tier: tierText };
+  }
+
+  if (payload.citations || payload.flowEvents || payload.flow_events || payload.telemetry) {
+    return { ...payload, tier: "tier2" };
+  }
+  return { ...payload, tier: "tier1" };
+}
+
+function parsePersistedConversation(item: unknown): PersistedResearchConversation | null {
+  const value = asRecord(item);
+  if (!value) return null;
+
+  const id = asId(value.id) ?? asId(value.session_id) ?? asId(value.conversation_id);
+  const query = asText(value.query) ?? asText(value.user_input) ?? asText(value.message);
+  const result = parseConversationResultPayload(value.result ?? value.response_text ?? value.response);
+  const createdAt =
+    asTimestampMs(value.created_at) ??
+    asTimestampMs(value.createdAt) ??
+    asTimestampMs(value.timestamp) ??
+    Date.now();
+
+  if (!id || !query || !result) return null;
+  const tier = String(result.tier ?? value.tier ?? "tier1").toLowerCase() === "tier2" ? "tier2" : "tier1";
+
+  return {
+    id,
+    queryId: asId(value.query_id),
+    query,
+    tier,
+    result: { ...result, tier },
+    createdAt
+  };
+}
+
 export async function listKnowledgeSources(): Promise<KnowledgeSource[]> {
   const response = await api.get<{ items?: unknown }>("/research/knowledge-sources");
   const items = asRecord(response.data)?.items;
@@ -1513,4 +1583,35 @@ export async function syncSourceHub(payload: {
       return text ? text : null;
     })
   };
+}
+
+export async function listResearchConversations(limit = 50): Promise<PersistedResearchConversation[]> {
+  const response = await api.get<{ items?: unknown }>("/research/conversations", {
+    params: { limit }
+  });
+  const root = asRecord(response.data);
+  const items = root?.items ?? response.data;
+  return parseList(items, parsePersistedConversation);
+}
+
+export async function createResearchConversation(
+  query: string,
+  result: Record<string, unknown>
+): Promise<PersistedResearchConversation> {
+  const response = await api.post<unknown>("/research/conversations", { query, result });
+  const parsed = parsePersistedConversation(response.data);
+  if (!parsed) throw new Error("Không thể lưu conversation vào database.");
+  return parsed;
+}
+
+export async function deleteResearchConversation(
+  conversationId: string | number
+): Promise<boolean> {
+  const normalizedId =
+    typeof conversationId === "number" ? conversationId : Math.trunc(Number(conversationId));
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) return false;
+  const response = await api.delete<{ deleted?: unknown }>(
+    `/research/conversations/${normalizedId}`
+  );
+  return Boolean(asRecord(response.data)?.deleted);
 }

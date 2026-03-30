@@ -11,11 +11,29 @@ class Settings(BaseSettings):
     environment: str = Field(
         default="development", validation_alias=AliasChoices("ENVIRONMENT", "ENV")
     )
-    debug: bool = True
+    debug: bool = Field(default=False, validation_alias="DEBUG")
+    secure_error_messages: bool = Field(default=True, validation_alias="SECURE_ERROR_MESSAGES")
 
     database_url: str = Field(
         default="sqlite+pysqlite:///./clara.db",
         validation_alias="DATABASE_URL",
+    )
+
+    cors_allowed_origins: str = Field(
+        default="*",
+        validation_alias="CORS_ALLOWED_ORIGINS",
+    )
+    cors_allowed_methods: str = Field(
+        default="GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        validation_alias="CORS_ALLOWED_METHODS",
+    )
+    cors_allowed_headers: str = Field(
+        default="Authorization,Content-Type",
+        validation_alias="CORS_ALLOWED_HEADERS",
+    )
+    cors_allow_credentials: bool = Field(
+        default=False,
+        validation_alias="CORS_ALLOW_CREDENTIALS",
     )
 
     jwt_secret_key: str = Field(
@@ -26,6 +44,21 @@ class Settings(BaseSettings):
     jwt_refresh_minutes: int = Field(default=43200, validation_alias="REFRESH_TOKEN_EXPIRE_MINUTES")
     auth_auto_provision_users: bool = Field(
         default=True, validation_alias="AUTH_AUTO_PROVISION_USERS"
+    )
+    auth_login_attempt_limit: int = Field(
+        default=8,
+        validation_alias="AUTH_LOGIN_ATTEMPT_LIMIT",
+        gt=0,
+    )
+    auth_login_window_seconds: int = Field(
+        default=300,
+        validation_alias="AUTH_LOGIN_WINDOW_SECONDS",
+        gt=0,
+    )
+    auth_login_lock_seconds: int = Field(
+        default=600,
+        validation_alias="AUTH_LOGIN_LOCK_SECONDS",
+        gt=0,
     )
     auth_bootstrap_admin_enabled: bool = Field(
         default=True,
@@ -50,6 +83,16 @@ class Settings(BaseSettings):
     auth_action_token_ttl_minutes: int = Field(
         default=30,
         validation_alias="AUTH_ACTION_TOKEN_TTL_MINUTES",
+        gt=0,
+    )
+    auth_action_rate_limit_attempts: int = Field(
+        default=30,
+        validation_alias="AUTH_ACTION_RATE_LIMIT_ATTEMPTS",
+        gt=1,
+    )
+    auth_action_rate_limit_window_seconds: int = Field(
+        default=300,
+        validation_alias="AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS",
         gt=0,
     )
     auth_email_delivery_mode: str = Field(
@@ -108,7 +151,6 @@ class Settings(BaseSettings):
         gt=0,
     )
     tgc_ocr_api_key: str = Field(default="", validation_alias="TGC_OCR_API_KEY")
-
 
 @lru_cache
 def get_settings() -> Settings:

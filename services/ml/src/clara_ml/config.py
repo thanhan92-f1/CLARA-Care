@@ -46,6 +46,18 @@ class Settings(BaseSettings):
         default=30.0,
         validation_alias=AliasChoices("DEEPSEEK_TIMEOUT_SECONDS", "DEEPSEEK_TIMEOUT"),
     )
+    deepseek_audio_model: str = Field(
+        default="whisper-1",
+        validation_alias=AliasChoices(
+            "DEEPSEEK_AUDIO_MODEL",
+            "DEEPSEEK_TRANSCRIBE_MODEL",
+            "DEEPSEEK_AUDIO_TRANSCRIPTION_MODEL",
+        ),
+    )
+    deepseek_audio_language: str = Field(
+        default="vi",
+        validation_alias=AliasChoices("DEEPSEEK_AUDIO_LANGUAGE", "DEEPSEEK_TRANSCRIBE_LANGUAGE"),
+    )
     external_ddi_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("EXTERNAL_DDI_ENABLED", "CAREGUARD_EXTERNAL_DDI_ENABLED"),

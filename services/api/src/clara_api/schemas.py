@@ -1,7 +1,8 @@
 from datetime import datetime
+import re
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 Role = Literal["normal", "researcher", "doctor", "admin"]
 
@@ -66,6 +67,13 @@ class RegisterRequest(BaseModel):
     full_name: str = Field(default="", max_length=255)
     role: Role = "normal"
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"[0-9]", value):
+            raise ValueError("Mật khẩu phải có ít nhất 1 chữ cái và 1 chữ số")
+        return value
+
 
 class RegisterResponse(BaseModel):
     user_id: int
@@ -104,10 +112,24 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(min_length=8, max_length=128)
 
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"[0-9]", value):
+            raise ValueError("Mật khẩu phải có ít nhất 1 chữ cái và 1 chữ số")
+        return value
+
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_change_password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"[0-9]", value):
+            raise ValueError("Mật khẩu phải có ít nhất 1 chữ cái và 1 chữ số")
+        return value
 
 
 class ConsentStatusResponse(BaseModel):
@@ -347,3 +369,24 @@ class SourceHubSyncResponse(BaseModel):
     stored: int = 0
     records: list[SourceHubRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+ResearchConversationTier = Literal["tier1", "tier2"]
+
+
+class ResearchConversationCreateRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+    result: dict[str, object] = Field(default_factory=dict)
+
+
+class ResearchConversationResponse(BaseModel):
+    id: int
+    query_id: int
+    query: str
+    tier: ResearchConversationTier
+    result: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ResearchConversationListResponse(BaseModel):
+    items: list[ResearchConversationResponse] = Field(default_factory=list)
