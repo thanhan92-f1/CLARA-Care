@@ -60,6 +60,8 @@
   --shadow-focus: 0 0 0 3px rgba(14, 116, 205, 0.28);
 
   --font-sans:
+    "Be Vietnam Pro",
+    "Inter",
     "Noto Sans",
     "Manrope",
     "Avenir Next",
@@ -71,8 +73,13 @@
     Arial,
     sans-serif;
   --font-display:
+    "DIN Condensed",
+    "Roboto Condensed",
+    "Arial Narrow",
+    "Helvetica Neue Condensed Bold",
     "Sora",
     "Manrope",
+    "Be Vietnam Pro",
     "Avenir Next",
     "Segoe UI",
     ui-sans-serif,
@@ -263,4 +270,324 @@ html[data-theme="dark"] .text-slate-600 {
 html.dark .text-slate-500,
 html[data-theme="dark"] .text-slate-500 {
   color: #8ea0bc !important;
+}
+
+
+/* CLARA landing inspired by KP3 */
+.clara-shell {
+  background:
+    radial-gradient(68rem 38rem at 50% -18%, rgba(56, 189, 248, 0.26), rgba(30, 64, 175, 0.18) 38%, transparent 72%),
+    linear-gradient(180deg, #02050f 0%, #020812 24%, #030d22 52%, #040b1e 100%);
+}
+
+.clara-grid-overlay {
+  background-image:
+    linear-gradient(to right, rgba(96, 165, 250, 0.058) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(96, 165, 250, 0.058) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
+.clara-wave-top::before {
+  content: "";
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: -1px;
+  height: clamp(20px, 2vw, 34px);
+  border-radius: 999px 999px 0 0;
+  background: radial-gradient(70% 140% at 50% 100%, rgba(56, 189, 248, 0.28), rgba(15, 23, 42, 0));
+  pointer-events: none;
+}
+
+.clara-hero-panel {
+  background:
+    radial-gradient(86% 68% at 50% 2%, rgba(56, 189, 248, 0.44), rgba(59, 130, 246, 0.22) 40%, rgba(8, 20, 49, 0.88) 74%),
+    linear-gradient(180deg, rgba(3, 10, 28, 0.98) 0%, rgba(2, 6, 18, 1) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 48px 110px -64px rgba(56, 189, 248, 0.95);
+}
+
+.clara-dome-panel {
+  background:
+    radial-gradient(116% 92% at 50% -6%, rgba(96, 165, 250, 0.48), rgba(59, 130, 246, 0.2) 34%, rgba(8, 16, 38, 0.95) 62%),
+    linear-gradient(180deg, rgba(7, 17, 44, 0.99), rgba(4, 10, 26, 1));
+}
+
+.clara-dark-card {
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  background:
+    radial-gradient(90% 75% at 50% 0%, rgba(14, 165, 233, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(6, 18, 42, 0.95), rgba(5, 12, 28, 0.96));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 26px 52px -38px rgba(37, 99, 235, 0.96);
+}
+
+.clara-model-card {
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  background:
+    radial-gradient(76% 68% at 50% 6%, rgba(59, 130, 246, 0.32), transparent 55%),
+    linear-gradient(180deg, rgba(7, 23, 53, 0.97), rgba(5, 13, 31, 0.98));
+  min-height: 360px;
+}
+
+.clara-kpi-card {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.clara-card-equal {
+  min-height: 430px;
+}
+
+.clara-stat-card {
+  min-height: 168px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.clara-neon-button {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(191, 219, 254, 0.35);
+  background: linear-gradient(90deg, #1f46d8 0%, #2f62f1 46%, #0cc5ff 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 14px 36px -18px rgba(37, 99, 235, 0.96),
+    0 0 28px rgba(56, 189, 248, 0.58);
+  transition: transform 180ms ease, filter 180ms ease, box-shadow 220ms ease;
+}
+
+.clara-neon-button:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 20px 44px -20px rgba(37, 99, 235, 0.98),
+    0 0 34px rgba(56, 189, 248, 0.62);
+}
+
+.clara-neon-button:active {
+  transform: translateY(0);
+}
+
+.clara-display-title {
+  font-family: var(--font-display);
+  font-size: clamp(2.9rem, 11.2vw, 9rem);
+  line-height: 0.86;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+
+.clara-sub-display {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 6.4vw, 5.85rem);
+  line-height: 0.9;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.clara-copy-rhythm {
+  font-size: clamp(1rem, 0.45vw + 0.93rem, 1.16rem);
+  line-height: clamp(1.78rem, 0.75vw + 1.6rem, 2.12rem);
+}
+
+.clara-cta-panel {
+  border-color: rgba(191, 219, 254, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 26px 64px -44px rgba(37, 99, 235, 0.9);
+}
+
+.clara-cta-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.clara-cta-stack > .clara-neon-button {
+  width: min(100%, 23.5rem);
+}
+
+.clara-final-cta-panel {
+  background:
+    radial-gradient(112% 82% at 50% -12%, rgba(56, 189, 248, 0.26), rgba(37, 99, 235, 0.16) 45%, rgba(7, 20, 46, 0.96) 74%),
+    linear-gradient(180deg, rgba(7, 20, 46, 0.98), rgba(4, 14, 34, 1));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 40px 90px -58px rgba(37, 99, 235, 0.94);
+}
+
+.clara-section,
+.clara-section-strong {
+  position: relative;
+  isolation: isolate;
+}
+
+.clara-section::before,
+.clara-section-strong::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(92%, 1320px);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.46) 20%, rgba(37, 99, 235, 0.62) 50%, rgba(125, 211, 252, 0.46) 80%, transparent);
+  pointer-events: none;
+}
+
+.clara-section::after,
+.clara-section-strong::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(82%, 1040px);
+  height: 24px;
+  transform: translate(-50%, -60%);
+  background: radial-gradient(closest-side, rgba(14, 165, 233, 0.2), rgba(14, 165, 233, 0));
+  pointer-events: none;
+}
+
+.clara-section {
+  padding-block: clamp(3rem, 4.7vw, 7.1rem);
+}
+
+.clara-section-strong {
+  padding-block: clamp(3.6rem, 5.7vw, 8.2rem);
+}
+
+.clara-neon-text {
+  background: linear-gradient(180deg, #ffffff 0%, #e0f2fe 24%, #7dd3fc 42%, #1fcbff 70%, #1d4ed8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 24px rgba(56, 189, 248, 0.64);
+}
+
+@media (max-width: 640px) {
+  .clara-grid-overlay {
+    background-size: 26px 26px;
+  }
+
+  .clara-hero-panel {
+    border-radius: 1.35rem;
+  }
+
+  .clara-display-title {
+    font-size: clamp(2.4rem, 14.5vw, 4.2rem);
+    line-height: 0.88;
+  }
+
+  .clara-sub-display {
+    font-size: clamp(1.8rem, 11vw, 3.1rem);
+    line-height: 0.92;
+  }
+
+  .clara-copy-rhythm {
+    font-size: 0.99rem;
+    line-height: 1.78rem;
+  }
+
+  .clara-cta-panel .clara-neon-button,
+  .clara-cta-stack > .clara-neon-button {
+    width: 100%;
+  }
+
+  .clara-section::after,
+  .clara-section-strong::after {
+    width: min(94%, 420px);
+  }
+
+  .clara-section {
+    padding-block: clamp(2.7rem, 9.6vw, 3.5rem);
+  }
+
+  .clara-section-strong {
+    padding-block: clamp(3rem, 11.2vw, 4rem);
+  }
+
+  .clara-kpi-card,
+  .clara-model-card,
+  .clara-card-equal,
+  .clara-stat-card {
+    min-height: unset;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .clara-display-title {
+    font-size: clamp(4.2rem, 10.5vw, 6.9rem);
+  }
+
+  .clara-sub-display {
+    font-size: clamp(2.7rem, 6.6vw, 4.6rem);
+  }
+
+  .clara-copy-rhythm {
+    font-size: clamp(1.03rem, 0.85vw + 0.74rem, 1.14rem);
+    line-height: clamp(1.86rem, 1.35vw + 1.45rem, 2.08rem);
+  }
+
+  .clara-section {
+    padding-block: clamp(3.5rem, 6.8vw, 5rem);
+  }
+
+  .clara-section-strong {
+    padding-block: clamp(4rem, 7.6vw, 5.8rem);
+  }
+}
+
+@media (min-width: 1025px) and (max-width: 1535px) {
+  .clara-display-title {
+    font-size: clamp(6rem, 7vw, 7.8rem);
+  }
+
+  .clara-sub-display {
+    font-size: clamp(3.7rem, 5.3vw, 5.4rem);
+  }
+
+  .clara-section {
+    padding-block: clamp(4.1rem, 5vw, 6.2rem);
+  }
+
+  .clara-section-strong {
+    padding-block: clamp(4.7rem, 5.8vw, 7rem);
+  }
+}
+
+@media (min-width: 1536px) {
+  .clara-display-title {
+    font-size: clamp(7.2rem, 7.5vw, 9.8rem);
+  }
+
+  .clara-sub-display {
+    font-size: clamp(4.9rem, 4.9vw, 6.3rem);
+  }
+
+  .clara-model-card {
+    min-height: 390px;
+  }
+
+  .clara-card-equal {
+    min-height: 465px;
+  }
+
+  .clara-stat-card {
+    min-height: 198px;
+  }
+
+  .clara-section {
+    padding-block: clamp(5.2rem, 4.6vw, 7.4rem);
+  }
+
+  .clara-section-strong {
+    padding-block: clamp(6rem, 5vw, 8.5rem);
+  }
 }
