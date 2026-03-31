@@ -244,6 +244,35 @@ def test_research_tier2_blocks_prescription_and_dosage_requests():
     assert body["guard_reason"] in {"prescription_request", "dosage_request"}
 
 
+def test_research_tier2_recovers_with_safe_fallback(monkeypatch: pytest.MonkeyPatch):
+    import clara_ml.main as main_module
+
+    original_runner = main_module.run_research_tier2
+
+    def _boom(_payload):
+        raise RuntimeError("deepseek_generation_failed")
+
+    monkeypatch.setattr(main_module, "run_research_tier2", _boom)
+    try:
+        response = client.post(
+            "/v1/research/tier2",
+            json={"query": "Warfarin va NSAID co gi nguy hiem?"},
+        )
+    finally:
+        monkeypatch.setattr(main_module, "run_research_tier2", original_runner)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_used"] == "ml-safe-fallback-v1"
+    assert body["fallback"] is True
+    assert body["policy_action"] == "warn"
+    assert body["fallback_reason"] == "RuntimeError"
+    assert isinstance(body.get("answer_markdown"), str)
+    assert "kết luận nhanh" in body["answer_markdown"].lower()
+    assert isinstance(body.get("flow_events"), list)
+    assert any(event.get("stage") == "fallback_response" for event in body["flow_events"])
+
+
 def test_research_tier2_flow_search_index_events_precede_synthesis():
     response = client.post(
         "/v1/research/tier2",

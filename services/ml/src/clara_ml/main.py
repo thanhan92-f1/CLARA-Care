@@ -200,6 +200,76 @@ def _legal_guard_refusal(*, role_hint: str | None, reason: str) -> dict[str, obj
     }
 
 
+def _research_fail_soft_payload(
+    *,
+    query: str,
+    role_hint: str | None,
+    reason: str,
+) -> dict[str, object]:
+    safe_role = (
+        role_hint
+        if role_hint in {"normal", "researcher", "doctor", "admin"}
+        else "normal"
+    )
+    fallback_text = (
+        "Hệ thống truy xuất chuyên sâu đang bận hoặc tạm thời không kết nối được nguồn RAG. "
+        "Tạm thời dùng chế độ an toàn: bạn nên ưu tiên phác đồ chính thống, "
+        "đối chiếu tương tác thuốc quan trọng, "
+        "và trao đổi bác sĩ khi có bệnh nền hoặc dấu hiệu nặng."
+    )
+    fallback_markdown = (
+        "## Kết luận nhanh\n"
+        f"{fallback_text}\n\n"
+        "## Phân tích chi tiết\n"
+        "- Luồng nghiên cứu chuyên sâu tạm thời không khả dụng, nên câu trả lời này dùng chế độ an toàn.\n"
+        "- Vui lòng kiểm chứng thêm với tài liệu chính thống và bác sĩ điều trị.\n\n"
+        "## Khuyến nghị an toàn\n"
+        "- Không tự ý kê đơn, không tự điều chỉnh liều khi chưa có tư vấn chuyên môn.\n"
+        "- Nếu có bệnh nền hoặc đang dùng đa thuốc, nên tham khảo bác sĩ/dược sĩ sớm.\n\n"
+        "## Nguồn tham chiếu\n"
+        "- [1] Fallback an toàn khi upstream RAG/LLM không sẵn sàng."
+    )
+    return {
+        "role": safe_role,
+        "intent": "general_guidance",
+        "confidence": 0.35,
+        "emergency": False,
+        "answer": fallback_markdown,
+        "answer_markdown": fallback_markdown,
+        "summary": fallback_text,
+        "answer_format": "markdown",
+        "policy_action": "warn",
+        "fallback": True,
+        "fallback_reason": reason,
+        "model_used": "ml-safe-fallback-v1",
+        "retrieved_ids": [],
+        "flow_events": [
+            _flow_event(
+                stage="rag_generation",
+                status="failed",
+                source_count=0,
+                note=f"Upstream generation failed: {reason}",
+            ),
+            _flow_event(
+                stage="fallback_response",
+                status="completed",
+                source_count=0,
+                note="Returned safe markdown fallback instead of 500.",
+            ),
+        ],
+        "metadata": {
+            "query": query,
+            "policy_action": "warn",
+            "fallback_used": True,
+            "source_errors": {"upstream": [reason]},
+            "attributions": [],
+            "research_mode": "fast",
+            "deep_pass_count": 0,
+        },
+        "citations": [],
+    }
+
+
 @app.middleware("http")
 async def instrument_requests(request: Request, call_next):
     started_at = perf_counter()
@@ -538,8 +608,15 @@ def research_tier2(payload: dict) -> dict:
     legal_guard_reason = _detect_legal_guard_violation(query, channel="research")
     if legal_guard_reason:
         return _legal_guard_refusal(role_hint=role_hint, reason=legal_guard_reason)
-    result = run_research_tier2(payload)
-    return result
+    try:
+        result = run_research_tier2(payload)
+        return result
+    except Exception as exc:  # pragma: no cover - defensive fail-soft guard
+        return _research_fail_soft_payload(
+            query=query,
+            role_hint=role_hint,
+            reason=exc.__class__.__name__,
+        )
 
 
 @app.post("/v1/careguard/analyze")
