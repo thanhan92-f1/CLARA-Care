@@ -32,11 +32,21 @@ def test_refresh_token_is_single_use(monkeypatch) -> None:
     raw_refresh_token = login_response.json()["refresh_token"]
     assert raw_refresh_token
 
-    first_refresh = client.post("/api/v1/auth/refresh", json={"refresh_token": raw_refresh_token})
+    stateless_client = TestClient(app)
+
+    first_refresh = stateless_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": raw_refresh_token},
+    )
     assert first_refresh.status_code == 200
     assert first_refresh.json()["refresh_token"]
 
-    second_refresh = client.post("/api/v1/auth/refresh", json={"refresh_token": raw_refresh_token})
+    # Ensure second call validates the same raw token without relying on refreshed cookies.
+    second_attempt_client = TestClient(app)
+    second_refresh = second_attempt_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": raw_refresh_token},
+    )
     assert second_refresh.status_code == 401
     _reset_runtime_state()
 
