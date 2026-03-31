@@ -2,8 +2,8 @@
   {
     "case_id": "DDI-001",
     "medications": [
-      "warfarin",
-      "ibuprofen"
+      "ibuprofen",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Bleeding risk increases when anticoagulant is combined with NSAID."
@@ -11,8 +11,8 @@
   {
     "case_id": "DDI-002",
     "medications": [
-      "warfarin",
-      "aspirin"
+      "aspirin",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Dual antithrombotic exposure raises major bleeding risk."
@@ -20,8 +20,8 @@
   {
     "case_id": "DDI-003",
     "medications": [
-      "warfarin",
-      "naproxen"
+      "naproxen",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Bleeding risk increases when anticoagulant is combined with NSAID."
@@ -29,8 +29,8 @@
   {
     "case_id": "DDI-004",
     "medications": [
-      "warfarin",
-      "diclofenac"
+      "diclofenac",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Bleeding risk increases when anticoagulant is combined with NSAID."
@@ -38,8 +38,8 @@
   {
     "case_id": "DDI-005",
     "medications": [
-      "warfarin",
-      "clopidogrel"
+      "clopidogrel",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Concurrent antithrombotic therapy elevates hemorrhage risk."
@@ -47,8 +47,8 @@
   {
     "case_id": "DDI-006",
     "medications": [
-      "warfarin",
-      "amiodarone"
+      "amiodarone",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Warfarin effect can increase markedly with amiodarone."
@@ -56,8 +56,8 @@
   {
     "case_id": "DDI-007",
     "medications": [
-      "warfarin",
-      "fluconazole"
+      "fluconazole",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Azole co-therapy can raise INR and bleeding risk."
@@ -65,8 +65,8 @@
   {
     "case_id": "DDI-008",
     "medications": [
-      "warfarin",
-      "metronidazole"
+      "metronidazole",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "INR may increase significantly with metronidazole."
@@ -74,8 +74,8 @@
   {
     "case_id": "DDI-009",
     "medications": [
-      "warfarin",
-      "trimethoprim"
+      "trimethoprim",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "INR may increase with trimethoprim-containing regimens."
@@ -83,8 +83,8 @@
   {
     "case_id": "DDI-010",
     "medications": [
-      "warfarin",
-      "clarithromycin"
+      "clarithromycin",
+      "warfarin"
     ],
     "expected_severity": "high",
     "expected_message": "Macrolide can increase warfarin exposure and INR."
@@ -92,8 +92,8 @@
   {
     "case_id": "DDI-011",
     "medications": [
-      "warfarin",
-      "paracetamol"
+      "paracetamol",
+      "warfarin"
     ],
     "expected_severity": "medium",
     "expected_message": "Repeated high-dose paracetamol may raise INR."
@@ -101,8 +101,8 @@
   {
     "case_id": "DDI-012",
     "medications": [
-      "warfarin",
-      "rifampin"
+      "rifampin",
+      "warfarin"
     ],
     "expected_severity": "medium",
     "expected_message": "Rifampin may reduce anticoagulant effect; INR can become unstable."
@@ -110,8 +110,8 @@
   {
     "case_id": "DDI-013",
     "medications": [
-      "rivaroxaban",
-      "aspirin"
+      "aspirin",
+      "rivaroxaban"
     ],
     "expected_severity": "high",
     "expected_message": "Combined antithrombotic effect increases bleeding risk."
@@ -119,8 +119,8 @@
   {
     "case_id": "DDI-014",
     "medications": [
-      "rivaroxaban",
-      "ibuprofen"
+      "ibuprofen",
+      "rivaroxaban"
     ],
     "expected_severity": "high",
     "expected_message": "NSAID plus DOAC can increase GI and systemic bleeding risk."
@@ -146,8 +146,8 @@
   {
     "case_id": "DDI-017",
     "medications": [
-      "heparin",
-      "aspirin"
+      "aspirin",
+      "heparin"
     ],
     "expected_severity": "high",
     "expected_message": "Concurrent anticoagulant and antiplatelet therapy increases bleeding risk."
@@ -155,8 +155,8 @@
   {
     "case_id": "DDI-018",
     "medications": [
-      "lisinopril",
-      "ibuprofen"
+      "ibuprofen",
+      "lisinopril"
     ],
     "expected_severity": "medium",
     "expected_message": "NSAID may reduce ACE inhibitor effect and worsen renal perfusion."
@@ -164,8 +164,8 @@
   {
     "case_id": "DDI-019",
     "medications": [
-      "losartan",
-      "ibuprofen"
+      "ibuprofen",
+      "losartan"
     ],
     "expected_severity": "medium",
     "expected_message": "NSAID may reduce ARB effect and worsen renal perfusion."
@@ -173,8 +173,8 @@
   {
     "case_id": "DDI-020",
     "medications": [
-      "ibuprofen",
-      "furosemide"
+      "furosemide",
+      "ibuprofen"
     ],
     "expected_severity": "medium",
     "expected_message": "NSAID can reduce diuretic response and worsen fluid control."
@@ -227,8 +227,8 @@
   {
     "case_id": "DDI-026",
     "medications": [
-      "simvastatin",
-      "clarithromycin"
+      "clarithromycin",
+      "simvastatin"
     ],
     "expected_severity": "high",
     "expected_message": "Myopathy/rhabdomyolysis risk increases with strong CYP inhibition."
@@ -236,8 +236,8 @@
   {
     "case_id": "DDI-027",
     "medications": [
-      "simvastatin",
-      "erythromycin"
+      "erythromycin",
+      "simvastatin"
     ],
     "expected_severity": "high",
     "expected_message": "Myopathy/rhabdomyolysis risk increases with strong CYP inhibition."
@@ -245,8 +245,8 @@
   {
     "case_id": "DDI-028",
     "medications": [
-      "simvastatin",
-      "ketoconazole"
+      "ketoconazole",
+      "simvastatin"
     ],
     "expected_severity": "high",
     "expected_message": "Strong CYP inhibition can markedly raise simvastatin concentration."
@@ -254,8 +254,8 @@
   {
     "case_id": "DDI-029",
     "medications": [
-      "simvastatin",
-      "gemfibrozil"
+      "gemfibrozil",
+      "simvastatin"
     ],
     "expected_severity": "high",
     "expected_message": "Severe myopathy risk increases with statin-fibrate combination."
@@ -263,8 +263,8 @@
   {
     "case_id": "DDI-030",
     "medications": [
-      "simvastatin",
-      "amiodarone"
+      "amiodarone",
+      "simvastatin"
     ],
     "expected_severity": "medium",
     "expected_message": "Myopathy risk may increase with interacting antiarrhythmic."
@@ -290,8 +290,8 @@
   {
     "case_id": "DDI-033",
     "medications": [
-      "digoxin",
-      "amiodarone"
+      "amiodarone",
+      "digoxin"
     ],
     "expected_severity": "high",
     "expected_message": "Digoxin concentration can rise and trigger toxicity."
@@ -308,8 +308,8 @@
   {
     "case_id": "DDI-035",
     "medications": [
-      "digoxin",
-      "clarithromycin"
+      "clarithromycin",
+      "digoxin"
     ],
     "expected_severity": "medium",
     "expected_message": "Macrolide can increase digoxin exposure and adverse effects."
@@ -326,8 +326,8 @@
   {
     "case_id": "DDI-037",
     "medications": [
-      "spironolactone",
-      "lisinopril"
+      "lisinopril",
+      "spironolactone"
     ],
     "expected_severity": "high",
     "expected_message": "Hyperkalemia risk increases with potassium-sparing combinations."
@@ -335,8 +335,8 @@
   {
     "case_id": "DDI-038",
     "medications": [
-      "spironolactone",
-      "losartan"
+      "losartan",
+      "spironolactone"
     ],
     "expected_severity": "high",
     "expected_message": "Hyperkalemia risk increases with potassium-sparing combinations."
@@ -353,8 +353,8 @@
   {
     "case_id": "DDI-040",
     "medications": [
-      "spironolactone",
-      "potassium chloride"
+      "potassium chloride",
+      "spironolactone"
     ],
     "expected_severity": "high",
     "expected_message": "Marked hyperkalemia risk with additive potassium retention."
@@ -380,8 +380,8 @@
   {
     "case_id": "DDI-043",
     "medications": [
-      "metformin",
-      "gliclazide"
+      "gliclazide",
+      "metformin"
     ],
     "expected_severity": "medium",
     "expected_message": "Combined glucose-lowering effect can cause hypoglycemia."
@@ -389,8 +389,8 @@
   {
     "case_id": "DDI-044",
     "medications": [
-      "insulin",
-      "gliclazide"
+      "gliclazide",
+      "insulin"
     ],
     "expected_severity": "high",
     "expected_message": "Additive hypoglycemic effect can be clinically significant."
@@ -407,8 +407,8 @@
   {
     "case_id": "DDI-046",
     "medications": [
-      "metformin",
-      "cimetidine"
+      "cimetidine",
+      "metformin"
     ],
     "expected_severity": "medium",
     "expected_message": "Metformin concentration may increase with reduced renal clearance."
@@ -434,8 +434,8 @@
   {
     "case_id": "DDI-049",
     "medications": [
-      "tacrolimus",
-      "fluconazole"
+      "fluconazole",
+      "tacrolimus"
     ],
     "expected_severity": "high",
     "expected_message": "Tacrolimus exposure can rise sharply with azole co-therapy."

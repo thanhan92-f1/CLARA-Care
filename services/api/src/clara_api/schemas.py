@@ -1,5 +1,5 @@
-from datetime import datetime
 import re
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -240,6 +240,8 @@ class CabinetScanDetection(BaseModel):
     normalized_name: str
     confidence: float
     evidence: str
+    requires_manual_confirm: bool = False
+    confirmed: bool = False
 
 
 class CabinetScanTextResponse(BaseModel):

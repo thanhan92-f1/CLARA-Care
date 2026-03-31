@@ -160,6 +160,31 @@ DRUG_RXCUI_MAP: dict[str, str] = {
     "naproxen": "7258",
 }
 
+LOW_CONFIDENCE_OCR_THRESHOLD = 0.9
+
+_CAREGUARD_SOURCE_CATALOG: dict[str, dict[str, str]] = {
+    "local_rules": {
+        "id": "local_rules",
+        "name": "CLARA Local DDI Rules",
+        "type": "deterministic",
+    },
+    "rxnav": {
+        "id": "rxnav",
+        "name": "RxNav / RxNorm (NLM)",
+        "type": "knowledge_base",
+    },
+    "rxnorm": {
+        "id": "rxnav",
+        "name": "RxNav / RxNorm (NLM)",
+        "type": "knowledge_base",
+    },
+    "openfda": {
+        "id": "openfda",
+        "name": "openFDA Drug Label",
+        "type": "safety_signal",
+    },
+}
+
 
 def _build_alias_lookup() -> dict[str, str]:
     lookup: dict[str, str] = {}
@@ -239,28 +264,76 @@ def _normalize_citation_rows(citations_payload: Any) -> list[dict[str, str]]:
 
 
 def _default_careguard_sources(external_ddi_enabled: bool) -> list[dict[str, str]]:
-    sources = [
-        {
-            "id": "local_rules",
-            "name": "CLARA Local DDI Rules",
-            "type": "deterministic",
-        }
-    ]
+    sources = [dict(_CAREGUARD_SOURCE_CATALOG["local_rules"])]
     if external_ddi_enabled:
         sources.extend(
             [
-                {
-                    "id": "rxnorm",
-                    "name": "RxNorm (NLM)",
-                    "type": "knowledge_base",
-                },
-                {
-                    "id": "openfda",
-                    "name": "openFDA Drug Label",
-                    "type": "safety_signal",
-                },
+                dict(_CAREGUARD_SOURCE_CATALOG["rxnav"]),
+                dict(_CAREGUARD_SOURCE_CATALOG["openfda"]),
             ]
         )
+    return sources
+
+
+def _normalize_source_used(raw_source_used: Any) -> list[str]:
+    if isinstance(raw_source_used, str):
+        normalized = raw_source_used.strip().lower()
+        return [normalized] if normalized else []
+    if not isinstance(raw_source_used, list):
+        return []
+
+    source_used: list[str] = []
+    for item in raw_source_used:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip().lower()
+        if normalized and normalized not in source_used:
+            source_used.append(normalized)
+    return source_used
+
+
+def _normalize_source_errors(raw_source_errors: Any) -> dict[str, list[str]]:
+    if not isinstance(raw_source_errors, dict):
+        return {}
+
+    source_errors: dict[str, list[str]] = {}
+    for source_name, values in raw_source_errors.items():
+        source_key = str(source_name).strip().lower()
+        if not source_key:
+            continue
+        if isinstance(values, list):
+            normalized_values = [str(value).strip() for value in values if str(value).strip()]
+        elif values is None:
+            normalized_values = []
+        else:
+            normalized_values = [str(values).strip()] if str(values).strip() else []
+        source_errors[source_key] = normalized_values
+    return source_errors
+
+
+def _resolve_careguard_sources(
+    *,
+    source_used: list[str],
+    external_ddi_enabled: bool,
+) -> list[dict[str, str]]:
+    if not source_used:
+        return _default_careguard_sources(external_ddi_enabled)
+
+    sources: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for source_name in source_used:
+        source = _CAREGUARD_SOURCE_CATALOG.get(source_name)
+        if source is None:
+            source = {
+                "id": source_name,
+                "name": source_name.replace("_", " ").title(),
+                "type": "external",
+            }
+        source_id = source.get("id", source_name)
+        if source_id in seen_ids:
+            continue
+        seen_ids.add(source_id)
+        sources.append(dict(source))
     return sources
 
 
@@ -271,14 +344,27 @@ def _attach_careguard_attribution(
 ) -> dict[str, Any]:
     response = dict(payload)
     citations = _normalize_citation_rows(response.get("citations"))
+    metadata = response.get("metadata")
+    metadata_obj = metadata if isinstance(metadata, dict) else {}
+    source_used = _normalize_source_used(metadata_obj.get("source_used"))
+    source_errors = _normalize_source_errors(metadata_obj.get("source_errors"))
+    sources = _resolve_careguard_sources(
+        source_used=source_used,
+        external_ddi_enabled=external_ddi_enabled,
+    )
+    has_external_source = any(source.get("id") not in {"local_rules"} for source in sources)
+    mode = "external_plus_local" if has_external_source else "local_only"
+
     if "citations" not in response:
         response["citations"] = citations
     attribution = {
         "channel": "careguard",
-        "mode": "external_plus_local" if external_ddi_enabled else "local_only",
-        "source_count": len(_default_careguard_sources(external_ddi_enabled)),
+        "mode": mode,
+        "source_count": len(sources),
         "citation_count": len(citations),
-        "sources": _default_careguard_sources(external_ddi_enabled),
+        "sources": sources,
+        "source_used": source_used,
+        "source_errors": source_errors,
         "citations": citations,
     }
     response["attributions"] = [attribution]
@@ -326,12 +412,16 @@ def _detect_drugs_from_text(text: str) -> list[CabinetScanDetection]:
                 continue
 
             display_name, normalized_name, _rx_cui = _resolve_dictionary_mapping(canonical)
+            confidence = 0.94 if alias == canonical else 0.82
+            requires_manual_confirm = confidence < LOW_CONFIDENCE_OCR_THRESHOLD
             detections.append(
                 CabinetScanDetection(
                     drug_name=display_name,
                     normalized_name=normalized_name,
-                    confidence=0.94 if alias == canonical else 0.82,
+                    confidence=confidence,
                     evidence=alias,
+                    requires_manual_confirm=requires_manual_confirm,
+                    confirmed=not requires_manual_confirm,
                 )
             )
             break
@@ -754,6 +844,38 @@ def import_detections(
         .all()
     )
 
+    blocked_unconfirmed: list[dict[str, Any]] = []
+    for index, detection in enumerate(payload.detections):
+        needs_manual_confirm = (
+            detection.requires_manual_confirm
+            or detection.confidence < LOW_CONFIDENCE_OCR_THRESHOLD
+        )
+        if needs_manual_confirm and not detection.confirmed:
+            blocked_unconfirmed.append(
+                {
+                    "index": index,
+                    "drug_name": detection.drug_name,
+                    "normalized_name": detection.normalized_name,
+                    "confidence": detection.confidence,
+                    "evidence": detection.evidence,
+                    "reason": "manual_confirm_required_for_low_confidence_detection",
+                }
+            )
+
+    if blocked_unconfirmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "manual_confirmation_required",
+                "message": (
+                    "Có phát hiện OCR độ tin cậy thấp chưa được xác nhận thủ công. "
+                    "Vui lòng đánh dấu confirmed=true cho các mục này trước khi import."
+                ),
+                "threshold": LOW_CONFIDENCE_OCR_THRESHOLD,
+                "blocked_detections": blocked_unconfirmed,
+            },
+        )
+
     inserted = 0
     for detection in payload.detections:
         _, normalized, mapped_rxcui = _resolve_dictionary_mapping(
@@ -768,7 +890,10 @@ def import_detections(
             source="ocr",
             rx_cui=mapped_rxcui,
             ocr_confidence=detection.confidence,
-            note=f"Phát hiện OCR: {detection.evidence}",
+            note=(
+                f"Phát hiện OCR: {detection.evidence}"
+                + (" (manual confirmed)" if detection.confidence < LOW_CONFIDENCE_OCR_THRESHOLD else "")
+            ),
             updated_at=datetime.now(tz=UTC),
         )
         db.add(item)

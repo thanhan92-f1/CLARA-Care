@@ -30,6 +30,12 @@ export type ScanDetection = {
   evidence: string;
 };
 
+export const LOW_CONFIDENCE_DETECTION_THRESHOLD = 0.85;
+
+export function isLowConfidenceDetection(detection: ScanDetection): boolean {
+  return detection.confidence < LOW_CONFIDENCE_DETECTION_THRESHOLD;
+}
+
 type ScanResponse = {
   detections: ScanDetection[];
   extracted_text?: string | null;

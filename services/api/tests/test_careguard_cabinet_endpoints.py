@@ -106,14 +106,47 @@ def test_scan_and_import_detection() -> None:
     assert scan_response.status_code == 200
     detections = scan_response.json()["detections"]
     assert len(detections) >= 1
+    assert all("requires_manual_confirm" in item for item in detections)
+    assert all("confirmed" in item for item in detections)
+
+    normalized_detections = []
+    for detection in detections:
+        updated = dict(detection)
+        if updated["requires_manual_confirm"]:
+            updated["confirmed"] = True
+        normalized_detections.append(updated)
 
     import_response = client.post(
         "/api/v1/careguard/cabinet/import-detections",
         headers={"Authorization": f"Bearer {token}"},
-        json={"detections": detections},
+        json={"detections": normalized_detections},
     )
     assert import_response.status_code == 200
     assert import_response.json()["inserted"] >= 1
+
+
+def test_import_detection_rejects_low_confidence_without_confirmation() -> None:
+    token = _login("scan-reject-user@example.com")
+    import_response = client.post(
+        "/api/v1/careguard/cabinet/import-detections",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "detections": [
+                {
+                    "drug_name": "Panadol",
+                    "normalized_name": "paracetamol",
+                    "confidence": 0.82,
+                    "evidence": "panadol",
+                    "requires_manual_confirm": True,
+                    "confirmed": False,
+                }
+            ]
+        },
+    )
+    assert import_response.status_code == 422
+    detail = import_response.json()["detail"]
+    assert detail["error"] == "manual_confirmation_required"
+    assert detail["blocked_detections"][0]["drug_name"] == "Panadol"
 
 
 def test_scan_file_uses_tgc_ocr(monkeypatch) -> None:
@@ -179,6 +212,10 @@ def test_auto_ddi_proxy_payload(monkeypatch) -> None:
             "ddi_alerts": [{"title": "test"}],
             "recommendations": ["test"],
             "citations": [{"source": "RxNorm", "url": "https://rxnav.nlm.nih.gov/"}],
+            "metadata": {
+                "source_used": ["local_rules", "rxnav", "openfda"],
+                "source_errors": {"openfda": ["timeout"]},
+            },
         }
 
     monkeypatch.setattr("clara_api.api.v1.endpoints.careguard.proxy_ml_post", _fake_proxy)
@@ -198,7 +235,10 @@ def test_auto_ddi_proxy_payload(monkeypatch) -> None:
     assert "attribution" in body
     assert "attributions" in body
     assert body["attribution"]["channel"] == "careguard"
-    assert body["attribution"]["mode"] == "local_only"
+    assert body["attribution"]["mode"] == "external_plus_local"
     assert body["attribution"]["citation_count"] == 1
+    assert body["attribution"]["source_used"] == ["local_rules", "rxnav", "openfda"]
+    assert body["attribution"]["source_errors"] == {"openfda": ["timeout"]}
+    assert body["attribution"]["source_count"] == 3
     assert isinstance(body["attributions"], list)
     assert body["attributions"][0]["channel"] == "careguard"

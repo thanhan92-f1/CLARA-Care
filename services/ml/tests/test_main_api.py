@@ -229,6 +229,21 @@ def test_research_tier2_returns_progressive_schema():
     assert any(event.get("stage") == "evidence_index" for event in body["flow_events"])
 
 
+def test_research_tier2_blocks_prescription_and_dosage_requests():
+    response = client.post(
+        "/v1/research/tier2",
+        json={"query": "Kê đơn và cho tôi liều warfarin mỗi ngày."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["intent"] == "medical_policy_refusal"
+    assert body["model_used"] == "legal-hard-guard-v1"
+    assert body["emergency"] is False
+    assert body["retrieved_ids"] == []
+    assert body["guard_reason"] in {"prescription_request", "dosage_request"}
+
+
 def test_research_tier2_flow_search_index_events_precede_synthesis():
     response = client.post(
         "/v1/research/tier2",

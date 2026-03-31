@@ -4,7 +4,15 @@ import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 import PageShell from "@/components/ui/page-shell";
 import SelfMedConsentGate from "@/components/selfmed/selfmed-consent-gate";
-import { AddCabinetItemPayload, ScanDetection, addCabinetItem, importDetections, scanReceiptFile, scanReceiptText } from "@/lib/selfmed";
+import {
+  AddCabinetItemPayload,
+  ScanDetection,
+  addCabinetItem,
+  importDetections,
+  isLowConfidenceDetection,
+  scanReceiptFile,
+  scanReceiptText
+} from "@/lib/selfmed";
 
 function confidenceClass(value: number): string {
   if (value >= 0.85) return "border-emerald-300/60 bg-emerald-500/15 text-emerald-100";
@@ -12,11 +20,16 @@ function confidenceClass(value: number): string {
   return "border-red-300/60 bg-red-500/15 text-red-100";
 }
 
+function getDetectionKey(item: ScanDetection, index: number): string {
+  return `${item.normalized_name}-${item.evidence}-${index}`;
+}
+
 export default function SelfMedAddPage() {
   const [scanFile, setScanFile] = useState<File | null>(null);
   const [scanText, setScanText] = useState("");
   const [detections, setDetections] = useState<ScanDetection[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
+  const [confirmedLowConfidenceKeys, setConfirmedLowConfidenceKeys] = useState<Record<string, boolean>>({});
   const [scanNotice, setScanNotice] = useState("");
   const [isScanningFile, setIsScanningFile] = useState(false);
   const [isScanningText, setIsScanningText] = useState(false);
@@ -29,16 +42,33 @@ export default function SelfMedAddPage() {
   const [isAddingManual, setIsAddingManual] = useState(false);
 
   const selectedDetections = useMemo(
-    () => detections.filter((item, index) => selectedKeys[`${item.normalized_name}-${index}`]),
+    () => detections.filter((item, index) => selectedKeys[getDetectionKey(item, index)]),
     [detections, selectedKeys]
   );
 
-  const resetSelection = (items: ScanDetection[]) => {
-    const next: Record<string, boolean> = {};
-    items.forEach((item, index) => {
-      next[`${item.normalized_name}-${index}`] = true;
+  const pendingLowConfidenceSelections = useMemo(() => {
+    return detections.filter((item, index) => {
+      if (!isLowConfidenceDetection(item)) return false;
+      const key = getDetectionKey(item, index);
+      return Boolean(selectedKeys[key]) && !confirmedLowConfidenceKeys[key];
     });
-    setSelectedKeys(next);
+  }, [confirmedLowConfidenceKeys, detections, selectedKeys]);
+
+  const resetSelection = (items: ScanDetection[]) => {
+    const nextSelected: Record<string, boolean> = {};
+    const nextConfirmed: Record<string, boolean> = {};
+    items.forEach((item, index) => {
+      const key = getDetectionKey(item, index);
+      if (isLowConfidenceDetection(item)) {
+        nextSelected[key] = false;
+        nextConfirmed[key] = false;
+      } else {
+        nextSelected[key] = true;
+        nextConfirmed[key] = true;
+      }
+    });
+    setSelectedKeys(nextSelected);
+    setConfirmedLowConfidenceKeys(nextConfirmed);
   };
 
   const onScanFile = async () => {
@@ -84,6 +114,10 @@ export default function SelfMedAddPage() {
 
   const onImportSelected = async () => {
     if (!selectedDetections.length) return;
+    if (pendingLowConfidenceSelections.length) {
+      setScanNotice("Cần xác nhận thủ công từng thuốc độ tin cậy thấp trước khi nhập.");
+      return;
+    }
     setIsImporting(true);
     setScanNotice("");
     try {
@@ -98,6 +132,10 @@ export default function SelfMedAddPage() {
 
   const onToggleDetection = (key: string) => {
     setSelectedKeys((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const onToggleLowConfidenceConfirm = (key: string) => {
+    setConfirmedLowConfidenceKeys((current) => ({ ...current, [key]: !current[key] }));
   };
 
   const onAddManual = async (event: FormEvent<HTMLFormElement>) => {
@@ -211,35 +249,57 @@ export default function SelfMedAddPage() {
                     Đã chọn {selectedDetections.length}/{detections.length}
                   </span>
                 </div>
+                {pendingLowConfidenceSelections.length ? (
+                  <p className="rounded-xl border border-amber-300/70 bg-amber-500/20 px-3 py-2 text-sm font-medium text-amber-100">
+                    Còn {pendingLowConfidenceSelections.length} thuốc độ tin cậy thấp cần xác nhận thủ công trước khi nhập.
+                  </p>
+                ) : null}
 
                 <ul className="grid gap-2 lg:grid-cols-2">
                   {detections.map((item, index) => {
-                    const key = `${item.normalized_name}-${index}`;
+                    const key = getDetectionKey(item, index);
                     const checked = Boolean(selectedKeys[key]);
+                    const isLowConfidence = isLowConfidenceDetection(item);
+                    const isLowConfidenceConfirmed = Boolean(confirmedLowConfidenceKeys[key]);
                     return (
                       <li
                         key={key}
                         className={`rounded-2xl border p-3 transition ${
                           checked
-                            ? "border-cyan-300/55 bg-cyan-500/10"
+                            ? isLowConfidence
+                              ? "border-amber-300/60 bg-amber-500/15"
+                              : "border-cyan-300/55 bg-cyan-500/10"
                             : "border-[color:var(--shell-border)] bg-[var(--surface-muted)]"
                         }`}
                       >
-                        <label className="flex cursor-pointer items-start gap-3">
+                        <label className="flex min-h-11 cursor-pointer items-start gap-3">
                           <input
                             type="checkbox"
                             checked={checked}
                             onChange={() => onToggleDetection(key)}
-                            className="mt-1 h-4 w-4 rounded"
+                            className="mt-1 h-6 w-6 rounded"
                           />
                           <div>
-                            <p className="text-sm font-semibold text-[var(--text-primary)]">{item.drug_name}</p>
-                            <p className="mt-1 text-xs text-[var(--text-secondary)]">Bằng chứng: {item.evidence}</p>
+                            <p className="text-base font-semibold text-[var(--text-primary)]">{item.drug_name}</p>
+                            <p className="mt-1 text-sm text-[var(--text-secondary)]">Bằng chứng: {item.evidence}</p>
                             <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${confidenceClass(item.confidence)}`}>
                               OCR {Math.round(item.confidence * 100)}%
                             </span>
                           </div>
                         </label>
+                        {isLowConfidence && checked ? (
+                          <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-amber-300/70 bg-amber-500/20 px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={isLowConfidenceConfirmed}
+                              onChange={() => onToggleLowConfidenceConfirm(key)}
+                              className="h-6 w-6 rounded"
+                            />
+                            <span className="text-sm font-semibold text-amber-100">
+                              Tôi xác nhận thuốc OCR này đúng trước khi nhập.
+                            </span>
+                          </label>
+                        ) : null}
                       </li>
                     );
                   })}
@@ -248,7 +308,7 @@ export default function SelfMedAddPage() {
                 <button
                   type="button"
                   onClick={() => void onImportSelected()}
-                  disabled={isImporting || selectedDetections.length === 0}
+                  disabled={isImporting || selectedDetections.length === 0 || pendingLowConfidenceSelections.length > 0}
                   className="inline-flex min-h-12 items-center rounded-xl border border-emerald-300/55 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
                 >
                   {isImporting ? "Đang thêm vào tủ..." : `Thêm ${selectedDetections.length} thuốc vào tủ`}

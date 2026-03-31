@@ -17,6 +17,7 @@ import {
   deleteCabinetItem,
   getCabinet,
   importDetections,
+  isLowConfidenceDetection,
   runCabinetAutoDdi,
   scanReceiptFile,
   scanReceiptText,
@@ -45,6 +46,32 @@ function getRiskLabelVi(riskTier: string | null): string {
   return riskTier ?? "Chưa xác định";
 }
 
+function getModeBadgeLabel(mode: string | null): string {
+  const value = mode?.toLowerCase() ?? "";
+  if (value.includes("external_plus_local") || value.includes("external")) {
+    return "Runtime: External + Local";
+  }
+  if (value.includes("local_only") || value.includes("local")) {
+    return "Runtime: Local only";
+  }
+  return "Runtime: Chưa xác định";
+}
+
+function getModeBadgeClass(mode: string | null): string {
+  const value = mode?.toLowerCase() ?? "";
+  if (value.includes("external_plus_local") || value.includes("external")) {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (value.includes("local_only") || value.includes("local")) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function getDetectionKey(item: ScanDetection, index: number): string {
+  return `${item.normalized_name}-${item.evidence}-${index}`;
+}
+
 export default function CareguardPage() {
   const [consentLoading, setConsentLoading] = useState(true);
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -62,6 +89,7 @@ export default function CareguardPage() {
   const [receiptTextInput, setReceiptTextInput] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptDetections, setReceiptDetections] = useState<ScanDetection[]>([]);
+  const [confirmedDetectionKeys, setConfirmedDetectionKeys] = useState<Record<string, boolean>>({});
   const [receiptNotice, setReceiptNotice] = useState("");
   const [isScanning, setIsScanning] = useState(false);
 
@@ -85,6 +113,13 @@ export default function CareguardPage() {
   const medicationNames = useMemo(() => {
     return Array.from(new Set(cabinet.map((item) => item.normalized_name))).filter(Boolean);
   }, [cabinet]);
+
+  const pendingLowConfidenceDetections = useMemo(() => {
+    return receiptDetections.filter((item, index) => {
+      if (!isLowConfidenceDetection(item)) return false;
+      return !confirmedDetectionKeys[getDetectionKey(item, index)];
+    });
+  }, [confirmedDetectionKeys, receiptDetections]);
 
   const refreshConsentStatus = async (): Promise<boolean> => {
     setConsentError("");
@@ -158,9 +193,17 @@ export default function CareguardPage() {
     setIsScanning(true);
     setReceiptNotice("");
     setReceiptDetections([]);
+    setConfirmedDetectionKeys({});
     try {
       const detections = await scanReceiptText(text);
       setReceiptDetections(detections);
+      const nextConfirmed: Record<string, boolean> = {};
+      detections.forEach((item, index) => {
+        if (!isLowConfidenceDetection(item)) {
+          nextConfirmed[getDetectionKey(item, index)] = true;
+        }
+      });
+      setConfirmedDetectionKeys(nextConfirmed);
       setReceiptNotice(
         detections.length
           ? `Nhận diện được ${detections.length} thuốc từ nội dung OCR.`
@@ -182,9 +225,17 @@ export default function CareguardPage() {
     setIsScanning(true);
     setReceiptNotice("");
     setReceiptDetections([]);
+    setConfirmedDetectionKeys({});
     try {
       const detections = await scanReceiptFile(receiptFile);
       setReceiptDetections(detections);
+      const nextConfirmed: Record<string, boolean> = {};
+      detections.forEach((item, index) => {
+        if (!isLowConfidenceDetection(item)) {
+          nextConfirmed[getDetectionKey(item, index)] = true;
+        }
+      });
+      setConfirmedDetectionKeys(nextConfirmed);
       setReceiptNotice(
         detections.length
           ? `Nhận diện được ${detections.length} thuốc từ file OCR.`
@@ -202,6 +253,10 @@ export default function CareguardPage() {
       setCabinetNotice("Chưa có dữ liệu nhận diện để thêm vào tủ thuốc.");
       return;
     }
+    if (pendingLowConfidenceDetections.length) {
+      setCabinetNotice("Cần xác nhận từng thuốc độ tin cậy thấp trước khi thêm vào tủ thuốc.");
+      return;
+    }
 
     setCabinetNotice("");
     try {
@@ -211,6 +266,10 @@ export default function CareguardPage() {
     } catch (error) {
       setCabinetNotice(error instanceof Error ? error.message : "Không thể nhập dữ liệu nhận diện.");
     }
+  };
+
+  const onConfirmDetection = (key: string) => {
+    setConfirmedDetectionKeys((current) => ({ ...current, [key]: !current[key] }));
   };
 
   const onAddManualMedication = async () => {
@@ -410,21 +469,50 @@ export default function CareguardPage() {
             <div className="mt-3 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4">
               <p className="text-base font-semibold text-emerald-900">Xác nhận thủ công trước khi nhập tủ thuốc</p>
               <p className="mt-1 text-sm text-emerald-800">
-                Vui lòng kiểm tra danh sách dưới đây. Nút thêm chỉ nên bấm khi bạn xác nhận kết quả OCR là chính xác.
+                Vui lòng kiểm tra danh sách dưới đây. Thuốc có độ tin cậy thấp cần xác nhận riêng từng mục trước khi thêm.
               </p>
+              {pendingLowConfidenceDetections.length ? (
+                <p className="mt-2 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">
+                  Còn {pendingLowConfidenceDetections.length} thuốc độ tin cậy thấp chưa được xác nhận thủ công.
+                </p>
+              ) : null}
               <ul className="mt-3 grid gap-2 md:grid-cols-2">
-                {receiptDetections.map((item) => (
-                  <li key={`${item.normalized_name}-${item.evidence}`} className="rounded-xl border border-emerald-200 bg-white p-3">
-                    <p className="text-lg font-semibold text-slate-900">{item.drug_name}</p>
-                    <p className="mt-1 text-sm text-slate-700">Bằng chứng: {item.evidence}</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">Độ tin cậy: {Math.round(item.confidence * 100)}%</p>
-                  </li>
-                ))}
+                {receiptDetections.map((item, index) => {
+                  const key = getDetectionKey(item, index);
+                  const isLowConfidence = isLowConfidenceDetection(item);
+                  const isConfirmed = Boolean(confirmedDetectionKeys[key]);
+                  return (
+                    <li
+                      key={key}
+                      className={`rounded-xl border bg-white p-3 ${
+                        isLowConfidence ? "border-amber-300" : "border-emerald-200"
+                      }`}
+                    >
+                      <p className="text-lg font-semibold text-slate-900">{item.drug_name}</p>
+                      <p className="mt-1 text-base text-slate-700">Bằng chứng: {item.evidence}</p>
+                      <p className="mt-1 text-base font-medium text-slate-700">Độ tin cậy: {Math.round(item.confidence * 100)}%</p>
+                      {isLowConfidence ? (
+                        <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={isConfirmed}
+                            onChange={() => onConfirmDetection(key)}
+                            className="h-6 w-6 rounded"
+                          />
+                          <span className="text-sm font-semibold text-amber-900">
+                            Tôi xác nhận mục này đúng trước khi nhập vào {cabinetLabel}
+                          </span>
+                        </label>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
               <button
                 type="button"
                 onClick={onImportDetections}
-                className="mt-4 min-h-12 rounded-xl bg-emerald-700 px-5 py-3 text-base font-semibold text-white hover:bg-emerald-800"
+                disabled={pendingLowConfidenceDetections.length > 0}
+                className="mt-4 min-h-12 rounded-xl bg-emerald-700 px-5 py-3 text-base font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Tôi đã kiểm tra đúng, thêm vào {cabinetLabel}
               </button>
@@ -553,6 +641,18 @@ export default function CareguardPage() {
                 <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getRiskBadgeClass(autoResult.riskTier)}`}>
                   {getRiskLabelVi(autoResult.riskTier)}
                 </span>
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getModeBadgeClass(autoResult.mode)}`}>
+                  {getModeBadgeLabel(autoResult.mode)}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                    autoResult.fallbackUsed
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {autoResult.fallbackUsed ? "Fallback cục bộ: Có" : "Fallback cục bộ: Không"}
+                </span>
               </div>
               {autoResult.ddiAlerts.length ? (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
@@ -563,6 +663,28 @@ export default function CareguardPage() {
               ) : (
                 <p className="mt-2 text-sm text-slate-700">Chưa phát hiện cảnh báo tương tác rõ ràng.</p>
               )}
+              <article className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Minh bạch nguồn dữ liệu</p>
+                <p className="mt-1 text-sm text-slate-700">Mode trả về: {autoResult.mode ?? "N/A"}</p>
+                {autoResult.attribution?.sources.length ? (
+                  <p className="mt-1 text-sm text-slate-700">
+                    Nguồn: {autoResult.attribution.sources.map((source) => source.name).join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-700">Nguồn: chưa có attribution.</p>
+                )}
+                {Object.keys(autoResult.sourceErrors).length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-700">
+                    {Object.entries(autoResult.sourceErrors).map(([source, issues]) => (
+                      <li key={source}>
+                        {source}: {issues.join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-700">source_errors: không ghi nhận.</p>
+                )}
+              </article>
             </article>
           ) : null}
 
@@ -572,6 +694,18 @@ export default function CareguardPage() {
                 <p className="text-sm font-semibold text-slate-900">Kết quả nâng cao:</p>
                 <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getRiskBadgeClass(manualResult.riskTier)}`}>
                   {getRiskLabelVi(manualResult.riskTier)}
+                </span>
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${getModeBadgeClass(manualResult.mode)}`}>
+                  {getModeBadgeLabel(manualResult.mode)}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                    manualResult.fallbackUsed
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {manualResult.fallbackUsed ? "Fallback cục bộ: Có" : "Fallback cục bộ: Không"}
                 </span>
               </div>
               {manualResult.recommendations.length ? (
@@ -583,6 +717,28 @@ export default function CareguardPage() {
               ) : (
                 <p className="mt-2 text-sm text-slate-700">Chưa có khuyến nghị bổ sung.</p>
               )}
+              <article className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Minh bạch nguồn dữ liệu</p>
+                <p className="mt-1 text-sm text-slate-700">Mode trả về: {manualResult.mode ?? "N/A"}</p>
+                {manualResult.attribution?.sources.length ? (
+                  <p className="mt-1 text-sm text-slate-700">
+                    Nguồn: {manualResult.attribution.sources.map((source) => source.name).join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-700">Nguồn: chưa có attribution.</p>
+                )}
+                {Object.keys(manualResult.sourceErrors).length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-700">
+                    {Object.entries(manualResult.sourceErrors).map(([source, issues]) => (
+                      <li key={source}>
+                        {source}: {issues.join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-700">source_errors: không ghi nhận.</p>
+                )}
+              </article>
             </article>
           ) : null}
         </section>

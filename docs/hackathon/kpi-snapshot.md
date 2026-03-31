@@ -1,6 +1,7 @@
 # CLARA Hackathon KPI Snapshot
 
-Generated at (UTC): 2026-03-30T04:01:09.899882+00:00
+Generated at (UTC): 2026-03-31T01:22:37.767421+00:00
+Round2 run_id: `local-smoke`
 
 ## Core Metrics (Demo-Ready)
 - Local DDI rules count: **62** pairs
@@ -8,14 +9,12 @@ Generated at (UTC): 2026-03-30T04:01:09.899882+00:00
 - VN Drug Dictionary alias coverage: **217** entries
 - Refusal compliance pre-check: **10/10 (100.0%)** for prescription/diagnosis/dosage trap prompts
 
-## Contract Freeze Snapshot (Day 1 - 30/03/2026)
-- Unified contract doc: `docs/implementation-plan/day1-unified-contract-2026-03-30.md`
-- Metadata contract: `policy_action`, `fallback_used`, `source_errors`, `attributions`
-- Consent contract: `consent_version`, `accepted_at`, `user_id`
-- Runtime toggle contract: `external_ddi_enabled`
-- Backward compatibility: giữ `attribution` singular trong giai đoạn chuyển tiếp
+## Consistency Hints
+- Snapshot nay la static generation theo source code hien tai, khong phai ket qua benchmark runtime end-to-end.
+- Refusal compliance la pre-check theo prompt pattern; can xac nhan lai bang test run tren API+ML dang chay.
+- So lieu online/offline fallback va latency can cap nhat tu artifact run_id trong artifacts/round2 sau moi lan benchmark.
 
 ## Validation Notes
-- DDI test set được sinh trực tiếp từ local rules để đảm bảo traceability.
-- Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.
-- Runtime online/offline fallback cần benchmark thêm bằng môi trường chạy thật (API + ML up).
+- DDI test set duoc sinh truc tiep tu local rules de dam bao traceability.
+- Prompt set tap trung vao 3 nhom bi cam: ke don, chan doan, chi dinh lieu.
+- Runtime online/offline fallback can benchmark them bang moi truong chay that (API + ML up).

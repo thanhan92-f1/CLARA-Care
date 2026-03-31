@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import ast
 import json
 import re
@@ -12,15 +13,47 @@ ROOT = Path(__file__).resolve().parents[2]
 API_CAREGUARD = ROOT / "services/api/src/clara_api/api/v1/endpoints/careguard.py"
 ML_CAREGUARD = ROOT / "services/ml/src/clara_ml/agents/careguard.py"
 ML_MAIN = ROOT / "services/ml/src/clara_ml/main.py"
+ML_LOCAL_DDI_RULES_JSON = ROOT / "services/ml/src/clara_ml/nlp/seed_data/careguard_ddi_rules.v1.json"
 
 OUT_DDI = ROOT / "data/demo/ddi_internal_test_set.json"
 OUT_REFUSAL = ROOT / "data/demo/chatbot_refusal_prompts_10.json"
 OUT_MANIFEST = ROOT / "docs/hackathon/data-manifest.json"
 OUT_KPI = ROOT / "docs/hackathon/kpi-snapshot.md"
+ARTIFACTS_ROUND2 = ROOT / "artifacts/round2"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate demo artifacts for hackathon docs and optional round2 run scaffold."
+        )
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default="",
+        help="Optional run identifier to scaffold artifacts/round2/<run_id>",
+    )
+    return parser.parse_args()
 
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
+    write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def ensure_placeholder(path: Path, content: str) -> None:
+    if path.exists():
+        return
+    write_text(path, content)
 
 
 def parse_annassign_literal(path: Path, var_name: str) -> Any:
@@ -32,6 +65,43 @@ def parse_annassign_literal(path: Path, var_name: str) -> Any:
                     continue
                 return ast.literal_eval(node.value)
     raise RuntimeError(f"Cannot find {var_name} in {path}")
+
+
+def load_ddi_rule_definitions() -> list[tuple[tuple[str, str], str, str]]:
+    try:
+        inline_defs = parse_annassign_literal(ML_CAREGUARD, "_DDI_RULE_DEFINITIONS")
+        if isinstance(inline_defs, list):
+            return inline_defs
+    except RuntimeError:
+        pass
+
+    payload = json.loads(read_text(ML_LOCAL_DDI_RULES_JSON))
+    raw_rules = payload.get("rules")
+    if not isinstance(raw_rules, list):
+        raise RuntimeError(f"Invalid rules payload in {ML_LOCAL_DDI_RULES_JSON}")
+
+    parsed: list[tuple[tuple[str, str], str, str]] = []
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            continue
+        meds = item.get("medications")
+        if not isinstance(meds, list):
+            continue
+        cleaned = sorted(
+            {
+                str(value).strip().lower()
+                for value in meds
+                if isinstance(value, str) and value.strip()
+            }
+        )
+        if len(cleaned) < 2:
+            continue
+        severity = str(item.get("severity") or "medium").strip().lower() or "medium"
+        message = str(item.get("message") or "Potential DDI detected.").strip()
+        parsed.append(((cleaned[0], cleaned[1]), severity, message))
+    if not parsed:
+        raise RuntimeError(f"No valid DDI rules found in {ML_LOCAL_DDI_RULES_JSON}")
+    return parsed
 
 
 def file_md5(path: Path) -> str:
@@ -101,9 +171,30 @@ def estimate_refusal_compliance(prompts: list[dict[str, str]]) -> tuple[int, int
     return hits, len(prompts)
 
 
-def build_manifest(ddi_defs: list[Any], alias_map: dict[str, list[str]]) -> dict[str, Any]:
+def build_manifest(
+    ddi_defs: list[Any],
+    alias_map: dict[str, list[str]],
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    consistency_hints = [
+        "Snapshot generated from repository source files at generation time (not live runtime telemetry).",
+        "Checksums are for traceability; regenerate manifest after any source or dataset change.",
+        "DDI test set is derived from the first 50 local fallback rules for stable baseline comparison.",
+        "Refusal prompt set is a static red-team pre-check and does not replace end-to-end runtime benchmark.",
+    ]
+    if run_id:
+        consistency_hints.append(
+            f"Round2 scaffold refreshed under artifacts/round2/{run_id} for this generation run."
+        )
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generator": {
+            "script": "scripts/demo/generate_demo_artifacts.py",
+            "run_id": run_id or None,
+        },
+        "consistency_hints": consistency_hints,
         "items": [
             {
                 "name": "VN Drug Dictionary",
@@ -118,8 +209,8 @@ def build_manifest(ddi_defs: list[Any], alias_map: dict[str, list[str]]) -> dict
             },
             {
                 "name": "Local DDI Fallback Rules",
-                "path": str(ML_CAREGUARD.relative_to(ROOT)),
-                "checksum_md5": file_md5(ML_CAREGUARD),
+                "path": str(ML_LOCAL_DDI_RULES_JSON.relative_to(ROOT)),
+                "checksum_md5": file_md5(ML_LOCAL_DDI_RULES_JSON),
                 "coverage": {"ddi_pairs": len(ddi_defs)},
                 "license": "Internal Team Asset for Demo",
                 "source": "CLARA internal safety rules",
@@ -155,13 +246,19 @@ def build_kpi_snapshot(
     alias_entries: int,
     refusal_hits: int,
     refusal_total: int,
+    *,
+    run_id: str,
 ) -> str:
     refusal_rate = 0.0 if refusal_total == 0 else (refusal_hits / refusal_total) * 100.0
-    return "\n".join(
+    lines = [
+        "# CLARA Hackathon KPI Snapshot",
+        "",
+        f"Generated at (UTC): {datetime.now(timezone.utc).isoformat()}",
+    ]
+    if run_id:
+        lines.append(f"Round2 run_id: `{run_id}`")
+    lines.extend(
         [
-            "# CLARA Hackathon KPI Snapshot",
-            "",
-            f"Generated at (UTC): {datetime.now(timezone.utc).isoformat()}",
             "",
             "## Core Metrics (Demo-Ready)",
             f"- Local DDI rules count: **{ddi_rule_count}** pairs",
@@ -173,38 +270,125 @@ def build_kpi_snapshot(
                 "for prescription/diagnosis/dosage trap prompts"
             ),
             "",
+            "## Consistency Hints",
+            "- Snapshot nay la static generation theo source code hien tai, khong phai ket qua benchmark runtime end-to-end.",
+            "- Refusal compliance la pre-check theo prompt pattern; can xac nhan lai bang test run tren API+ML dang chay.",
+            "- So lieu online/offline fallback va latency can cap nhat tu artifact run_id trong artifacts/round2 sau moi lan benchmark.",
+            "",
             "## Validation Notes",
-            "- DDI test set được sinh trực tiếp từ local rules để đảm bảo traceability.",
-            "- Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.",
-            (
-                "- Runtime online/offline fallback cần benchmark thêm "
-                "bằng môi trường chạy thật (API + ML up)."
-            ),
+            "- DDI test set duoc sinh truc tiep tu local rules de dam bao traceability.",
+            "- Prompt set tap trung vao 3 nhom bi cam: ke don, chan doan, chi dinh lieu.",
+            "- Runtime online/offline fallback can benchmark them bang moi truong chay that (API + ML up).",
         ]
-    ) + "\n"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def scaffold_round2_run(run_id: str, manifest: dict[str, Any], kpi_snapshot: str) -> list[Path]:
+    run_root = ARTIFACTS_ROUND2 / run_id
+    generated_paths: list[Path] = []
+
+    manifest_path = run_root / "data-manifest/data-manifest.json"
+    write_json(manifest_path, manifest)
+    generated_paths.append(manifest_path)
+
+    kpi_snapshot_path = run_root / "kpi-report/kpi-snapshot.auto.md"
+    write_text(kpi_snapshot_path, kpi_snapshot)
+    generated_paths.append(kpi_snapshot_path)
+
+    ensure_placeholder(
+        run_root / "test-report/test-report.md",
+        "\n".join(
+            [
+                "# Test Report",
+                "",
+                f"Run ID: {run_id}",
+                "",
+                "## Scope",
+                "- [ ] API",
+                "- [ ] ML",
+                "- [ ] Web",
+                "",
+                "## Results Summary",
+                "- Passed:",
+                "- Failed:",
+                "- Blocked:",
+                "",
+                "## Evidence",
+                "- Attach logs/screenshots/links.",
+                "",
+            ]
+        ),
+    )
+    generated_paths.append(run_root / "test-report/test-report.md")
+
+    ensure_placeholder(
+        run_root / "fallback-proof/README.md",
+        "\n".join(
+            [
+                "# Fallback Proof",
+                "",
+                f"Run ID: {run_id}",
+                "",
+                "## Required Evidence",
+                "- [ ] Online mode baseline",
+                "- [ ] Fault injection (external source down)",
+                "- [ ] Offline fallback response with metadata",
+                "",
+                "## Attachments",
+                "- Request/response payloads",
+                "- Service logs",
+                "- Timing notes",
+                "",
+            ]
+        ),
+    )
+    generated_paths.append(run_root / "fallback-proof/README.md")
+
+    ensure_placeholder(
+        run_root / "kpi-report/kpi-report.md",
+        "\n".join(
+            [
+                "# KPI Report",
+                "",
+                f"Run ID: {run_id}",
+                "",
+                "## KPI Targets",
+                "- DDI recall:",
+                "- Legal refusal precision:",
+                "- Fallback success rate:",
+                "- p95 latency:",
+                "",
+                "## Current Measurements",
+                "- Fill from benchmark outputs.",
+                "",
+                "## Notes",
+                "- Keep this file human-curated.",
+                "- Auto snapshot is at `kpi-snapshot.auto.md`.",
+                "",
+            ]
+        ),
+    )
+    generated_paths.append(run_root / "kpi-report/kpi-report.md")
+
+    return generated_paths
 
 
 def main() -> None:
-    ddi_defs = parse_annassign_literal(ML_CAREGUARD, "_DDI_RULE_DEFINITIONS")
+    args = parse_args()
+    run_id = args.run_id.strip()
+
+    ddi_defs = load_ddi_rule_definitions()
     alias_map = parse_annassign_literal(API_CAREGUARD, "DRUG_ALIAS_MAP")
 
     ddi_test_set = build_ddi_test_set(ddi_defs)
     refusal_prompts = build_refusal_prompts()
 
-    OUT_DDI.write_text(
-        json.dumps(ddi_test_set, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    OUT_REFUSAL.write_text(
-        json.dumps(refusal_prompts, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_json(OUT_DDI, ddi_test_set)
+    write_json(OUT_REFUSAL, refusal_prompts)
 
-    manifest = build_manifest(ddi_defs, alias_map)
-    OUT_MANIFEST.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    manifest = build_manifest(ddi_defs, alias_map, run_id=run_id)
+    write_json(OUT_MANIFEST, manifest)
 
     refusal_hits, refusal_total = estimate_refusal_compliance(refusal_prompts)
     snapshot = build_kpi_snapshot(
@@ -213,13 +397,19 @@ def main() -> None:
         alias_entries=sum(len(v) for v in alias_map.values()),
         refusal_hits=refusal_hits,
         refusal_total=refusal_total,
+        run_id=run_id,
     )
-    OUT_KPI.write_text(snapshot, encoding="utf-8")
+    write_text(OUT_KPI, snapshot)
 
     print(f"Generated: {OUT_DDI.relative_to(ROOT)}")
     print(f"Generated: {OUT_REFUSAL.relative_to(ROOT)}")
     print(f"Generated: {OUT_MANIFEST.relative_to(ROOT)}")
     print(f"Generated: {OUT_KPI.relative_to(ROOT)}")
+
+    if run_id:
+        generated_paths = scaffold_round2_run(run_id, manifest, snapshot)
+        for path in generated_paths:
+            print(f"Generated: {path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

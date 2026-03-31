@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any
 
 from clara_ml.clients.drug_sources import DrugSourceClient
@@ -15,75 +17,12 @@ class InteractionRule:
     message: str
 
 
-_DDI_RULE_DEFINITIONS: list[tuple[tuple[str, str], str, str]] = [
-    (("warfarin", "ibuprofen"), "high", "Bleeding risk increases when anticoagulant is combined with NSAID."),
-    (("warfarin", "aspirin"), "high", "Dual antithrombotic exposure raises major bleeding risk."),
-    (("warfarin", "naproxen"), "high", "Bleeding risk increases when anticoagulant is combined with NSAID."),
-    (("warfarin", "diclofenac"), "high", "Bleeding risk increases when anticoagulant is combined with NSAID."),
-    (("warfarin", "clopidogrel"), "high", "Concurrent antithrombotic therapy elevates hemorrhage risk."),
-    (("warfarin", "amiodarone"), "high", "Warfarin effect can increase markedly with amiodarone."),
-    (("warfarin", "fluconazole"), "high", "Azole co-therapy can raise INR and bleeding risk."),
-    (("warfarin", "metronidazole"), "high", "INR may increase significantly with metronidazole."),
-    (("warfarin", "trimethoprim"), "high", "INR may increase with trimethoprim-containing regimens."),
-    (("warfarin", "clarithromycin"), "high", "Macrolide can increase warfarin exposure and INR."),
-    (("warfarin", "paracetamol"), "medium", "Repeated high-dose paracetamol may raise INR."),
-    (("warfarin", "rifampin"), "medium", "Rifampin may reduce anticoagulant effect; INR can become unstable."),
-    (("rivaroxaban", "aspirin"), "high", "Combined antithrombotic effect increases bleeding risk."),
-    (("rivaroxaban", "ibuprofen"), "high", "NSAID plus DOAC can increase GI and systemic bleeding risk."),
-    (("apixaban", "aspirin"), "high", "Combined antithrombotic effect increases bleeding risk."),
-    (("apixaban", "ibuprofen"), "high", "NSAID plus DOAC can increase GI and systemic bleeding risk."),
-    (("heparin", "aspirin"), "high", "Concurrent anticoagulant and antiplatelet therapy increases bleeding risk."),
-    (("lisinopril", "ibuprofen"), "medium", "NSAID may reduce ACE inhibitor effect and worsen renal perfusion."),
-    (("losartan", "ibuprofen"), "medium", "NSAID may reduce ARB effect and worsen renal perfusion."),
-    (("ibuprofen", "furosemide"), "medium", "NSAID can reduce diuretic response and worsen fluid control."),
-    (("ibuprofen", "naproxen"), "medium", "Combining multiple NSAIDs increases GI and renal toxicity."),
-    (("diclofenac", "ibuprofen"), "medium", "Combining multiple NSAIDs increases GI and renal toxicity."),
-    (("aspirin", "ibuprofen"), "medium", "Concomitant use raises GI bleeding risk and may blunt aspirin effect."),
-    (("aspirin", "prednisone"), "medium", "GI bleeding risk increases with steroid and antiplatelet combination."),
-    (("ibuprofen", "prednisone"), "medium", "GI toxicity risk increases when NSAID is combined with steroid."),
-    (("simvastatin", "clarithromycin"), "high", "Myopathy/rhabdomyolysis risk increases with strong CYP inhibition."),
-    (("simvastatin", "erythromycin"), "high", "Myopathy/rhabdomyolysis risk increases with strong CYP inhibition."),
-    (("simvastatin", "ketoconazole"), "high", "Strong CYP inhibition can markedly raise simvastatin concentration."),
-    (("simvastatin", "gemfibrozil"), "high", "Severe myopathy risk increases with statin-fibrate combination."),
-    (("simvastatin", "amiodarone"), "medium", "Myopathy risk may increase with interacting antiarrhythmic."),
-    (("simvastatin", "verapamil"), "medium", "Myopathy risk may increase with CYP/P-gp interaction."),
-    (("amlodipine", "simvastatin"), "medium", "Simvastatin exposure can increase with amlodipine."),
-    (("digoxin", "amiodarone"), "high", "Digoxin concentration can rise and trigger toxicity."),
-    (("digoxin", "verapamil"), "medium", "Digoxin concentration can increase with P-gp inhibition."),
-    (("digoxin", "clarithromycin"), "medium", "Macrolide can increase digoxin exposure and adverse effects."),
-    (("digoxin", "furosemide"), "medium", "Diuretic-induced electrolyte shifts can precipitate arrhythmia."),
-    (("spironolactone", "lisinopril"), "high", "Hyperkalemia risk increases with potassium-sparing combinations."),
-    (("spironolactone", "losartan"), "high", "Hyperkalemia risk increases with potassium-sparing combinations."),
-    (("spironolactone", "trimethoprim"), "high", "Severe hyperkalemia has been reported with this combination."),
-    (("spironolactone", "potassium chloride"), "high", "Marked hyperkalemia risk with additive potassium retention."),
-    (("lisinopril", "potassium chloride"), "high", "Marked hyperkalemia risk with additive potassium retention."),
-    (("losartan", "potassium chloride"), "high", "Marked hyperkalemia risk with additive potassium retention."),
-    (("metformin", "gliclazide"), "medium", "Combined glucose-lowering effect can cause hypoglycemia."),
-    (("insulin", "gliclazide"), "high", "Additive hypoglycemic effect can be clinically significant."),
-    (("insulin", "metformin"), "medium", "Combined glucose-lowering effect can cause hypoglycemia."),
-    (("metformin", "cimetidine"), "medium", "Metformin concentration may increase with reduced renal clearance."),
-    (("amoxicillin", "methotrexate"), "medium", "Methotrexate clearance may decrease and toxicity may increase."),
-    (("allopurinol", "azathioprine"), "high", "Severe bone marrow toxicity risk with xanthine oxidase inhibition."),
-    (("tacrolimus", "fluconazole"), "high", "Tacrolimus exposure can rise sharply with azole co-therapy."),
-    (("sertraline", "tramadol"), "high", "Serotonergic toxicity risk may increase with combined therapy."),
-    (("fluoxetine", "tramadol"), "high", "Serotonergic toxicity risk may increase with combined therapy."),
-    (("linezolid", "sertraline"), "high", "Serotonin syndrome risk with MAOI-like and SSRI combination."),
-    (("fluoxetine", "aspirin"), "medium", "Bleeding risk may increase with SSRI and antiplatelet combination."),
-    (("fluoxetine", "warfarin"), "high", "Bleeding risk and INR instability may increase."),
-    (("sertraline", "ibuprofen"), "medium", "GI bleeding risk can increase with SSRI and NSAID combination."),
-    (("ciprofloxacin", "tizanidine"), "critical", "Profound hypotension and sedation risk with this combination."),
-    (("tizanidine", "fluvoxamine"), "critical", "Profound hypotension and sedation risk with this combination."),
-    (("nitroglycerin", "sildenafil"), "critical", "Severe hypotension risk with nitrate and PDE5 inhibitor."),
-    (("amlodipine", "sildenafil"), "medium", "Additive vasodilation may cause symptomatic hypotension."),
-    (("clopidogrel", "omeprazole"), "medium", "Antiplatelet activation may be reduced by CYP interaction."),
-    (("cetirizine", "diazepam"), "low", "Additive CNS sedation may occur in sensitive patients."),
-    (("loratadine", "ketoconazole"), "low", "Loratadine concentration may increase with strong CYP inhibition."),
-]
-
-_DDI_RULES = [
-    InteractionRule(meds=frozenset(pair), severity=severity, message=message)
-    for pair, severity, message in _DDI_RULE_DEFINITIONS
-]
+_LOCAL_DDI_RULES_PATH = (
+    Path(__file__).resolve().parent.parent / "nlp" / "seed_data" / "careguard_ddi_rules.v1.json"
+)
+_LOCAL_DDI_RULES_CACHE_MTIME_NS: int | None = None
+_LOCAL_DDI_RULES_CACHE_VERSION: str = "unknown"
+_LOCAL_DDI_RULES_CACHE_RULES: list[InteractionRule] = []
 
 _CRITICAL_SYMPTOMS = {
     "chest pain",
@@ -126,6 +65,59 @@ def _normalize_severity(value: object) -> str:
     return severity if severity in _SEVERITY_RANK else "medium"
 
 
+def _load_local_ddi_rules() -> tuple[list[InteractionRule], str]:
+    global _LOCAL_DDI_RULES_CACHE_MTIME_NS
+    global _LOCAL_DDI_RULES_CACHE_RULES
+    global _LOCAL_DDI_RULES_CACHE_VERSION
+
+    try:
+        mtime_ns = _LOCAL_DDI_RULES_PATH.stat().st_mtime_ns
+    except OSError:
+        return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+    if (
+        _LOCAL_DDI_RULES_CACHE_MTIME_NS == mtime_ns
+        and _LOCAL_DDI_RULES_CACHE_RULES
+    ):
+        return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+    try:
+        payload = json.loads(_LOCAL_DDI_RULES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+    version = str(payload.get("version") or _LOCAL_DDI_RULES_PATH.stem).strip() or "unknown"
+    raw_rules = payload.get("rules")
+    if not isinstance(raw_rules, list):
+        return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+    parsed_rules: list[InteractionRule] = []
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        meds = frozenset(_normalize_text_list(raw_rule.get("medications")))
+        if len(meds) < 2:
+            continue
+        parsed_rules.append(
+            InteractionRule(
+                meds=meds,
+                severity=_normalize_severity(raw_rule.get("severity")),
+                message=(
+                    str(raw_rule.get("message", "")).strip()
+                    or "Potential DDI detected."
+                ),
+            )
+        )
+
+    if not parsed_rules:
+        return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+    _LOCAL_DDI_RULES_CACHE_MTIME_NS = mtime_ns
+    _LOCAL_DDI_RULES_CACHE_RULES = parsed_rules
+    _LOCAL_DDI_RULES_CACHE_VERSION = version
+    return _LOCAL_DDI_RULES_CACHE_RULES, _LOCAL_DDI_RULES_CACHE_VERSION
+
+
 def _as_bool(value: object, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -161,10 +153,13 @@ def _parse_sources(value: object, default: str | None = None) -> set[str]:
     return sources
 
 
-def _detect_ddi_alerts(medications: list[str]) -> list[dict[str, Any]]:
+def _detect_ddi_alerts(
+    medications: list[str],
+    rules: list[InteractionRule],
+) -> list[dict[str, Any]]:
     alerts: list[dict[str, Any]] = []
     med_set = set(medications)
-    for rule in _DDI_RULES:
+    for rule in rules:
         if rule.meds.issubset(med_set):
             alerts.append(
                 {
@@ -380,12 +375,14 @@ def run_careguard_analyze(payload: dict) -> dict:
     allergies = _normalize_text_list(payload.get("allergies"))
     labs = payload.get("labs")
 
-    local_ddi_alerts = _detect_ddi_alerts(medications)
+    local_rules, local_ddi_rules_version = _load_local_ddi_rules()
+    local_ddi_alerts = _detect_ddi_alerts(medications, local_rules)
     source_used = ["local_rules"]
     source_errors: dict[str, list[str]] = {}
     external_ddi_alerts: list[dict[str, Any]] = []
     openfda_evidence: dict[tuple[str, str], dict[str, int]] = {}
     needs_external_lookup = len(set(medications)) >= 2
+    external_ddi_flag_source = "runtime" if "external_ddi_enabled" in payload else "env"
     external_ddi_enabled = _as_bool(
         payload.get("external_ddi_enabled"),
         default=settings.external_ddi_enabled,
@@ -437,6 +434,8 @@ def run_careguard_analyze(payload: dict) -> dict:
             "pipeline": "p2-careguard-ddi-standard-v2",
             "fallback_used": fallback_used,
             "external_ddi_enabled": external_ddi_enabled,
+            "external_ddi_flag_source": external_ddi_flag_source,
+            "local_ddi_rules_version": local_ddi_rules_version,
             "source_used": source_used,
             "source_errors": source_errors,
         },

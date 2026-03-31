@@ -10,6 +10,10 @@
 - [ ] P1 làm khi còn thời gian.
 - [ ] P2 để sau cuộc thi.
 
+## Trạng thái thực tế (snapshot 31/03/2026)
+- Quy ước: `[x]` = đã có bằng chứng trong codebase, `[ ]` = chưa xong hoặc chưa đủ bằng chứng.
+- Một số mục có ghi chú `(partial)` để phản ánh đã có triển khai một phần nhưng chưa đạt đúng định nghĩa ban đầu.
+
 ## 3) Kế hoạch thực thi theo ngày
 
 ## Ngày 1 (30/03/2026) - Chốt contract liên thông
@@ -40,11 +44,11 @@ Cập nhật triển khai thực tế (30/03/2026 - buổi tối):
 
 ## Ngày 2 (31/03/2026) - Migration DB + Model Consent
 Mục tiêu: Có lưu vết consent dạng persistent.
-- [ ] Tạo migration mới: `20260330_0004_consent_audit_medication_update.py`.
-- [ ] Thêm model `ConsentLog`.
-- [ ] Thêm DTO consent trong schema.
+- [x] Tạo migration consent (hiện tại là `20260330_0004_user_consent_logs.py`).
+- [ ] Thêm model `ConsentLog`. (partial: đã có model `UserConsent` phục vụ consent audit)
+- [x] Thêm DTO consent trong schema.
 Tệp liên quan:
-- `services/api/alembic/versions/20260330_0004_consent_audit_medication_update.py` (new)
+- `services/api/alembic/versions/20260330_0004_user_consent_logs.py`
 - `services/api/src/clara_api/db/models.py`
 - `services/api/src/clara_api/schemas.py`
 Lệnh kiểm tra:
@@ -53,14 +57,14 @@ cd services/api
 alembic upgrade head
 ```
 Tiêu chí hoàn thành:
-- [ ] Tạo được bảng `consent_logs`.
-- [ ] Import schema không lỗi.
+- [ ] Tạo được bảng `consent_logs`. (partial: hiện dùng bảng `user_consents`)
+- [ ] Import schema không lỗi. (chưa có bằng chứng chạy lệnh trong checklist)
 
 ## Ngày 3 (01/04/2026) - Disclaimer Gate + Consent API
 Mục tiêu: Bắt buộc đồng ý miễn trừ trách nhiệm trước khi dùng tính năng y tế.
-- [ ] Thêm `POST /auth/consent`.
-- [ ] Thêm `GET /auth/consent-status`.
-- [ ] Chặn endpoint nhạy cảm nếu chưa consent (HTTP 428).
+- [x] Thêm `POST /auth/consent`.
+- [x] Thêm `GET /auth/consent-status`.
+- [x] Chặn endpoint nhạy cảm nếu chưa consent (HTTP 428).
 Tệp liên quan:
 - `services/api/src/clara_api/api/v1/endpoints/auth.py`
 - `services/api/src/clara_api/api/v1/endpoints/careguard.py`
@@ -70,15 +74,15 @@ Lệnh kiểm tra:
 pytest -q services/api/tests -k "consent or auth"
 ```
 Tiêu chí hoàn thành:
-- [ ] User chưa consent bị chặn đúng.
-- [ ] User đã consent đi qua luồng được bình thường.
+- [x] User chưa consent bị chặn đúng (đã có `ensure_medical_disclaimer_consent` trả `HTTP_428_PRECONDITION_REQUIRED`).
+- [ ] User đã consent đi qua luồng được bình thường. (chưa có bằng chứng test run trong checklist)
 
 ## Ngày 4 (02/04/2026) - Khóa pháp lý chatbot (hard guard)
 Mục tiêu: Cưỡng chế backend, không dựa riêng vào prompt.
-- [ ] Tạo policy engine `allow/warn/block/escalate`.
-- [ ] Áp guard vào `/v1/chat/routed`.
-- [ ] Áp guard vào `/v1/research/tier2`.
-- [ ] Giữ fallback an toàn ở API chat khi ML lỗi.
+- [ ] Tạo policy engine `allow/warn/block/escalate`. (partial: có `block` hard-guard ở chat, `allow/warn` ở luồng research nhưng chưa hợp nhất thành policy engine đầy đủ)
+- [x] Áp guard vào `/v1/chat/routed`.
+- [ ] Áp guard vào `/v1/research/tier2`. (partial: có `policy_action` trong research pipeline, chưa thấy hard legal guard tương đương chat)
+- [x] Giữ fallback an toàn ở API chat khi ML lỗi.
 Tệp liên quan:
 - `services/ml/src/clara_ml/main.py`
 - `services/ml/src/clara_ml/agents/careguard.py`
@@ -94,8 +98,8 @@ Tiêu chí hoàn thành:
 
 ## Ngày 5 (03/04/2026) - Cứng hóa fallback DDI (>=50 cặp)
 Mục tiêu: API ngoài lỗi vẫn cảnh báo được.
-- [ ] Tách local DDI rules ra file JSON versioned.
-- [ ] Mở rộng tối thiểu 50 cặp DDI phổ biến, ưu tiên mức nặng.
+- [x] Tách local DDI rules ra file JSON versioned (`careguard_ddi_rules.v1.json`).
+- [x] Mở rộng tối thiểu 50 cặp DDI phổ biến, ưu tiên mức nặng. (hiện tại 62 cặp)
 - [ ] Chuẩn hóa key cặp thuốc đối xứng.
 Tệp liên quan:
 - `services/ml/src/clara_ml/agents/careguard.py`
@@ -110,9 +114,9 @@ Tiêu chí hoàn thành:
 
 ## Ngày 6 (04/04/2026) - Runtime toggle không cần restart
 Mục tiêu: Bật/tắt external DDI ngay tại demo.
-- [ ] Thêm `external_ddi_enabled` vào control tower config.
-- [ ] Wire API sang ML để đọc cờ runtime.
-- [ ] Ghi log nguồn cờ: runtime hay env.
+- [x] Thêm `external_ddi_enabled` vào control tower config.
+- [x] Wire API sang ML để đọc cờ runtime.
+- [x] Ghi log nguồn cờ: runtime hay env (`external_ddi_flag_source`).
 Tệp liên quan:
 - `services/api/src/clara_api/api/v1/endpoints/system.py`
 - `services/api/src/clara_api/core/control_tower/defaults.py`
@@ -129,7 +133,7 @@ Tiêu chí hoàn thành:
 
 ## Ngày 7 (05/04/2026) - VN Drug Dictionary (>=100 biệt dược)
 Mục tiêu: Bản địa hóa mapping thuốc Việt Nam.
-- [ ] Tạo `vn_drug_dictionary.json` ít nhất 100 bản ghi.
+- [ ] Tạo `vn_drug_dictionary.json` ít nhất 100 bản ghi. (partial: hiện alias map nằm trong code API, chưa tách thành file JSON riêng)
 - [ ] Tích hợp mapping vào pipeline careguard.
 - [ ] Confidence thấp thì bắt buộc manual confirm.
 Tệp liên quan:
@@ -182,9 +186,9 @@ Tiêu chí hoàn thành:
 
 ## Ngày 10 (08/04/2026) - Dựng bộ Demo Artifact
 Mục tiêu: Có bằng chứng cứng khi chấm.
-- [ ] Tạo cây thư mục artifact theo `run_id`.
-- [ ] Tạo `data-manifest.json` (source/license/checksum/date).
-- [ ] Tạo khung `test-report`, `fallback-proof`, `kpi-report`.
+- [x] Tạo cây thư mục artifact theo `run_id`.
+- [x] Tạo `data-manifest.json` (source/license/checksum/date).
+- [x] Tạo khung `test-report`, `fallback-proof`, `kpi-report`.
 Tệp mới:
 - `artifacts/round2/<run_id>/data-manifest/data-manifest.json`
 - `artifacts/round2/<run_id>/test-report/test-report.md`

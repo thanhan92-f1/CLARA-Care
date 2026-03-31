@@ -13,6 +13,29 @@ export type CareguardDdiAlert = {
   details?: string;
 };
 
+export type CareguardAttributionSource = {
+  id: string;
+  name: string;
+  category?: string;
+  type?: string;
+};
+
+export type CareguardAttributionCitation = {
+  source: string;
+  url?: string;
+};
+
+export type CareguardAttribution = {
+  channel?: string;
+  mode?: string | null;
+  sourceCount: number;
+  citationCount: number;
+  sources: CareguardAttributionSource[];
+  citations: CareguardAttributionCitation[];
+};
+
+export type CareguardSourceErrors = Record<string, string[]>;
+
 export type CareguardAnalyzeRawResponse = {
   risk_tier?: string;
   riskTier?: string;
@@ -25,6 +48,14 @@ export type CareguardAnalyzeRawResponse = {
   ddiAlerts?: unknown;
   recommendations?: unknown;
   recommendation?: unknown;
+  metadata?: unknown;
+  attribution?: unknown;
+  attributions?: unknown;
+  fallback_used?: unknown;
+  fallbackUsed?: unknown;
+  source_errors?: unknown;
+  sourceErrors?: unknown;
+  mode?: unknown;
   [key: string]: unknown;
 };
 
@@ -32,6 +63,11 @@ export type CareguardAnalyzeResult = {
   riskTier: string | null;
   ddiAlerts: CareguardDdiAlert[];
   recommendations: string[];
+  attribution: CareguardAttribution | null;
+  mode: string | null;
+  fallbackUsed: boolean;
+  sourceErrors: CareguardSourceErrors;
+  sourceUsed: string[];
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -43,6 +79,20 @@ function asText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const next = value.trim();
   return next ? next : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes"].includes(normalized)) return true;
+  if (["false", "0", "no"].includes(normalized)) return false;
+  return undefined;
 }
 
 function parseStringList(value: unknown): string[] {
@@ -97,6 +147,86 @@ function parseDdiAlerts(value: unknown): CareguardDdiAlert[] {
     .filter((item): item is CareguardDdiAlert => Boolean(item));
 }
 
+function parseAttributionSource(value: unknown): CareguardAttributionSource | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = asText(record.id);
+  const name = asText(record.name);
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    category: asText(record.category),
+    type: asText(record.type)
+  };
+}
+
+function parseAttributionCitation(value: unknown): CareguardAttributionCitation | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const source = asText(record.source);
+  if (!source) return null;
+  return {
+    source,
+    url: asText(record.url)
+  };
+}
+
+function parseAttribution(value: unknown): CareguardAttribution | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const sources = Array.isArray(record.sources)
+    ? record.sources.map((item) => parseAttributionSource(item)).filter((item): item is CareguardAttributionSource => Boolean(item))
+    : [];
+  const citations = Array.isArray(record.citations)
+    ? record.citations
+        .map((item) => parseAttributionCitation(item))
+        .filter((item): item is CareguardAttributionCitation => Boolean(item))
+    : [];
+
+  const sourceCountRaw = record.source_count;
+  const citationCountRaw = record.citation_count;
+  const sourceCount =
+    typeof sourceCountRaw === "number" && Number.isFinite(sourceCountRaw) ? sourceCountRaw : sources.length;
+  const citationCount =
+    typeof citationCountRaw === "number" && Number.isFinite(citationCountRaw) ? citationCountRaw : citations.length;
+
+  return {
+    channel: asText(record.channel),
+    mode: asText(record.mode) ?? null,
+    sourceCount,
+    citationCount,
+    sources,
+    citations
+  };
+}
+
+function parseSourceErrors(value: unknown): CareguardSourceErrors {
+  const record = asRecord(value);
+  if (!record) return {};
+  const output: CareguardSourceErrors = {};
+  for (const [key, next] of Object.entries(record)) {
+    const values = parseStringList(next);
+    if (!values.length) continue;
+    output[key] = values;
+  }
+  return output;
+}
+
+function mergeSourceErrors(...values: CareguardSourceErrors[]): CareguardSourceErrors {
+  const output: CareguardSourceErrors = {};
+  for (const value of values) {
+    for (const [key, messages] of Object.entries(value)) {
+      if (!messages.length) continue;
+      const existing = new Set(output[key] ?? []);
+      messages.forEach((item) => existing.add(item));
+      output[key] = Array.from(existing);
+    }
+  }
+  return output;
+}
+
 export function parseFreeTextList(value: string): string[] {
   return value
     .split(/\r?\n|,/)
@@ -126,6 +256,8 @@ export async function analyzeCareguard(payload: CareguardAnalyzeRequest): Promis
 
 export function normalizeCareguardResult(data: CareguardAnalyzeRawResponse): CareguardAnalyzeResult {
   const riskRecord = asRecord(data.risk);
+  const metadata = asRecord(data.metadata);
+
   const riskTier =
     asText(data.risk_tier) ??
     asText(data.riskTier) ??
@@ -141,9 +273,49 @@ export function normalizeCareguardResult(data: CareguardAnalyzeRawResponse): Car
     ...parseStringList(data.recommendation)
   ];
 
+  const attribution =
+    parseAttribution(data.attribution) ??
+    (Array.isArray(data.attributions) ? parseAttribution(data.attributions[0]) : null);
+
+  const mode =
+    attribution?.mode ??
+    asText(data.mode) ??
+    asText(metadata?.mode) ??
+    (asBoolean(metadata?.external_ddi_enabled) === false
+      ? "local_only"
+      : asBoolean(metadata?.external_ddi_enabled) === true
+        ? "external_plus_local"
+        : null);
+
+  const fallbackUsed =
+    asBoolean(data.fallback_used) ??
+    asBoolean(data.fallbackUsed) ??
+    asBoolean(metadata?.fallback_used) ??
+    asBoolean(metadata?.fallbackUsed) ??
+    false;
+
+  const sourceErrors = mergeSourceErrors(
+    parseSourceErrors(data.source_errors),
+    parseSourceErrors(data.sourceErrors),
+    parseSourceErrors(metadata?.source_errors),
+    parseSourceErrors(metadata?.sourceErrors)
+  );
+
+  const sourceUsed = [
+    ...parseStringList((data as Record<string, unknown>).source_used),
+    ...parseStringList((data as Record<string, unknown>).sourceUsed),
+    ...parseStringList(metadata?.source_used),
+    ...parseStringList(metadata?.sourceUsed)
+  ].filter((value, index, list) => list.indexOf(value) === index);
+
   return {
     riskTier,
     ddiAlerts,
-    recommendations
+    recommendations,
+    attribution,
+    mode,
+    fallbackUsed,
+    sourceErrors,
+    sourceUsed
   };
 }

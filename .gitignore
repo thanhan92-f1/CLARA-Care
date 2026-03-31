@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 data/rag_seed/downloads/
+data/rag_seed/manifests/
+.venv/
+.venv-ci/
+.pycache_tmp/
+apps/web/tsconfig.tsbuildinfo
+artifacts/
+context
+context2

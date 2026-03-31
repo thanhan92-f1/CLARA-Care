@@ -1,10 +1,21 @@
 {
-  "generated_at": "2026-03-30T04:01:09.896439+00:00",
+  "generated_at": "2026-03-31T01:22:37.764604+00:00",
+  "generator": {
+    "script": "scripts/demo/generate_demo_artifacts.py",
+    "run_id": "local-smoke"
+  },
+  "consistency_hints": [
+    "Snapshot generated from repository source files at generation time (not live runtime telemetry).",
+    "Checksums are for traceability; regenerate manifest after any source or dataset change.",
+    "DDI test set is derived from the first 50 local fallback rules for stable baseline comparison.",
+    "Refusal prompt set is a static red-team pre-check and does not replace end-to-end runtime benchmark.",
+    "Round2 scaffold refreshed under artifacts/round2/local-smoke for this generation run."
+  ],
   "items": [
     {
       "name": "VN Drug Dictionary",
       "path": "services/api/src/clara_api/api/v1/endpoints/careguard.py",
-      "checksum_md5": "bb6905447fccbf57c1ad4629bc43b54e",
+      "checksum_md5": "f87cd920a83b14dd838ec68c11e85260",
       "coverage": {
         "canonical_keys": 56,
         "alias_entries": 217
@@ -14,8 +25,8 @@
     },
     {
       "name": "Local DDI Fallback Rules",
-      "path": "services/ml/src/clara_ml/agents/careguard.py",
-      "checksum_md5": "c4b11421e3298231d001268d4d899a2e",
+      "path": "services/ml/src/clara_ml/nlp/seed_data/careguard_ddi_rules.v1.json",
+      "checksum_md5": "b184ab8577ed6e6d9a9d02531d9d5169",
       "coverage": {
         "ddi_pairs": 62
       },
@@ -25,14 +36,14 @@
     {
       "name": "Hard Legal Guard Patterns",
       "path": "services/ml/src/clara_ml/main.py",
-      "checksum_md5": "fbba0cf9a8c6162668e699cc3f294941",
+      "checksum_md5": "3c1455c7888980809b10f25a087ddf94",
       "license": "Internal Team Asset for Demo",
       "source": "CLARA runtime policy"
     },
     {
       "name": "DDI Test Set (50 cases)",
       "path": "data/demo/ddi_internal_test_set.json",
-      "checksum_md5": "c997b03c4d0667b7b17d19fccf7d0fb2",
+      "checksum_md5": "ab20d9bc89a16f7b8a65a9a8e5ab5eec",
       "license": "Internal Team Asset for Demo",
       "source": "Generated from local DDI rules"
     },

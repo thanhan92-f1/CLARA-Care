@@ -11,9 +11,16 @@ export default function SelfMedConsentGate({ children }: SelfMedConsentGateProps
   const [isLoading, setIsLoading] = useState(true);
   const [accepted, setAccepted] = useState(false);
   const [requiredVersion, setRequiredVersion] = useState("");
+  const [acceptedVersion, setAcceptedVersion] = useState<string | null>(null);
+  const [acceptedAt, setAcceptedAt] = useState<string | null>(null);
+  const [consentUserId, setConsentUserId] = useState<number | null>(null);
   const [checked, setChecked] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const acceptedAtDisplay = acceptedAt
+    ? new Date(acceptedAt).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })
+    : null;
 
   const refreshConsent = async (): Promise<boolean> => {
     setError("");
@@ -21,6 +28,9 @@ export default function SelfMedConsentGate({ children }: SelfMedConsentGateProps
       const status = await getConsentStatus();
       setRequiredVersion(status.required_version);
       setAccepted(status.accepted);
+      setAcceptedVersion(status.accepted_version ?? null);
+      setAcceptedAt(status.accepted_at ?? null);
+      setConsentUserId(typeof status.user_id === "number" ? status.user_id : null);
       return status.accepted;
     } catch (cause) {
       setAccepted(false);
@@ -49,12 +59,21 @@ export default function SelfMedConsentGate({ children }: SelfMedConsentGateProps
     setError("");
     try {
       await acceptConsent({ consent_version: requiredVersion, accepted: true });
-      setAccepted(true);
+      const unlocked = await refreshConsent();
+      if (!unlocked) {
+        setError("Đã lưu xác nhận nhưng chưa lấy lại trạng thái mới. Vui lòng thử kiểm tra lại.");
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể lưu xác nhận consent.");
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const onRetryStatus = async () => {
+    setIsLoading(true);
+    await refreshConsent();
+    setIsLoading(false);
   };
 
   if (isLoading) {
@@ -80,12 +99,12 @@ export default function SelfMedConsentGate({ children }: SelfMedConsentGateProps
           Phiên bản điều khoản hiện tại: <span className="font-semibold">{requiredVersion || "-"}</span>
         </p>
 
-        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-4">
+        <label className="mt-4 flex min-h-11 cursor-pointer items-start gap-3 rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-4">
           <input
             type="checkbox"
             checked={checked}
             onChange={(event) => setChecked(event.target.checked)}
-            className="mt-1 h-5 w-5 rounded border-[color:var(--shell-border)]"
+            className="mt-1 h-6 w-6 rounded border-[color:var(--shell-border)]"
           />
           <span className="text-sm font-medium leading-6 text-[var(--text-primary)]">
             Tôi đã đọc, hiểu và đồng ý với tuyên bố miễn trừ trách nhiệm y tế của CLARA.
@@ -101,10 +120,40 @@ export default function SelfMedConsentGate({ children }: SelfMedConsentGateProps
           {isSaving ? "Đang lưu xác nhận..." : "Đồng ý và tiếp tục"}
         </button>
 
-        {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+        {error ? (
+          <div className="mt-3 space-y-2 rounded-xl border border-red-300/50 bg-red-500/10 p-3">
+            <p className="text-sm text-red-200">{error}</p>
+            <p className="text-xs text-red-100/90">Nếu mạng hoặc phiên đăng nhập vừa thay đổi, vui lòng kiểm tra lại trạng thái consent.</p>
+            <button
+              type="button"
+              onClick={() => void onRetryStatus()}
+              className="inline-flex min-h-11 items-center rounded-xl border border-red-300/55 bg-red-500/20 px-4 py-2 text-sm font-semibold text-red-100 transition hover:bg-red-500/30"
+            >
+              Thử kiểm tra lại consent
+            </button>
+          </div>
+        ) : null}
       </section>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <div className="space-y-4">
+      <section className="chrome-panel rounded-2xl border border-emerald-300/50 bg-emerald-500/10 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-100">Consent đã được mở khóa</p>
+        <div className="mt-2 grid gap-2 text-sm text-emerald-100/95 md:grid-cols-3">
+          <p>
+            Phiên bản đã chấp thuận: <span className="font-semibold">{acceptedVersion ?? requiredVersion ?? "-"}</span>
+          </p>
+          <p>
+            Thời điểm chấp thuận: <span className="font-semibold">{acceptedAtDisplay ?? "Chưa có dữ liệu"}</span>
+          </p>
+          <p>
+            User context: <span className="font-semibold">{consentUserId ? `user_id=${consentUserId}` : "Ẩn danh/không có"}</span>
+          </p>
+        </div>
+      </section>
+      {children}
+    </div>
+  );
 }

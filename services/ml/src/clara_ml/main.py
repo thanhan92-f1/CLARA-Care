@@ -142,6 +142,37 @@ def _detect_legal_guard_violation(query: str) -> str | None:
     return None
 
 
+def _legal_guard_refusal(*, role_hint: str | None, reason: str) -> dict[str, object]:
+    safe_role = (
+        role_hint
+        if role_hint in {"normal", "researcher", "doctor", "admin"}
+        else "normal"
+    )
+    return {
+        "role": safe_role,
+        "intent": "medical_policy_refusal",
+        "confidence": 1.0,
+        "emergency": False,
+        "answer": (
+            "CLARA không có thẩm quyền kê đơn, chẩn đoán, hoặc chỉ định liều dùng. "
+            "Tôi chỉ có thể giải thích tương tác thuốc và thông tin an toàn sử dụng "
+            "từ nguồn tham khảo. "
+            "Vui lòng liên hệ bác sĩ hoặc dược sĩ để được chỉ định phù hợp."
+        ),
+        "retrieved_ids": [],
+        "model_used": "legal-hard-guard-v1",
+        "flow_events": [
+            _flow_event(
+                stage="legal_guard",
+                status="blocked",
+                source_count=0,
+                note=f"Blocked by hard policy: {reason}",
+            )
+        ],
+        "guard_reason": reason,
+    }
+
+
 @app.middleware("http")
 async def instrument_requests(request: Request, call_next):
     started_at = perf_counter()
@@ -224,34 +255,7 @@ def routed_chat_infer(payload: dict) -> dict:
     role_hint = str(payload.get("role", "")).strip().lower() or None
     legal_guard_reason = _detect_legal_guard_violation(query)
     if legal_guard_reason:
-        safe_role = (
-            role_hint
-            if role_hint in {"normal", "researcher", "doctor", "admin"}
-            else "normal"
-        )
-        return {
-            "role": safe_role,
-            "intent": "medical_policy_refusal",
-            "confidence": 1.0,
-            "emergency": False,
-            "answer": (
-                "CLARA không có thẩm quyền kê đơn, chẩn đoán, hoặc chỉ định liều dùng. "
-                "Tôi chỉ có thể giải thích tương tác thuốc và thông tin an toàn sử dụng "
-                "từ nguồn tham khảo. "
-                "Vui lòng liên hệ bác sĩ hoặc dược sĩ để được chỉ định phù hợp."
-            ),
-            "retrieved_ids": [],
-            "model_used": "legal-hard-guard-v1",
-            "flow_events": [
-                _flow_event(
-                    stage="legal_guard",
-                    status="blocked",
-                    source_count=0,
-                    note=f"Blocked by hard policy: {legal_guard_reason}",
-                )
-            ],
-            "guard_reason": legal_guard_reason,
-        }
+        return _legal_guard_refusal(role_hint=role_hint, reason=legal_guard_reason)
 
     rag_flow_payload = payload.get("rag_flow")
     rag_flow = rag_flow_payload if isinstance(rag_flow_payload, dict) else {}
@@ -490,6 +494,11 @@ def routed_chat_infer(payload: dict) -> dict:
 
 @app.post("/v1/research/tier2")
 def research_tier2(payload: dict) -> dict:
+    query = str(payload.get("query", "")).strip()
+    role_hint = str(payload.get("role", "")).strip().lower() or None
+    legal_guard_reason = _detect_legal_guard_violation(query)
+    if legal_guard_reason:
+        return _legal_guard_refusal(role_hint=role_hint, reason=legal_guard_reason)
     result = run_research_tier2(payload)
     return result
 

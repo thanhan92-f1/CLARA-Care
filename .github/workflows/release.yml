@@ -161,6 +161,20 @@ jobs:
           path: ${{ steps.build.outputs.manifest_path }}
           if-no-files-found: error
 
+      - name: Write standalone release SHA artifact
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          sha_file="release-artifacts/release-sha-${{ needs.prepare-release-context.outputs.release_tag }}.txt"
+          printf '%s\n' "${{ needs.prepare-release-context.outputs.release_sha }}" > "$sha_file"
+
+      - name: Upload standalone release SHA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-sha-${{ needs.prepare-release-context.outputs.release_tag }}
+          path: release-artifacts/release-sha-${{ needs.prepare-release-context.outputs.release_tag }}.txt
+          if-no-files-found: error
+
   publish-github-release:
     name: publish github release
     runs-on: ubuntu-latest
@@ -178,6 +192,12 @@ jobs:
           name: image-manifest-${{ needs.prepare-release-context.outputs.release_tag }}
           path: release-artifacts
 
+      - name: Download standalone release SHA artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: release-sha-${{ needs.prepare-release-context.outputs.release_tag }}
+          path: release-artifacts
+
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -185,6 +205,7 @@ jobs:
           set -euo pipefail
           release_tag="${{ needs.prepare-release-context.outputs.release_tag }}"
           manifest="release-artifacts/image-manifest-${release_tag}.json"
+          sha_file="release-artifacts/release-sha-${release_tag}.txt"
 
           if gh release view "$release_tag" >/dev/null 2>&1; then
             echo "Release ${release_tag} already exists. Keep existing notes."
@@ -195,7 +216,7 @@ jobs:
               --generate-notes
           fi
 
-          gh release upload "$release_tag" "$manifest" --clobber
+          gh release upload "$release_tag" "$manifest" "$sha_file" --clobber
 
       - name: Release summary
         run: |
@@ -206,4 +227,5 @@ jobs:
             echo "- Commit SHA: \`${{ needs.prepare-release-context.outputs.release_sha }}\`"
             echo "- Registry: \`${{ needs.prepare-release-context.outputs.registry_repo }}\`"
             echo "- Manifest: \`release-artifacts/image-manifest-${{ needs.prepare-release-context.outputs.release_tag }}.json\`"
+            echo "- SHA artifact: \`release-artifacts/release-sha-${{ needs.prepare-release-context.outputs.release_tag }}.txt\`"
           } >> "$GITHUB_STEP_SUMMARY"
