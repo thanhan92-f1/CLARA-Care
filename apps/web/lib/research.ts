@@ -230,7 +230,15 @@ export type KnowledgeSourceDocument = {
   is_active: boolean;
 };
 
-export type SourceHubSourceKey = "pubmed" | "rxnorm" | "openfda" | "davidrug";
+export type SourceHubSourceKey =
+  | "pubmed"
+  | "rxnorm"
+  | "openfda"
+  | "dailymed"
+  | "clinicaltrials"
+  | "europepmc"
+  | "semantic_scholar"
+  | "davidrug";
 
 export type SourceHubCatalogEntry = {
   key: SourceHubSourceKey;
@@ -1429,7 +1437,16 @@ function parseKnowledgeSourceDocument(item: unknown): KnowledgeSourceDocument | 
 
 function parseSourceHubKey(value: unknown): SourceHubSourceKey | null {
   const text = asText(value)?.toLowerCase();
-  if (text === "pubmed" || text === "rxnorm" || text === "openfda" || text === "davidrug") {
+  if (
+    text === "pubmed" ||
+    text === "rxnorm" ||
+    text === "openfda" ||
+    text === "dailymed" ||
+    text === "clinicaltrials" ||
+    text === "europepmc" ||
+    text === "semantic_scholar" ||
+    text === "davidrug"
+  ) {
     return text;
   }
   return null;

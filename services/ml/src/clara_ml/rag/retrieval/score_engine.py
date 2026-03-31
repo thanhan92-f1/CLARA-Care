@@ -70,13 +70,21 @@ class DocumentScorer:
             lexical_overlap = self._lexical_overlap(query_tokens, doc.text)
             doc_tokens = self._tokenize(doc.text)
             primary_drug = str(query_profile.get("primary_drug") or "").strip().lower()
+            co_drugs = {
+                str(item).strip().lower()
+                for item in query_profile.get("co_drugs", [])
+                if str(item).strip()
+            }
             has_primary_drug = bool(primary_drug) and primary_drug in doc_tokens
+            has_codrug_signal = bool(co_drugs.intersection(doc_tokens))
             has_interaction_signal = bool(
                 doc_tokens.intersection(
-                    {"interaction", "ddi", "bleeding", "inr", "contraindication", "adverse"}
+                    {"interaction", "ddi", "bleeding", "contraindication", "adverse", "risk"}
                 )
             )
             is_ddi_query = bool(query_profile.get("is_ddi_query"))
+            source_key = str(doc.metadata.get("source") or "").strip().lower()
+            trusted_label_source = source_key in {"openfda", "dailymed", "rxnorm", "rxnav"}
 
             if is_ddi_query and not has_primary_drug:
                 trace_rows.append(
@@ -89,18 +97,39 @@ class DocumentScorer:
                     }
                 )
                 continue
-            if is_ddi_query and lexical_overlap < 0.06 and not has_interaction_signal:
+            if (
+                is_ddi_query
+                and not has_codrug_signal
+                and not has_interaction_signal
+                and not trusted_label_source
+            ):
                 trace_rows.append(
                     {
                         "doc_id": doc.id,
-                        "source": str(doc.metadata.get("source") or "unknown"),
+                        "source": source_key or "unknown",
+                        "excluded": True,
+                        "reason": "ddi_missing_codrug_or_interaction",
+                        "lexical_overlap": lexical_overlap,
+                    }
+                )
+                continue
+            if (
+                is_ddi_query
+                and lexical_overlap < 0.08
+                and not has_codrug_signal
+                and not has_interaction_signal
+                and not trusted_label_source
+            ):
+                trace_rows.append(
+                    {
+                        "doc_id": doc.id,
+                        "source": source_key or "unknown",
                         "excluded": True,
                         "reason": "ddi_low_lexical_overlap",
                         "lexical_overlap": lexical_overlap,
                     }
                 )
                 continue
-            source_key = str(doc.metadata.get("source") or "").strip().lower()
             policy = source_policies.get(source_key, {"enabled": True, "weight": 1.0})
             if not bool(policy.get("enabled", True)):
                 trace_rows.append(
@@ -147,7 +176,9 @@ class DocumentScorer:
                 "final_score": float(score),
                 "ddi_query": is_ddi_query,
                 "has_primary_drug": has_primary_drug,
+                "has_codrug_signal": has_codrug_signal,
                 "has_interaction_signal": has_interaction_signal,
+                "trusted_label_source": trusted_label_source,
             }
             doc.metadata["weight"] = doc_weight
             doc.metadata["policy_weight"] = policy_weight

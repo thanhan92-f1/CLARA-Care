@@ -15,6 +15,10 @@ const SOURCE_LABELS: Record<SourceHubSourceKey, string> = {
   pubmed: "PubMed",
   rxnorm: "RxNorm",
   openfda: "openFDA",
+  dailymed: "DailyMed",
+  clinicaltrials: "ClinicalTrials.gov",
+  europepmc: "Europe PMC",
+  semantic_scholar: "Semantic Scholar",
   davidrug: "DAVIDrug",
 };
 
@@ -124,7 +128,7 @@ export default function AdminSourceHubPage() {
     <AdminShell
       activeTab="source-hub"
       title="Source Hub y khoa"
-      description="Quản lý đồng bộ dữ liệu từ PubMed, RxNorm, openFDA, DAVIDrug. Theo dõi record crawl, query đã dùng và metadata chi tiết để phục vụ RAG và kiểm chứng."
+      description="Quản lý đồng bộ dữ liệu từ PubMed, Europe PMC, ClinicalTrials.gov, DailyMed, RxNorm, openFDA, DAVIDrug và Semantic Scholar. Theo dõi record crawl, query đã dùng và metadata chi tiết để phục vụ RAG và kiểm chứng."
     >
       <div className="space-y-5">
         <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">

@@ -3,6 +3,7 @@ import math
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -386,6 +387,80 @@ def _build_source_documents(
         }
         for document in documents
     ]
+
+
+def _extract_source_hub_sources(payload: dict[str, Any]) -> set[str]:
+    raw = payload.get("source_hub_sources")
+    values: list[str] = []
+    if isinstance(raw, list):
+        values = [str(item).strip().lower() for item in raw if str(item).strip()]
+    elif isinstance(raw, str) and raw.strip():
+        values = [raw.strip().lower()]
+    allowed = {
+        "pubmed",
+        "europepmc",
+        "semantic_scholar",
+        "clinicaltrials",
+        "rxnorm",
+        "openfda",
+        "dailymed",
+        "davidrug",
+    }
+    return {item for item in values if item in allowed}
+
+
+def _build_source_hub_documents(
+    db: Session,
+    *,
+    owner_user_id: int,
+    query: str,
+    source_filters: set[str],
+    limit: int = 40,
+) -> list[dict[str, Any]]:
+    records = _load_source_hub_records(db, owner_user_id)
+    query_terms = {term.strip().lower() for term in query.split() if len(term.strip()) >= 3}
+
+    matched: list[SourceHubRecord] = []
+    for record in records:
+        if source_filters and record.source not in source_filters:
+            continue
+        haystack = " ".join(
+            part for part in [record.title or "", record.snippet or "", record.query or ""] if part
+        ).lower()
+        if query_terms and not any(term in haystack for term in query_terms):
+            continue
+        matched.append(record)
+        if len(matched) >= max(1, int(limit)):
+            break
+
+    docs: list[dict[str, Any]] = []
+    for index, record in enumerate(matched, start=1):
+        text_parts = [record.title]
+        if record.snippet:
+            text_parts.append(record.snippet)
+        if record.metadata:
+            compact_meta = ", ".join(
+                f"{key}={value}"
+                for key, value in list(record.metadata.items())[:4]
+                if value not in (None, "", [])
+            )
+            if compact_meta:
+                text_parts.append(compact_meta)
+        docs.append(
+            {
+                "file_id": f"source-hub-{record.id}",
+                "filename": f"{record.source}-{index}",
+                "content_type": "text/plain",
+                "size": 0,
+                "created_at": record.synced_at or datetime.now(tz=UTC).isoformat(),
+                "text": " | ".join(part for part in text_parts if part),
+                "preview": (record.snippet or record.title or "")[:_PREVIEW_CHAR_LIMIT],
+                "token_count": _approx_token_count(" ".join(text_parts)),
+                "source": f"source_hub_{record.source}",
+                "url": record.url,
+            }
+        )
+    return docs
 
 
 def _extract_source_ids(payload: dict[str, Any]) -> list[int]:
@@ -838,6 +913,38 @@ _SOURCE_HUB_CATALOG: tuple[SourceHubCatalogEntry, ...] = (
         supports_live_sync=True,
     ),
     SourceHubCatalogEntry(
+        key="dailymed",
+        label="DailyMed",
+        description="NLM/FDA SPL drug label feed",
+        docs_url="https://dailymed.nlm.nih.gov/dailymed/webservices-help.cfm",
+        default_query="warfarin",
+        supports_live_sync=True,
+    ),
+    SourceHubCatalogEntry(
+        key="europepmc",
+        label="Europe PMC",
+        description="Biomedical literature and abstracts",
+        docs_url="https://europepmc.org/RestfulWebService",
+        default_query="warfarin ibuprofen interaction",
+        supports_live_sync=True,
+    ),
+    SourceHubCatalogEntry(
+        key="semantic_scholar",
+        label="Semantic Scholar",
+        description="Academic graph search for biomedical papers",
+        docs_url="https://api.semanticscholar.org/api-docs/graph",
+        default_query="warfarin nsaid bleeding risk",
+        supports_live_sync=True,
+    ),
+    SourceHubCatalogEntry(
+        key="clinicaltrials",
+        label="ClinicalTrials.gov",
+        description="Clinical study registry and metadata",
+        docs_url="https://clinicaltrials.gov/data-api/about-api",
+        default_query="warfarin interaction",
+        supports_live_sync=True,
+    ),
+    SourceHubCatalogEntry(
         key="davidrug",
         label="DAVIDrug",
         description="Cục Quản lý Dược Việt Nam (public web data fallback)",
@@ -862,7 +969,16 @@ def _to_text(value: Any) -> str:
 
 def _normalize_source_hub_record(record: dict[str, Any]) -> SourceHubRecord | None:
     source = _to_text(record.get("source")).lower()
-    if source not in {"pubmed", "rxnorm", "openfda", "davidrug"}:
+    if source not in {
+        "pubmed",
+        "rxnorm",
+        "openfda",
+        "dailymed",
+        "europepmc",
+        "semantic_scholar",
+        "clinicaltrials",
+        "davidrug",
+    }:
         return None
     title = _to_text(record.get("title"))
     if not title:
@@ -1125,6 +1241,215 @@ def _fetch_openfda_records(
     return records, warnings
 
 
+def _fetch_dailymed_records(
+    query: str, limit: int, synced_at: str
+) -> tuple[list[SourceHubRecord], list[str]]:
+    warnings: list[str] = []
+    escaped_query = quote(query.strip())
+    payload = _http_get_json(
+        f"https://dailymed.nlm.nih.gov/dailymed/services/v1/drugname/{escaped_query}/spls.json"
+    )
+    rows = payload.get("data")
+    if not isinstance(rows, list) or not rows:
+        return [], ["DailyMed không có kết quả cho query này."]
+
+    records: list[SourceHubRecord] = []
+    for index, item in enumerate(rows[:limit]):
+        if not isinstance(item, list):
+            continue
+        set_id = _to_text(item[0] if len(item) > 0 else "")
+        title = _to_text(item[1] if len(item) > 1 else "") or f"DailyMed label {index + 1}"
+        version = _to_text(item[2] if len(item) > 2 else "")
+        published = _to_text(item[3] if len(item) > 3 else "")
+        records.append(
+            SourceHubRecord(
+                id=f"dailymed:{set_id or index}",
+                source="dailymed",
+                title=title,
+                url=(
+                    f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={set_id}"
+                    if set_id
+                    else "https://dailymed.nlm.nih.gov/"
+                ),
+                snippet=" | ".join(part for part in [version, published] if part) or None,
+                external_id=set_id or None,
+                query=query,
+                published_at=published or None,
+                synced_at=synced_at,
+                metadata={},
+            )
+        )
+
+    if not records:
+        warnings.append("DailyMed trả dữ liệu không hợp lệ sau khi parse.")
+    return records, warnings
+
+
+def _fetch_europepmc_records(
+    query: str, limit: int, synced_at: str
+) -> tuple[list[SourceHubRecord], list[str]]:
+    warnings: list[str] = []
+    payload = _http_get_json(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+        params={
+            "query": query,
+            "format": "json",
+            "resultType": "core",
+            "pageSize": max(1, min(50, int(limit))),
+        },
+    )
+    result_list = payload.get("resultList")
+    results = result_list.get("result") if isinstance(result_list, dict) else []
+    if not isinstance(results, list) or not results:
+        return [], ["Europe PMC không có kết quả cho query này."]
+
+    records: list[SourceHubRecord] = []
+    for index, item in enumerate(results[:limit]):
+        if not isinstance(item, dict):
+            continue
+        source = _to_text(item.get("source")).lower() or "europepmc"
+        source_id = _to_text(item.get("id"))
+        title = _to_text(item.get("title")) or f"Europe PMC record {index + 1}"
+        journal = _to_text(item.get("journalTitle"))
+        pub_year = _to_text(item.get("pubYear"))
+        if source == "med" and source_id:
+            url = f"https://pubmed.ncbi.nlm.nih.gov/{source_id}/"
+        elif source_id:
+            url = f"https://europepmc.org/article/{source.upper()}/{source_id}"
+        else:
+            url = "https://europepmc.org/"
+        records.append(
+            SourceHubRecord(
+                id=f"europepmc:{source}:{source_id or index}",
+                source="europepmc",
+                title=title,
+                url=url,
+                snippet=" | ".join(part for part in [journal, pub_year] if part) or None,
+                external_id=source_id or None,
+                query=query,
+                published_at=pub_year or None,
+                synced_at=synced_at,
+                metadata={"source_provider": source},
+            )
+        )
+
+    if not records:
+        warnings.append("Europe PMC trả dữ liệu không hợp lệ sau khi parse.")
+    return records, warnings
+
+
+def _fetch_semantic_scholar_records(
+    query: str, limit: int, synced_at: str
+) -> tuple[list[SourceHubRecord], list[str]]:
+    warnings: list[str] = []
+    payload = _http_get_json(
+        "https://api.semanticscholar.org/graph/v1/paper/search",
+        params={
+            "query": query,
+            "limit": max(1, min(50, int(limit))),
+            "fields": "paperId,title,year,url,venue,journal",
+        },
+    )
+    rows = payload.get("data")
+    if not isinstance(rows, list) or not rows:
+        return [], ["Semantic Scholar không có kết quả cho query này."]
+
+    records: list[SourceHubRecord] = []
+    for index, item in enumerate(rows[:limit]):
+        if not isinstance(item, dict):
+            continue
+        paper_id = _to_text(item.get("paperId"))
+        title = _to_text(item.get("title")) or f"Semantic Scholar record {index + 1}"
+        year = _to_text(item.get("year"))
+        url = _to_text(item.get("url"))
+        venue = _to_text(item.get("venue"))
+        journal_obj = item.get("journal")
+        journal = _to_text(journal_obj.get("name")) if isinstance(journal_obj, dict) else ""
+        records.append(
+            SourceHubRecord(
+                id=f"semantic_scholar:{paper_id or index}",
+                source="semantic_scholar",
+                title=title,
+                url=(
+                    url
+                    or (
+                        f"https://www.semanticscholar.org/paper/{paper_id}"
+                        if paper_id
+                        else None
+                    )
+                ),
+                snippet=" | ".join(part for part in [venue, journal, year] if part) or None,
+                external_id=paper_id or None,
+                query=query,
+                published_at=year or None,
+                synced_at=synced_at,
+                metadata={},
+            )
+        )
+
+    if not records:
+        warnings.append("Semantic Scholar trả dữ liệu không hợp lệ sau khi parse.")
+    return records, warnings
+
+
+def _fetch_clinicaltrials_records(
+    query: str, limit: int, synced_at: str
+) -> tuple[list[SourceHubRecord], list[str]]:
+    warnings: list[str] = []
+    payload = _http_get_json(
+        "https://clinicaltrials.gov/api/v2/studies",
+        params={
+            "query.term": query,
+            "pageSize": max(1, min(50, int(limit))),
+            "format": "json",
+        },
+    )
+    studies = payload.get("studies")
+    if not isinstance(studies, list) or not studies:
+        return [], ["ClinicalTrials.gov không có kết quả cho query này."]
+
+    records: list[SourceHubRecord] = []
+    for index, item in enumerate(studies[:limit]):
+        if not isinstance(item, dict):
+            continue
+        protocol = item.get("protocolSection")
+        if not isinstance(protocol, dict):
+            continue
+        identification = protocol.get("identificationModule")
+        status_module = protocol.get("statusModule")
+        identification = identification if isinstance(identification, dict) else {}
+        status_module = status_module if isinstance(status_module, dict) else {}
+
+        nct_id = _to_text(identification.get("nctId"))
+        title = _to_text(identification.get("briefTitle")) or f"Clinical trial {index + 1}"
+        overall_status = _to_text(status_module.get("overallStatus"))
+        start_date_obj = status_module.get("startDateStruct")
+        start_date = (
+            _to_text(start_date_obj.get("date"))
+            if isinstance(start_date_obj, dict)
+            else ""
+        )
+
+        records.append(
+            SourceHubRecord(
+                id=f"clinicaltrials:{nct_id or index}",
+                source="clinicaltrials",
+                title=title,
+                url=(f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else None),
+                snippet=" | ".join(part for part in [overall_status, start_date] if part) or None,
+                external_id=nct_id or None,
+                query=query,
+                published_at=start_date or None,
+                synced_at=synced_at,
+                metadata={},
+            )
+        )
+
+    if not records:
+        warnings.append("ClinicalTrials.gov trả dữ liệu không hợp lệ sau khi parse.")
+    return records, warnings
+
+
 def _fetch_davidrug_records(
     query: str, limit: int, synced_at: str
 ) -> tuple[list[SourceHubRecord], list[str]]:
@@ -1216,6 +1541,14 @@ def _fetch_source_hub_records(
         return _fetch_rxnorm_records(query, limit, synced_at)
     if source == "openfda":
         return _fetch_openfda_records(query, limit, synced_at)
+    if source == "dailymed":
+        return _fetch_dailymed_records(query, limit, synced_at)
+    if source == "europepmc":
+        return _fetch_europepmc_records(query, limit, synced_at)
+    if source == "semantic_scholar":
+        return _fetch_semantic_scholar_records(query, limit, synced_at)
+    if source == "clinicaltrials":
+        return _fetch_clinicaltrials_records(query, limit, synced_at)
     if source == "davidrug":
         return _fetch_davidrug_records(query, limit, synced_at)
     return [], [f"Nguồn không được hỗ trợ: {source}"]
@@ -1589,11 +1922,19 @@ def research_tier2(
     transient_documents = _build_uploaded_documents(payload.get("uploaded_file_ids"))
     source_ids = _extract_source_ids(payload)
     source_documents = _build_source_documents(db, owner_user_id=user.id, source_ids=source_ids)
-    uploaded_documents = [*transient_documents, *source_documents]
+    source_hub_filters = _extract_source_hub_sources(payload)
+    source_hub_documents = _build_source_hub_documents(
+        db,
+        owner_user_id=user.id,
+        query=str(payload.get("query") or payload.get("message") or ""),
+        source_filters=source_hub_filters,
+    )
+    uploaded_documents = [*transient_documents, *source_documents, *source_hub_documents]
 
     if uploaded_documents or payload.get("source_mode") in {"uploaded_files", "knowledge_sources"}:
         upstream_payload["uploaded_documents"] = uploaded_documents
     upstream_payload["role"] = token.role
+    upstream_payload["strict_deepseek_required"] = bool(settings.deepseek_strict_mode)
     runtime_rag_flow, runtime_rag_sources = _load_research_rag_runtime(db)
 
     incoming_rag_flow = upstream_payload.get("rag_flow")

@@ -329,7 +329,16 @@ class KnowledgeDocumentResponse(BaseModel):
     updated_at: datetime
 
 
-SourceHubSourceKey = Literal["pubmed", "rxnorm", "openfda", "davidrug"]
+SourceHubSourceKey = Literal[
+    "pubmed",
+    "rxnorm",
+    "openfda",
+    "dailymed",
+    "europepmc",
+    "semantic_scholar",
+    "clinicaltrials",
+    "davidrug",
+]
 
 
 class SourceHubCatalogEntry(BaseModel):

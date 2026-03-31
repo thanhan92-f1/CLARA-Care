@@ -336,6 +336,7 @@ def test_research_tier2_forwards_research_mode_to_ml(
     assert isinstance(forwarded, dict)
     assert forwarded["research_mode"] == "deep"
     assert forwarded["role"] == "researcher"
+    assert forwarded["strict_deepseek_required"] is False
     assert isinstance(forwarded.get("rag_flow"), dict)
     assert isinstance(forwarded.get("rag_sources"), list)
 
