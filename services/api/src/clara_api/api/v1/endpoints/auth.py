@@ -271,12 +271,14 @@ def _extract_refresh_token(
     request: Request,
     payload: RefreshTokenRequest | None,
 ) -> str:
-    if payload and payload.refresh_token:
-        return payload.refresh_token
+    # Prefer HttpOnly cookie first: cookie value is rotated by server response and
+    # is typically fresher than a token cached in local storage across tabs/devices.
     cookie_key = get_settings().auth_cookie_refresh_name
     raw = request.cookies.get(cookie_key, "").strip()
     if raw:
         return raw
+    if payload and payload.refresh_token:
+        return payload.refresh_token
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Thiếu refresh token",

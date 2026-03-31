@@ -94,6 +94,65 @@ def test_refresh_accepts_cookie_without_request_body() -> None:
     assert refresh_response.json()["access_token"]
 
 
+def test_refresh_prefers_cookie_over_payload_token() -> None:
+    user_email = "cookie-prefer@example.com"
+    other_email = "cookie-other@example.com"
+
+    login_user = client.post(
+        "/api/v1/auth/login",
+        json={"email": user_email, "password": "secret"},
+    )
+    assert login_user.status_code == 200
+
+    login_other = client.post(
+        "/api/v1/auth/login",
+        json={"email": other_email, "password": "secret"},
+    )
+    assert login_other.status_code == 200
+
+    cookie_client = TestClient(app)
+    cookie_client.cookies.update(login_user.cookies)
+
+    refresh_response = cookie_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": login_other.json()["refresh_token"]},
+    )
+    assert refresh_response.status_code == 200
+
+    me_response = cookie_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {refresh_response.json()['access_token']}"},
+    )
+    assert me_response.status_code == 200
+    assert me_response.json()["subject"] == user_email
+
+
+def test_refresh_prefers_cookie_when_body_token_is_stale() -> None:
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "cookie-priority@example.com", "password": "secret"},
+    )
+    assert login_response.status_code == 200
+    stale_refresh_token = login_response.json()["refresh_token"]
+    assert stale_refresh_token
+
+    cookie_client = TestClient(app)
+    cookie_client.cookies.update(login_response.cookies)
+
+    first_refresh = cookie_client.post("/api/v1/auth/refresh", json={})
+    assert first_refresh.status_code == 200
+    assert first_refresh.json()["refresh_token"] != stale_refresh_token
+
+    # If backend uses payload token first, this call would fail with 401 because
+    # stale_refresh_token has already been consumed. Cookie-first behavior keeps it valid.
+    second_refresh = cookie_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": stale_refresh_token},
+    )
+    assert second_refresh.status_code == 200
+    assert second_refresh.json()["access_token"]
+
+
 def test_logout_clears_auth_cookies() -> None:
     login_response = client.post(
         "/api/v1/auth/login",

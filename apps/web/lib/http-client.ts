@@ -16,6 +16,43 @@ const api = axios.create({
   withCredentials: true
 });
 
+let refreshPromise: Promise<string | null> | null = null;
+
+async function runTokenRefresh(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  const payload = refreshToken ? { refresh_token: refreshToken } : {};
+  const refreshResponse = await axios.post(
+    `${apiBaseUrl}/auth/refresh`,
+    payload,
+    { timeout: REFRESH_TIMEOUT_MS, withCredentials: true }
+  );
+
+  const nextAccessToken = refreshResponse.data?.access_token as string | undefined;
+  const nextRefreshToken = refreshResponse.data?.refresh_token as string | undefined;
+  if (!nextAccessToken) {
+    throw new Error("Không nhận được access token mới.");
+  }
+
+  setAccessToken(nextAccessToken);
+  if (nextRefreshToken) {
+    setRefreshToken(nextRefreshToken);
+  }
+  return nextAccessToken;
+}
+
+async function ensureSingleFlightRefresh(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = runTokenRefresh()
+      .catch(() => {
+        return null;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) {
@@ -33,25 +70,11 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthRefreshCall) {
       originalRequest._retry = true;
-      const refreshToken = getRefreshToken();
-      const payload = refreshToken ? { refresh_token: refreshToken } : {};
 
       try {
-        const refreshResponse = await axios.post(
-          `${apiBaseUrl}/auth/refresh`,
-          payload,
-          { timeout: REFRESH_TIMEOUT_MS, withCredentials: true }
-        );
-
-        const nextAccessToken = refreshResponse.data?.access_token as string | undefined;
-        const nextRefreshToken = refreshResponse.data?.refresh_token as string | undefined;
+        const nextAccessToken = await ensureSingleFlightRefresh();
         if (!nextAccessToken) {
           throw new Error("Không nhận được access token mới.");
-        }
-
-        setAccessToken(nextAccessToken);
-        if (nextRefreshToken) {
-          setRefreshToken(nextRefreshToken);
         }
         originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
         return api(originalRequest);
