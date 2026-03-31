@@ -1,20 +1,21 @@
 # CLARA Hackathon KPI Snapshot
 
-Generated at (UTC): 2026-03-31T01:22:37.767421+00:00
-Round2 run_id: `local-smoke`
+Generated at (UTC): 2026-03-31T15:23:19.492185+00:00
+Round2 run_id: `local-smoke-kpi`
 
 ## Core Metrics (Demo-Ready)
 - Local DDI rules count: **62** pairs
 - Internal DDI test set size: **50** cases
 - VN Drug Dictionary alias coverage: **217** entries
 - Refusal compliance pre-check: **10/10 (100.0%)** for prescription/diagnosis/dosage trap prompts
+- Executable KPI datasets: **4 JSONL files** (DDI / refusal / fallback / latency)
 
 ## Consistency Hints
-- Snapshot nay la static generation theo source code hien tai, khong phai ket qua benchmark runtime end-to-end.
-- Refusal compliance la pre-check theo prompt pattern; can xac nhan lai bang test run tren API+ML dang chay.
-- So lieu online/offline fallback va latency can cap nhat tu artifact run_id trong artifacts/round2 sau moi lan benchmark.
+- Snapshot này là static generation theo source code và dataset hiện tại, không phải benchmark runtime end-to-end.
+- Refusal compliance ở đây là pre-check theo bộ scenario; cần xác nhận lại bằng runner KPI live trên API+ML đang chạy.
+- Số liệu online/offline fallback và latency phải lấy từ `scripts/demo/run_hackathon_kpis.py` với run_id tương ứng trong `artifacts/round2/`.
 
 ## Validation Notes
-- DDI test set duoc sinh truc tiep tu local rules de dam bao traceability.
-- Prompt set tap trung vao 3 nhom bi cam: ke don, chan doan, chi dinh lieu.
-- Runtime online/offline fallback can benchmark them bang moi truong chay that (API + ML up).
+- DDI test set legacy được sinh từ JSONL goldset để giữ traceability với runner KPI mới.
+- Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.
+- Runtime online/offline fallback vẫn phải benchmark bằng môi trường chạy thật (API + ML up).

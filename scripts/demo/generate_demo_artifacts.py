@@ -14,6 +14,10 @@ API_CAREGUARD = ROOT / "services/api/src/clara_api/api/v1/endpoints/careguard.py
 ML_CAREGUARD = ROOT / "services/ml/src/clara_ml/agents/careguard.py"
 ML_MAIN = ROOT / "services/ml/src/clara_ml/main.py"
 ML_LOCAL_DDI_RULES_JSON = ROOT / "services/ml/src/clara_ml/nlp/seed_data/careguard_ddi_rules.v1.json"
+DDI_GOLDSET_JSONL = ROOT / "data/demo/ddi-goldset.jsonl"
+REFUSAL_SCENARIOS_JSONL = ROOT / "data/demo/refusal-scenarios.jsonl"
+FALLBACK_SCENARIOS_JSONL = ROOT / "data/demo/fallback-scenarios.jsonl"
+LATENCY_SCENARIOS_JSONL = ROOT / "data/demo/latency-scenarios.jsonl"
 
 OUT_DDI = ROOT / "data/demo/ddi_internal_test_set.json"
 OUT_REFUSAL = ROOT / "data/demo/chatbot_refusal_prompts_10.json"
@@ -48,6 +52,18 @@ def write_text(path: Path, content: str) -> None:
 
 def write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
     write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        rows.append(json.loads(raw))
+    return rows
 
 
 def ensure_placeholder(path: Path, content: str) -> None:
@@ -145,6 +161,35 @@ def build_refusal_prompts() -> list[dict[str, str]]:
     ]
 
 
+def build_ddi_test_set_from_goldset(goldset_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for item in goldset_rows[:50]:
+        output.append(
+            {
+                "case_id": item["case_id"],
+                "medications": item["medications"],
+                "expected_severity": item.get("expected_min_severity"),
+                "expected_alert": item.get("expected_alert"),
+                "expected_tokens": item.get("expected_tokens", []),
+                "notes": item.get("notes"),
+            }
+        )
+    return output
+
+
+def build_refusal_prompts_from_scenarios(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    for item in rows[:10]:
+        output.append(
+            {
+                "prompt_id": item["case_id"],
+                "prompt": item["query"],
+                "expected_policy": str(item.get("expected_policy_action") or "block"),
+            }
+        )
+    return output
+
+
 def estimate_refusal_compliance(prompts: list[dict[str, str]]) -> tuple[int, int]:
     patterns = [
         re.compile(
@@ -230,11 +275,39 @@ def build_manifest(
                 "source": "Generated from local DDI rules",
             },
             {
+                "name": "DDI Goldset JSONL",
+                "path": str(DDI_GOLDSET_JSONL.relative_to(ROOT)),
+                "checksum_md5": file_md5(DDI_GOLDSET_JSONL),
+                "license": "Internal Team Asset for Demo",
+                "source": "Hackathon executable KPI dataset",
+            },
+            {
                 "name": "Refusal Prompt Set (10 prompts)",
                 "path": str(OUT_REFUSAL.relative_to(ROOT)),
                 "checksum_md5": file_md5(OUT_REFUSAL),
                 "license": "Internal Team Asset for Demo",
                 "source": "Hackathon red-team prompt set",
+            },
+            {
+                "name": "Refusal Scenarios JSONL",
+                "path": str(REFUSAL_SCENARIOS_JSONL.relative_to(ROOT)),
+                "checksum_md5": file_md5(REFUSAL_SCENARIOS_JSONL),
+                "license": "Internal Team Asset for Demo",
+                "source": "Hackathon executable KPI dataset",
+            },
+            {
+                "name": "Fallback Scenarios JSONL",
+                "path": str(FALLBACK_SCENARIOS_JSONL.relative_to(ROOT)),
+                "checksum_md5": file_md5(FALLBACK_SCENARIOS_JSONL),
+                "license": "Internal Team Asset for Demo",
+                "source": "Hackathon executable KPI dataset",
+            },
+            {
+                "name": "Latency Scenarios JSONL",
+                "path": str(LATENCY_SCENARIOS_JSONL.relative_to(ROOT)),
+                "checksum_md5": file_md5(LATENCY_SCENARIOS_JSONL),
+                "license": "Internal Team Asset for Demo",
+                "source": "Hackathon executable KPI dataset",
             },
         ],
     }
@@ -269,16 +342,17 @@ def build_kpi_snapshot(
                 f"**{refusal_hits}/{refusal_total} ({refusal_rate:.1f}%)** "
                 "for prescription/diagnosis/dosage trap prompts"
             ),
+            "- Executable KPI datasets: **4 JSONL files** (DDI / refusal / fallback / latency)",
             "",
             "## Consistency Hints",
-            "- Snapshot nay la static generation theo source code hien tai, khong phai ket qua benchmark runtime end-to-end.",
-            "- Refusal compliance la pre-check theo prompt pattern; can xac nhan lai bang test run tren API+ML dang chay.",
-            "- So lieu online/offline fallback va latency can cap nhat tu artifact run_id trong artifacts/round2 sau moi lan benchmark.",
+            "- Snapshot này là static generation theo source code và dataset hiện tại, không phải benchmark runtime end-to-end.",
+            "- Refusal compliance ở đây là pre-check theo bộ scenario; cần xác nhận lại bằng runner KPI live trên API+ML đang chạy.",
+            "- Số liệu online/offline fallback và latency phải lấy từ `scripts/demo/run_hackathon_kpis.py` với run_id tương ứng trong `artifacts/round2/`.",
             "",
             "## Validation Notes",
-            "- DDI test set duoc sinh truc tiep tu local rules de dam bao traceability.",
-            "- Prompt set tap trung vao 3 nhom bi cam: ke don, chan doan, chi dinh lieu.",
-            "- Runtime online/offline fallback can benchmark them bang moi truong chay that (API + ML up).",
+            "- DDI test set legacy được sinh từ JSONL goldset để giữ traceability với runner KPI mới.",
+            "- Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.",
+            "- Runtime online/offline fallback vẫn phải benchmark bằng môi trường chạy thật (API + ML up).",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -380,9 +454,19 @@ def main() -> None:
 
     ddi_defs = load_ddi_rule_definitions()
     alias_map = parse_annassign_literal(API_CAREGUARD, "DRUG_ALIAS_MAP")
+    ddi_goldset_rows = read_jsonl(DDI_GOLDSET_JSONL)
+    refusal_rows = read_jsonl(REFUSAL_SCENARIOS_JSONL)
 
-    ddi_test_set = build_ddi_test_set(ddi_defs)
-    refusal_prompts = build_refusal_prompts()
+    ddi_test_set = (
+        build_ddi_test_set_from_goldset(ddi_goldset_rows)
+        if ddi_goldset_rows
+        else build_ddi_test_set(ddi_defs)
+    )
+    refusal_prompts = (
+        build_refusal_prompts_from_scenarios(refusal_rows)
+        if refusal_rows
+        else build_refusal_prompts()
+    )
 
     write_json(OUT_DDI, ddi_test_set)
     write_json(OUT_REFUSAL, refusal_prompts)

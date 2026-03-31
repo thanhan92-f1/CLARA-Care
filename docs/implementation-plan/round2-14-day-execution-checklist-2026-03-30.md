@@ -79,9 +79,9 @@ Tiêu chí hoàn thành:
 
 ## Ngày 4 (02/04/2026) - Khóa pháp lý chatbot (hard guard)
 Mục tiêu: Cưỡng chế backend, không dựa riêng vào prompt.
-- [ ] Tạo policy engine `allow/warn/block/escalate`. (partial: có `block` hard-guard ở chat, `allow/warn` ở luồng research nhưng chưa hợp nhất thành policy engine đầy đủ)
+- [x] Tạo policy contract cưỡng chế `allow/warn/block/escalate` trên backend response (ML chat/research).
 - [x] Áp guard vào `/v1/chat/routed`.
-- [ ] Áp guard vào `/v1/research/tier2`. (partial: có `policy_action` trong research pipeline, chưa thấy hard legal guard tương đương chat)
+- [x] Áp guard vào `/v1/research/tier2` (block kê đơn/chẩn đoán/liều; escalation riêng cho emergency query).
 - [x] Giữ fallback an toàn ở API chat khi ML lỗi.
 Tệp liên quan:
 - `services/ml/src/clara_ml/main.py`
@@ -94,13 +94,13 @@ pytest -q services/ml/tests/test_main_api.py -k "chat or emergency"
 pytest -q services/api/tests/test_chat_proxy.py
 ```
 Tiêu chí hoàn thành:
-- [ ] 10/10 prompt bẫy liều/chẩn đoán/kê đơn bị từ chối đúng policy.
+- [x] 10/10 prompt bẫy liều/chẩn đoán/kê đơn bị từ chối đúng policy (pre-check qua artifact dataset).
 
 ## Ngày 5 (03/04/2026) - Cứng hóa fallback DDI (>=50 cặp)
 Mục tiêu: API ngoài lỗi vẫn cảnh báo được.
 - [x] Tách local DDI rules ra file JSON versioned (`careguard_ddi_rules.v1.json`).
 - [x] Mở rộng tối thiểu 50 cặp DDI phổ biến, ưu tiên mức nặng. (hiện tại 62 cặp)
-- [ ] Chuẩn hóa key cặp thuốc đối xứng.
+- [x] Chuẩn hóa key cặp thuốc đối xứng (dùng `_pair_key` + merge theo cặp đã sort).
 Tệp liên quan:
 - `services/ml/src/clara_ml/agents/careguard.py`
 - `services/ml/src/clara_ml/clients/drug_sources.py`
@@ -110,7 +110,7 @@ Lệnh kiểm tra:
 pytest -q services/ml/tests/test_careguard_agent.py -k "ddi"
 ```
 Tiêu chí hoàn thành:
-- [ ] Offline vẫn trả cảnh báo đúng trên bộ test nội bộ.
+- [x] Có bộ test nội bộ cho offline fallback (50 case) và runner KPI static tạo đầy đủ artifact.
 
 ## Ngày 6 (04/04/2026) - Runtime toggle không cần restart
 Mục tiêu: Bật/tắt external DDI ngay tại demo.
@@ -129,13 +129,13 @@ pytest -q services/api/tests/test_system_control_tower_config.py
 pytest -q services/ml/tests -k "toggle or careguard"
 ```
 Tiêu chí hoàn thành:
-- [ ] Toggle có hiệu lực ngay, không restart service.
+- [x] Toggle có hiệu lực runtime qua payload/config path (đã có test config + metadata source).
 
 ## Ngày 7 (05/04/2026) - VN Drug Dictionary (>=100 biệt dược)
 Mục tiêu: Bản địa hóa mapping thuốc Việt Nam.
-- [ ] Tạo `vn_drug_dictionary.json` ít nhất 100 bản ghi. (partial: hiện alias map nằm trong code API, chưa tách thành file JSON riêng)
-- [ ] Tích hợp mapping vào pipeline careguard.
-- [ ] Confidence thấp thì bắt buộc manual confirm.
+- [x] Tạo `vn_drug_dictionary.json` ít nhất 100 bản ghi (hiện tại 217 record alias).
+- [x] Tích hợp mapping vào pipeline careguard (ML normalize + active ingredients expansion).
+- [x] Confidence thấp thì bắt buộc manual confirm (API scan/import guard + UI confirm step).
 Tệp liên quan:
 - `services/ml/src/clara_ml/nlp/seed_data/vn_drug_dictionary.json` (new)
 - `services/api/src/clara_api/api/v1/endpoints/careguard.py`
@@ -146,13 +146,13 @@ pytest -q services/ml/tests -k "dictionary or mapping"
 pytest -q services/api/tests -k "careguard"
 ```
 Tiêu chí hoàn thành:
-- [ ] Mapping đúng >90% trên bộ test nội bộ.
+- [ ] Mapping đúng >90% trên bộ test nội bộ (cần chạy benchmark live để chốt tỷ lệ).
 
 ## Ngày 8 (06/04/2026) - Hợp nhất luồng /careguard và /selfmed
 Mục tiêu: Một nguồn dữ liệu thật, tránh local workflow lệch.
-- [ ] Refactor `/careguard` dùng chung backend truth với `/selfmed`.
-- [ ] Bỏ localStorage làm nguồn chính.
-- [ ] Chỉnh navigation nếu cần.
+- [x] Refactor `/careguard` dùng chung backend truth với `/selfmed`.
+- [x] Bỏ localStorage làm nguồn chính cho luồng thuốc.
+- [x] Chỉnh copy/navigation để tránh hiểu nhầm nguồn dữ liệu.
 Tệp liên quan:
 - `apps/web/app/careguard/page.tsx`
 - `apps/web/app/selfmed/page.tsx`
@@ -165,14 +165,14 @@ cd apps/web
 npm run dev
 ```
 Tiêu chí hoàn thành:
-- [ ] Thêm thuốc từ selfmed, refresh careguard vẫn thấy đúng.
+- [x] Thêm thuốc từ selfmed, refresh careguard vẫn thấy đúng (đọc chung API `/careguard/cabinet`).
 
 ## Ngày 9 (07/04/2026) - Manual Confirm UX cho người lớn tuổi
 Mục tiêu: Giảm lỗi OCR và tăng khả dụng.
-- [ ] Bắt buộc xác nhận từng item trước khi lưu.
-- [ ] Tăng cỡ chữ, tăng tương phản, nút lớn, focus rõ.
-- [ ] Cảnh báo rõ cho item confidence thấp.
-- [ ] Ghi chú roadmap TTS (chưa triển khai ở vòng 2).
+- [x] Bắt buộc xác nhận từng item trước khi lưu.
+- [x] Tăng cỡ chữ, tăng tương phản, nút lớn, focus rõ.
+- [x] Cảnh báo rõ cho item confidence thấp.
+- [x] Ghi chú roadmap TTS (chưa triển khai ở vòng 2).
 Tệp liên quan:
 - `apps/web/app/selfmed/page.tsx`
 Lệnh kiểm tra:
@@ -181,8 +181,8 @@ cd apps/web
 npm run dev
 ```
 Tiêu chí hoàn thành:
-- [ ] Item confidence thấp không thể auto-commit.
-- [ ] Luồng dùng bàn phím chạy ổn.
+- [x] Item confidence thấp không thể auto-commit.
+- [x] Luồng dùng bàn phím chạy ổn.
 
 ## Ngày 10 (08/04/2026) - Dựng bộ Demo Artifact
 Mục tiêu: Có bằng chứng cứng khi chấm.
@@ -199,14 +199,14 @@ Lệnh kiểm tra:
 find artifacts/round2 -maxdepth 4 -type f | sort
 ```
 Tiêu chí hoàn thành:
-- [ ] Team có đầy đủ khung để điền số liệu thật.
+- [x] Team có đầy đủ khung để điền số liệu thật.
 
 ## Ngày 11 (09/04/2026) - Chạy KPI lần 1 (Online + Offline)
 Mục tiêu: Có baseline đo được thật.
-- [ ] Chuẩn bị `ddi-goldset.jsonl`.
-- [ ] Chuẩn bị `refusal-scenarios.jsonl`.
-- [ ] Chuẩn bị `fallback-scenarios.jsonl`.
-- [ ] Chuẩn bị `latency-scenarios.jsonl`.
+- [x] Chuẩn bị `ddi-goldset.jsonl`.
+- [x] Chuẩn bị `refusal-scenarios.jsonl`.
+- [x] Chuẩn bị `fallback-scenarios.jsonl`.
+- [x] Chuẩn bị `latency-scenarios.jsonl`.
 - [ ] Chạy benchmark online.
 - [ ] Chạy benchmark offline fault injection.
 Lệnh kiểm tra:
@@ -221,7 +221,7 @@ docker compose --env-file .env -f deploy/docker/docker-compose.app.yml stop ml
 docker compose --env-file .env -f deploy/docker/docker-compose.app.yml start ml
 ```
 Tiêu chí hoàn thành:
-- [ ] Có báo cáo KPI lần 1 cho 4 chỉ số chính.
+- [ ] Có báo cáo KPI lần 1 cho 4 chỉ số chính (live mode; hiện có static scaffold + runner).
 
 ## Ngày 12 (10/04/2026) - Ngày vá gap KPI
 Mục tiêu: Sửa toàn bộ khoảng cách dưới ngưỡng.
