@@ -30,7 +30,7 @@ wait_json() {
   local sleep_seconds="${4:-2}"
 
   for ((i=1; i<=attempts; i++)); do
-    if output="$(curl -fsS "${url}" 2>/dev/null)"; then
+    if output="$(curl -fsSL "${url}" 2>/dev/null)"; then
       if [[ "${output}" == *"${pattern}"* ]]; then
         echo "[health] ok ${url}"
         return 0
