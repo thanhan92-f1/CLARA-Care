@@ -900,10 +900,10 @@ class ExternalSourceGateway:
         is_ddi_query = bool(profile.get("is_ddi_query"))
         base_order = (
             [
-                "pubmed",
-                "europepmc",
                 "openfda",
                 "dailymed",
+                "pubmed",
+                "europepmc",
                 "clinicaltrials",
                 "semantic_scholar",
             ]

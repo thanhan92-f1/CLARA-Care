@@ -282,7 +282,7 @@ def test_research_tier2_recovers_with_safe_fallback(monkeypatch: pytest.MonkeyPa
     assert body["model_used"] == "ml-safe-fallback-v1"
     assert body["fallback"] is True
     assert body["policy_action"] == "warn"
-    assert body["fallback_reason"] == "RuntimeError"
+    assert str(body["fallback_reason"]).startswith("RuntimeError")
     assert isinstance(body.get("answer_markdown"), str)
     assert "kết luận nhanh" in body["answer_markdown"].lower()
     assert isinstance(body.get("sources"), list)

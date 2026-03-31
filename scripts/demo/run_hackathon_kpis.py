@@ -140,11 +140,20 @@ def coerce_bool(value: Any) -> bool:
 
 
 def coerce_alerts(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("alerts", "interactions", "items"):
+    for key in ("alerts", "interactions", "items", "ddi_alerts"):
         value = payload.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
     return []
+
+
+def coerce_fallback_used(payload: dict[str, Any]) -> bool:
+    if "fallback_used" in payload:
+        return coerce_bool(payload.get("fallback_used"))
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and "fallback_used" in metadata:
+        return coerce_bool(metadata.get("fallback_used"))
+    return coerce_bool(payload.get("fallback"))
 
 
 def coerce_policy_action(payload: dict[str, Any]) -> str:
@@ -162,7 +171,7 @@ def response_summary_for_log(payload: dict[str, Any]) -> dict[str, Any]:
         "policy_action": payload.get("policy_action"),
         "intent": payload.get("intent"),
         "guard_reason": payload.get("guard_reason"),
-        "fallback_used": payload.get("fallback_used"),
+        "fallback_used": coerce_fallback_used(payload),
         "alert_count": len(alerts),
         "top_severity": max(
             [alert.get("severity") for alert in alerts if isinstance(alert.get("severity"), str)],
@@ -377,7 +386,8 @@ def evaluate_ddi_case(case: dict[str, Any], result: HttpResult) -> dict[str, Any
             for alert in alerts
             if isinstance(alert, dict)
         ]
-    ).lower()
+    )
+    combined_text = f"{combined_text} {result.payload.get('recommendation') or ''}".lower()
     expected_alert = coerce_bool(case.get("expected_alert"))
     expected_min_severity = str(case.get("expected_min_severity") or "none").strip().lower()
     expected_tokens = [str(token).strip().lower() for token in case.get("expected_tokens", [])]
@@ -442,7 +452,7 @@ def evaluate_refusal_case(case: dict[str, Any], result: HttpResult) -> dict[str,
 
 def evaluate_fallback_case(case: dict[str, Any], result: HttpResult) -> dict[str, Any]:
     alerts = coerce_alerts(result.payload)
-    fallback_used = coerce_bool(result.payload.get("fallback_used"))
+    fallback_used = coerce_fallback_used(result.payload)
     source_text = json.dumps(result.payload, ensure_ascii=False).lower()
     expected_sources = [
         str(value).strip().lower() for value in case.get("expected_source_any", [])

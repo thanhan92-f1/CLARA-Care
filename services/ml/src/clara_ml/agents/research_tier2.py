@@ -627,16 +627,21 @@ def _filter_context_for_topic(topic: str, rows: list[dict[str, Any]]) -> list[di
         if primary and primary not in tokens:
             continue
 
-        overlap = 0
-        if primary and primary in tokens:
-            overlap += 1
-        if co_drugs.intersection(tokens):
-            overlap += 1
-        if interaction_terms.intersection(tokens):
-            overlap += 1
-        if overlap < 2:
+        source_name = str(row.get("source") or "").strip().lower()
+        has_primary = bool(primary and primary in tokens)
+        has_codrug = bool(co_drugs.intersection(tokens))
+        has_interaction = bool(interaction_terms.intersection(tokens))
+        trusted_label_source = source_name in {"openfda", "dailymed", "rxnav"}
+
+        # Keep strong DDI rows (primary + co-drug or interaction).
+        if has_primary and (has_codrug or has_interaction):
+            filtered.append(row)
             continue
-        filtered.append(row)
+
+        # Keep authoritative drug-label rows mentioning primary drug,
+        # so we do not zero out evidence when query is specific but corpus is sparse.
+        if has_primary and trusted_label_source:
+            filtered.append(row)
 
     return filtered
 
@@ -963,10 +968,17 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
 
     merged_context = _merge_retrieved_context(rag_result.retrieved_context, deep_pass_contexts)
     filtered_context = _filter_context_for_topic(topic, merged_context)
-    effective_context = (
-        filtered_context if filtered_context or _is_drug_interaction_query(topic) else merged_context
-    )
+    if filtered_context:
+        effective_context = filtered_context
+    elif _is_drug_interaction_query(topic):
+        # For DDI queries, prefer filtered rows; if filter is too strict and returns empty,
+        # gracefully fall back to merged retrieval evidence instead of an empty context.
+        effective_context = merged_context[:10]
+    else:
+        effective_context = merged_context
     citations = _build_citations(topic, effective_context, uploaded_documents)
+    if not citations and merged_context:
+        citations = _build_citations(topic, merged_context[:10], uploaded_documents)
     fallback_used = (
         rag_result.model_used.startswith("local-synth")
         or "fallback" in rag_result.model_used.lower()

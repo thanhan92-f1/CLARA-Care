@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import re
 from time import perf_counter
@@ -22,6 +23,7 @@ from clara_ml.routing import P1RoleIntentRouter
 from clara_ml.streaming.ws import token_stream
 
 app = FastAPI(title="CLARA ML Service", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 prompt_loader = PromptLoader(Path(__file__).resolve().parent / "prompts" / "templates")
 rag_pipeline = RagPipelineP1()
@@ -336,6 +338,7 @@ def _research_fail_soft_payload(
                 "policy_action": "warn",
                 "fallback_used": True,
                 "source_errors": {"upstream": [reason]},
+                "error_detail": reason,
                 "attributions": ["fallback-safe-1"],
                 "research_mode": "fast",
                 "deep_pass_count": 0,
@@ -707,10 +710,15 @@ def research_tier2(payload: dict) -> dict:
             return _ensure_policy_contract(result, default_action="allow")
         return _ensure_policy_contract({"answer": str(result)}, default_action="allow")
     except Exception as exc:  # pragma: no cover - defensive fail-soft guard
+        detail = str(exc).strip()
+        reason = exc.__class__.__name__
+        if detail:
+            reason = f"{reason}:{detail[:180]}"
+        logger.exception("research_tier2 upstream failure: %s", reason)
         return _research_fail_soft_payload(
             query=query,
             role_hint=role_hint,
-            reason=exc.__class__.__name__,
+            reason=reason,
         )
 
 

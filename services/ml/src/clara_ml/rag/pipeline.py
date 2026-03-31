@@ -68,6 +68,8 @@ class RagPipelineP1:
                     if deepseek_timeout_seconds is None
                     else deepseek_timeout_seconds
                 ),
+                retries_per_base=settings.deepseek_retries_per_base,
+                retry_backoff_seconds=settings.deepseek_retry_backoff_seconds,
             )
 
     @staticmethod

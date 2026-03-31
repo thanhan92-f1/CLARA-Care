@@ -50,6 +50,18 @@ class Settings(BaseSettings):
         default=30.0,
         validation_alias=AliasChoices("DEEPSEEK_TIMEOUT_SECONDS", "DEEPSEEK_TIMEOUT"),
     )
+    deepseek_retries_per_base: int = Field(
+        default=1,
+        validation_alias="DEEPSEEK_RETRIES_PER_BASE",
+        ge=0,
+        le=5,
+    )
+    deepseek_retry_backoff_seconds: float = Field(
+        default=0.35,
+        validation_alias="DEEPSEEK_RETRY_BACKOFF_SECONDS",
+        ge=0.0,
+        le=5.0,
+    )
     deepseek_audio_model: str = Field(
         default="whisper-1",
         validation_alias=AliasChoices(
