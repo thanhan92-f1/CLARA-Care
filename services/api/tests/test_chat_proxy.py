@@ -54,8 +54,12 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
     assert body["model_used"] == "deepseek-v3.2"
     assert body["ml"]["retrieved_ids"] == ["doc-1"]
     assert body["attribution"]["channel"] == "chat"
+    assert body["attribution"]["mode"] == "evidence_rag"
     assert body["attribution"]["citation_count"] == 0
     assert body["attribution"]["source_count"] >= 4
+    assert isinstance(body["attribution"]["source_used"], list)
+    assert body["attribution"]["source_errors"] == {}
+    assert body["attribution"]["fallback_used"] is False
     assert isinstance(body["attributions"], list)
     assert body["attributions"][0]["channel"] == "chat"
 
@@ -106,7 +110,9 @@ def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
     assert "quá tải tạm thời" in body["reply"]
     assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")
     assert body["attribution"]["channel"] == "chat"
+    assert body["attribution"]["mode"] == "safe_mode"
     assert body["attribution"]["citation_count"] == 0
+    assert body["attribution"]["fallback_used"] is True
     assert isinstance(body["attributions"], list)
     assert body["attributions"][0]["channel"] == "chat"
 
@@ -181,7 +187,7 @@ def test_chat_recovers_with_safe_mode_retry_when_primary_5xx(monkeypatch) -> Non
     assert body["reply"].startswith("Hệ thống truy xuất chuyên sâu đang bận")
     assert body["model_used"] == "deepseek-v3.2"
     assert body["ml"]["safe_mode_used"] is True
-    assert body["ml"]["api_primary_error"].startswith("ml_upstream_5xx:")
+    assert body["ml"]["fallback_reason"].startswith("ml_upstream_5xx:")
     assert call_count["count"] == 2
     assert len(captured_payloads) == 2
 

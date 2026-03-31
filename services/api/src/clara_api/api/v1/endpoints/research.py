@@ -11,15 +11,23 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
+from clara_api.core.attribution import (
+    attach_attribution,
+    build_attribution,
+    normalize_source_errors,
+    normalize_source_used,
+)
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.models import (
     KnowledgeDocument,
     KnowledgeSource,
-    Query as QueryModel,
     SessionModel,
     SystemSetting,
     User,
+)
+from clara_api.db.models import (
+    Query as QueryModel,
 )
 from clara_api.db.session import get_db
 from clara_api.schemas import (
@@ -658,6 +666,93 @@ def _normalize_tier2_response(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["telemetry"] = telemetry
 
     return normalized
+
+
+def _extract_research_source_used(normalized: dict[str, Any]) -> list[str]:
+    metadata_obj = (
+        normalized.get("metadata")
+        if isinstance(normalized.get("metadata"), dict)
+        else {}
+    )
+    telemetry_obj = (
+        normalized.get("telemetry")
+        if isinstance(normalized.get("telemetry"), dict)
+        else {}
+    )
+
+    source_used = normalize_source_used(
+        normalized.get("source_used") or metadata_obj.get("source_used") or []
+    )
+    source_attempts = telemetry_obj.get("source_attempts")
+    if isinstance(source_attempts, list):
+        for attempt in source_attempts:
+            if not isinstance(attempt, dict):
+                continue
+            for key in ("source", "provider", "connector", "name"):
+                raw_value = attempt.get(key)
+                if raw_value is None:
+                    continue
+                normalized_value = str(raw_value).strip().lower()
+                if normalized_value and normalized_value not in source_used:
+                    source_used.append(normalized_value)
+                break
+
+    citations = normalized.get("citations")
+    if isinstance(citations, list):
+        for citation in citations:
+            if isinstance(citation, str):
+                normalized_value = citation.strip().lower()
+            elif isinstance(citation, dict):
+                normalized_value = str(
+                    citation.get("source") or citation.get("id") or citation.get("title") or ""
+                ).strip().lower()
+            else:
+                normalized_value = ""
+            if normalized_value and normalized_value not in source_used:
+                source_used.append(normalized_value)
+
+    return source_used
+
+
+def _attach_research_attribution(normalized: dict[str, Any]) -> dict[str, Any]:
+    metadata_obj = (
+        normalized.get("metadata")
+        if isinstance(normalized.get("metadata"), dict)
+        else {}
+    )
+    source_used = _extract_research_source_used(normalized)
+    source_errors = normalize_source_errors(
+        normalized.get("source_errors") or metadata_obj.get("source_errors") or {}
+    )
+    mode = str(
+        normalized.get("research_mode")
+        or metadata_obj.get("research_mode")
+        or "fast"
+    ).strip().lower()
+    if mode not in {"fast", "deep"}:
+        mode = "fast"
+
+    sources = [
+        {
+            "id": source_id,
+            "name": source_id.replace("_", " ").title(),
+            "type": "retrieval",
+            "category": "research",
+        }
+        for source_id in source_used
+    ]
+    fallback_used = bool(normalized.get("fallback") or normalized.get("fallback_reason"))
+
+    attribution = build_attribution(
+        channel="research",
+        mode=mode,
+        sources=sources,
+        citations_payload=normalized.get("citations"),
+        source_used=source_used,
+        source_errors=source_errors,
+        fallback_used=fallback_used,
+    )
+    return attach_attribution(normalized, attribution=attribution)
 
 
 _SOURCE_HUB_CATALOG: tuple[SourceHubCatalogEntry, ...] = (
@@ -1436,7 +1531,8 @@ def research_tier2(
         upstream_payload,
         fail_soft_payload=_research_tier2_fallback_payload(payload),
     )
-    return _normalize_tier2_response(response)
+    normalized = _normalize_tier2_response(response)
+    return _attach_research_attribution(normalized)
 
 
 @router.get("/source-hub/catalog")

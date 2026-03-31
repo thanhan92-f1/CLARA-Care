@@ -6,6 +6,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from clara_api.core.attribution import (
+    attach_attribution,
+    build_attribution,
+    normalize_source_errors,
+    normalize_source_used,
+)
 from clara_api.core.config import get_settings
 from clara_api.core.control_tower import get_control_tower_config_service
 from clara_api.core.flow import get_chat_flow_event_persister
@@ -48,37 +54,6 @@ def _is_general_greeting(message: str) -> bool:
     return any(hint in normalized for hint in _GREETING_HINTS)
 
 
-def _normalize_citation_rows(citations_payload: Any) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    if not isinstance(citations_payload, list):
-        return rows
-
-    for idx, item in enumerate(citations_payload, start=1):
-        if isinstance(item, str):
-            source = item.strip()
-            if source:
-                rows.append({"source": source})
-            continue
-
-        if not isinstance(item, dict):
-            continue
-
-        raw_source = item.get("source") or item.get("title") or item.get("id")
-        source = str(raw_source).strip() if raw_source is not None else ""
-        if not source:
-            source = f"reference-{idx}"
-        citation: dict[str, str] = {"source": source}
-
-        raw_url = item.get("url") or item.get("link")
-        if raw_url is not None:
-            url = str(raw_url).strip()
-            if url:
-                citation["url"] = url
-
-        rows.append(citation)
-    return rows
-
-
 def _build_chat_attribution(
     ml_response: dict[str, Any],
     rag_sources: list[dict[str, Any]],
@@ -102,14 +77,36 @@ def _build_chat_attribution(
             item["category"] = raw_category.strip()
         active_sources.append(item)
 
-    citations = _normalize_citation_rows(ml_response.get("citations"))
-    return {
-        "channel": "chat",
-        "source_count": len(active_sources),
-        "citation_count": len(citations),
-        "sources": active_sources,
-        "citations": citations,
-    }
+    context_debug = ml_response.get("context_debug")
+    context_debug_obj = context_debug if isinstance(context_debug, dict) else {}
+    raw_source_errors = (
+        ml_response.get("source_errors")
+        or context_debug_obj.get("source_errors")
+        or {}
+    )
+    source_errors = normalize_source_errors(raw_source_errors)
+    source_used = normalize_source_used(
+        ml_response.get("source_used")
+        or context_debug_obj.get("source_used")
+        or []
+    )
+    fallback_used = bool(
+        ml_response.get("safe_mode_used")
+        or ml_response.get("fallback_reason")
+        or str(ml_response.get("model_used") or "").startswith("api-safe-")
+        or str(ml_response.get("model_used") or "").startswith("api-local-synth-")
+    )
+    mode = "safe_mode" if fallback_used else "evidence_rag"
+
+    return build_attribution(
+        channel="chat",
+        mode=mode,
+        sources=active_sources,
+        citations_payload=ml_response.get("citations"),
+        source_used=source_used,
+        source_errors=source_errors,
+        fallback_used=fallback_used,
+    )
 
 
 def _safe_chat_fallback(message: str, role: str, reason: str) -> dict[str, Any]:
@@ -330,9 +327,7 @@ def chat_placeholder(
         ml_response=ml_response,
     )
     attribution = _build_chat_attribution(ml_response, rag_sources)
-    attributions = [attribution]
-
-    return {
+    payload = {
         "message": payload.message,
         "reply": reply,
         "role": resolved_role,
@@ -341,8 +336,6 @@ def chat_placeholder(
         "emergency": ml_response.get("emergency"),
         "model_used": ml_response.get("model_used"),
         "retrieved_ids": ml_response.get("retrieved_ids", []),
-        "attributions": attributions,
-        "attribution": attribution,
-        "citations": attribution["citations"],
         "ml": ml_response,
     }
+    return attach_attribution(payload, attribution=attribution)

@@ -96,6 +96,92 @@ def test_cabinet_lifecycle() -> None:
     assert delete_response.json()["deleted"] is True
 
 
+def test_update_cabinet_item_put_alias_and_validation() -> None:
+    token = _login("cabinet-update-user@example.com")
+    add_response = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "drug_name": "Metformin",
+            "dosage": "500mg",
+            "quantity": 10,
+            "source": "manual",
+        },
+    )
+    assert add_response.status_code == 200
+    item_id = add_response.json()["id"]
+
+    empty_update_response = client.patch(
+        f"/api/v1/careguard/cabinet/items/{item_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={},
+    )
+    assert empty_update_response.status_code == 400
+    assert "Payload cập nhật rỗng" in empty_update_response.json()["detail"]
+
+    put_response = client.put(
+        f"/api/v1/careguard/cabinet/items/{item_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "quantity": 21,
+            "source": "imported",
+            "note": "đã chỉnh sửa qua endpoint PUT",
+        },
+    )
+    assert put_response.status_code == 200
+    body = put_response.json()
+    assert body["id"] == item_id
+    assert body["quantity"] == 21
+    assert body["source"] == "imported"
+    assert body["note"] == "đã chỉnh sửa qua endpoint PUT"
+
+
+def test_update_cabinet_item_rejects_duplicate_drug_name() -> None:
+    token = _login("cabinet-update-duplicate@example.com")
+    add_warfarin = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"drug_name": "Warfarin", "source": "manual"},
+    )
+    add_metformin = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"drug_name": "Metformin", "source": "manual"},
+    )
+    assert add_warfarin.status_code == 200
+    assert add_metformin.status_code == 200
+
+    metformin_item_id = add_metformin.json()["id"]
+    duplicate_response = client.patch(
+        f"/api/v1/careguard/cabinet/items/{metformin_item_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"drug_name": "Warfarin"},
+    )
+    assert duplicate_response.status_code == 409
+    assert "Thuốc đã tồn tại" in duplicate_response.json()["detail"]
+
+
+def test_update_cabinet_item_isolated_by_user() -> None:
+    owner_token = _login("cabinet-update-owner@example.com")
+    outsider_token = _login("cabinet-update-outsider@example.com")
+
+    add_response = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"drug_name": "Aspirin", "source": "manual"},
+    )
+    assert add_response.status_code == 200
+    item_id = add_response.json()["id"]
+
+    outsider_update_response = client.patch(
+        f"/api/v1/careguard/cabinet/items/{item_id}",
+        headers={"Authorization": f"Bearer {outsider_token}"},
+        json={"dosage": "100mg"},
+    )
+    assert outsider_update_response.status_code == 404
+    assert "Không tìm thấy thuốc" in outsider_update_response.json()["detail"]
+
+
 def test_scan_and_import_detection() -> None:
     token = _login("scan-user@example.com")
     scan_response = client.post(

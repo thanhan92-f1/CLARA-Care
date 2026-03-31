@@ -8,18 +8,29 @@ Workflow: `.github/workflows/branch-protection-sync.yml`
 - Bắt buộc review PR và code owner review.
 - Chặn force-push và xóa branch `main`.
 
-## Policy áp dụng
+## Policy ap dung
 
 - Required status checks:
   - `required-ci-gates`
 - Require pull request trước khi merge.
-- Require tối thiểu 1 approving review.
+- Require toi thieu 2 approving reviews.
 - Dismiss stale reviews khi có commit mới.
 - Require code owner review.
+- Require approval cho commit push cuoi cung (`require_last_push_approval=true`).
 - Require conversation resolution.
 - Enforce rule với cả admin.
 - Disallow force pushes.
 - Disallow deletions.
+
+### CI gate policy (blocking vs advisory)
+
+`required-ci-gates` gom 2 lop:
+
+- Blocking core checks (luon bat buoc): `quality`, `api-tests`, `ml-tests`, `web-lint-build`.
+- Hardening checks (`security-audit`, `docker-compose-smoke`, `container-scan`):
+  - `push/workflow_dispatch`: blocking.
+  - `pull_request`: advisory mac dinh.
+  - `pull_request -> main`: co the nang thanh blocking bang repo variable `CI_STRICT_PR_HARDENING=true`.
 
 ## Cách chạy
 
@@ -30,7 +41,7 @@ Workflow: `.github/workflows/branch-protection-sync.yml`
 3. Run workflow với:
    - `branch`: `main`
    - `required_checks`: `required-ci-gates`
-   - `required_approvals`: `1` (có thể tăng 2-3 cho nhánh production)
+   - `required_approvals`: `2`
    - `require_code_owner_reviews`: `true`
    - `dry_run`: `true` để xem payload trước.
 4. Chạy lại với `dry_run=false` để áp rule thật.

@@ -16,7 +16,7 @@ on:
       required_approvals:
         description: "Required approving review count (0-6)"
         required: true
-        default: "1"
+        default: "2"
         type: string
       require_code_owner_reviews:
         description: "Require code owner reviews"
@@ -86,7 +86,7 @@ jobs:
           fi
           approvals_raw="${INPUT_REQUIRED_APPROVALS:-1}"
           if [ "${EVENT_NAME}" = "schedule" ]; then
-            approvals_raw="1"
+            approvals_raw="2"
           fi
           code_owner_raw="${INPUT_REQUIRE_CODE_OWNER_REVIEWS:-true}"
           if [ "${EVENT_NAME}" = "schedule" ]; then
@@ -163,7 +163,7 @@ jobs:
                 dismiss_stale_reviews: true,
                 require_code_owner_reviews: requireCodeOwnerReviews,
                 required_approving_review_count: requiredApprovals,
-                require_last_push_approval: false,
+                require_last_push_approval: true,
               },
               restrictions: null,
               allow_force_pushes: false,

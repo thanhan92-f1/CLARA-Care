@@ -552,6 +552,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_REF: ${{ github.ref }}
+          EVENT_BASE_REF: ${{ github.base_ref }}
+          STRICT_PR_HARDENING: ${{ vars.CI_STRICT_PR_HARDENING || 'false' }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           API_TESTS_RESULT: ${{ needs.api-tests.result }}
           ML_TESTS_RESULT: ${{ needs.ml-tests.result }}
@@ -586,18 +588,42 @@ jobs:
 
           status=0
           advisory_notes=()
+          policy_mode="core-only"
+
+          strict_pr_hardening="false"
+          case "$(echo "${STRICT_PR_HARDENING:-false}" | tr '[:upper:]' '[:lower:]')" in
+            1|true|yes|y|on)
+              strict_pr_hardening="true"
+              ;;
+          esac
+
+          is_pr_to_main="false"
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "${EVENT_BASE_REF:-}" = "main" ]; then
+            is_pr_to_main="true"
+          fi
 
           check_required_job "quality" "$QUALITY_RESULT" || status=1
           check_required_job "api-tests" "$API_TESTS_RESULT" || status=1
           check_required_job "ml-tests" "$ML_TESTS_RESULT" || status=1
           check_required_job "web-lint-build" "$WEB_RESULT" || status=1
 
+          should_block_hardening="false"
           if [ "$EVENT_NAME" != "pull_request" ]; then
+            should_block_hardening="true"
+            policy_mode="production-blocking"
+          elif [ "$is_pr_to_main" = "true" ] && [ "$strict_pr_hardening" = "true" ]; then
+            should_block_hardening="true"
+            policy_mode="strict-pr-blocking"
+          else
+            policy_mode="advisory-pr"
+          fi
+
+          if [ "$should_block_hardening" = "true" ]; then
             check_required_job "security-audit" "$SECURITY_RESULT" || status=1
             check_required_job "docker-compose-smoke" "$DOCKER_SMOKE_RESULT" || status=1
             check_required_job "container-scan" "$CONTAINER_SCAN_RESULT" || status=1
           else
-            echo "Pull request mode: security-audit, docker-compose-smoke, container-scan are advisory."
+            echo "Advisory mode: security-audit, docker-compose-smoke, container-scan are advisory."
             for advisory in \
               "security-audit:$SECURITY_RESULT" \
               "docker-compose-smoke:$DOCKER_SMOKE_RESULT" \
@@ -616,6 +642,9 @@ jobs:
             echo ""
             echo "- Event: \`${EVENT_NAME}\`"
             echo "- Ref: \`${EVENT_REF}\`"
+            echo "- Base ref: \`${EVENT_BASE_REF}\`"
+            echo "- Policy mode: \`${policy_mode}\`"
+            echo "- Strict PR hardening: \`${strict_pr_hardening}\`"
             echo "- quality: \`${QUALITY_RESULT}\`"
             echo "- api-tests: \`${API_TESTS_RESULT}\`"
             echo "- ml-tests: \`${ML_TESTS_RESULT}\`"

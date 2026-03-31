@@ -55,6 +55,8 @@ export type AddCabinetItemPayload = {
   note?: string;
 };
 
+export type UpdateCabinetItemPayload = Partial<AddCabinetItemPayload>;
+
 type AutoDdiRequest = {
   symptoms?: string[];
   labs?: Record<string, number | string>;
@@ -68,6 +70,14 @@ export async function getCabinet(): Promise<CabinetResponse> {
 
 export async function addCabinetItem(payload: AddCabinetItemPayload): Promise<CabinetItem> {
   const response = await api.post<CabinetItem>("/careguard/cabinet/items", payload);
+  return response.data;
+}
+
+export async function updateCabinetItem(
+  itemId: number,
+  payload: UpdateCabinetItemPayload
+): Promise<CabinetItem> {
+  const response = await api.patch<CabinetItem>(`/careguard/cabinet/items/${itemId}`, payload);
   return response.data;
 }
 

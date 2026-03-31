@@ -75,6 +75,16 @@ def test_new_proxy_endpoints_success(
         assert response_payload["attribution"]["mode"] == "local_only"
         assert isinstance(response_payload["attributions"], list)
         assert response_payload["attributions"][0]["channel"] == "careguard"
+    elif api_path == "/api/v1/research/tier2":
+        assert response_payload["ok"] is True
+        assert response_payload["attribution"]["channel"] == "research"
+        assert response_payload["attribution"]["mode"] == "fast"
+        assert response_payload["attribution"]["citation_count"] == 0
+        assert isinstance(response_payload["attribution"]["source_used"], list)
+        assert response_payload["attribution"]["source_errors"] == {}
+        assert response_payload["attribution"]["fallback_used"] is False
+        assert isinstance(response_payload["attributions"], list)
+        assert response_payload["attributions"][0]["channel"] == "research"
     else:
         assert response_payload == upstream_payload
     assert str(captured["url"]).endswith(ml_path)
@@ -191,7 +201,11 @@ def test_research_tier2_forwards_uploaded_documents(monkeypatch: pytest.MonkeyPa
     )
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    response_payload = response.json()
+    assert response_payload["ok"] is True
+    assert response_payload["attribution"]["channel"] == "research"
+    assert isinstance(response_payload["attributions"], list)
+    assert isinstance(response_payload["attribution"]["source_used"], list)
     assert str(captured["url"]).endswith("/v1/research/tier2")
 
     forwarded_payload = captured["json"]
@@ -230,6 +244,9 @@ def test_research_tier2_returns_fail_soft_payload_with_retry(
     assert payload["metadata"]["deep_pass_count"] == 0
     assert payload["citations"] == []
     assert payload["fallback_reason"] == "ConnectError"
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["fallback_used"] is True
+    assert payload["attribution"]["mode"] == "fast"
     assert call_count["count"] == 2
 
 
@@ -259,6 +276,9 @@ def test_research_tier2_fail_soft_keeps_deep_mode_flags(
     assert payload["metadata"]["research_mode"] == "deep"
     assert payload["metadata"]["deep_pass_count"] == 0
     assert payload["fallback_reason"] == "ConnectError"
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["fallback_used"] is True
+    assert payload["attribution"]["mode"] == "deep"
     assert call_count["count"] == 2
 
 
@@ -370,6 +390,10 @@ def test_research_tier2_normalize_preserves_new_telemetry_fields(
     assert telemetry["crawl_summary"]["pages_crawled"] == 2
     assert telemetry["custom_field"] == {"keep": True}
     assert payload["source_errors"] == {"openfda": ["timeout"]}
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["mode"] == "deep"
+    assert payload["attribution"]["source_errors"] == {"openfda": ["timeout"]}
+    assert set(payload["attribution"]["source_used"]) >= {"pubmed", "openfda"}
     assert isinstance(payload.get("flow_events"), list)
     assert payload["flow_events"][0]["stage"] == "deep_retrieval_pass"
 
@@ -437,3 +461,5 @@ def test_research_tier2_exposes_telemetry_details_from_context_debug(
     assert telemetry["scores"]["relevance"] == 0.91
     assert telemetry["source_reasoning"][0]["source"] == "pubmed"
     assert telemetry["errors"] == {"openfda": ["timeout"]}
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["source_errors"] == {"openfda": ["timeout"]}

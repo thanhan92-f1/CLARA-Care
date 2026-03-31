@@ -12,6 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
+from clara_api.core.attribution import (
+    attach_attribution,
+    build_attribution,
+    normalize_source_errors,
+    normalize_source_used,
+)
 from clara_api.core.config import get_settings
 from clara_api.core.consent import ensure_medical_disclaimer_consent
 from clara_api.core.control_tower import get_control_tower_config_service
@@ -232,37 +238,6 @@ def _to_item_response(item: MedicineItem) -> MedicineCabinetItemResponse:
     )
 
 
-def _normalize_citation_rows(citations_payload: Any) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    if not isinstance(citations_payload, list):
-        return rows
-
-    for idx, item in enumerate(citations_payload, start=1):
-        if isinstance(item, str):
-            source = item.strip()
-            if source:
-                rows.append({"source": source})
-            continue
-
-        if not isinstance(item, dict):
-            continue
-
-        raw_source = item.get("source") or item.get("title") or item.get("id")
-        source = str(raw_source).strip() if raw_source is not None else ""
-        if not source:
-            source = f"reference-{idx}"
-        citation: dict[str, str] = {"source": source}
-
-        raw_url = item.get("url") or item.get("link")
-        if raw_url is not None:
-            url = str(raw_url).strip()
-            if url:
-                citation["url"] = url
-
-        rows.append(citation)
-    return rows
-
-
 def _default_careguard_sources(external_ddi_enabled: bool) -> list[dict[str, str]]:
     sources = [dict(_CAREGUARD_SOURCE_CATALOG["local_rules"])]
     if external_ddi_enabled:
@@ -273,42 +248,6 @@ def _default_careguard_sources(external_ddi_enabled: bool) -> list[dict[str, str
             ]
         )
     return sources
-
-
-def _normalize_source_used(raw_source_used: Any) -> list[str]:
-    if isinstance(raw_source_used, str):
-        normalized = raw_source_used.strip().lower()
-        return [normalized] if normalized else []
-    if not isinstance(raw_source_used, list):
-        return []
-
-    source_used: list[str] = []
-    for item in raw_source_used:
-        if not isinstance(item, str):
-            continue
-        normalized = item.strip().lower()
-        if normalized and normalized not in source_used:
-            source_used.append(normalized)
-    return source_used
-
-
-def _normalize_source_errors(raw_source_errors: Any) -> dict[str, list[str]]:
-    if not isinstance(raw_source_errors, dict):
-        return {}
-
-    source_errors: dict[str, list[str]] = {}
-    for source_name, values in raw_source_errors.items():
-        source_key = str(source_name).strip().lower()
-        if not source_key:
-            continue
-        if isinstance(values, list):
-            normalized_values = [str(value).strip() for value in values if str(value).strip()]
-        elif values is None:
-            normalized_values = []
-        else:
-            normalized_values = [str(values).strip()] if str(values).strip() else []
-        source_errors[source_key] = normalized_values
-    return source_errors
 
 
 def _resolve_careguard_sources(
@@ -343,33 +282,28 @@ def _attach_careguard_attribution(
     external_ddi_enabled: bool,
 ) -> dict[str, Any]:
     response = dict(payload)
-    citations = _normalize_citation_rows(response.get("citations"))
     metadata = response.get("metadata")
     metadata_obj = metadata if isinstance(metadata, dict) else {}
-    source_used = _normalize_source_used(metadata_obj.get("source_used"))
-    source_errors = _normalize_source_errors(metadata_obj.get("source_errors"))
+    source_used = normalize_source_used(metadata_obj.get("source_used"))
+    source_errors = normalize_source_errors(metadata_obj.get("source_errors"))
     sources = _resolve_careguard_sources(
         source_used=source_used,
         external_ddi_enabled=external_ddi_enabled,
     )
     has_external_source = any(source.get("id") not in {"local_rules"} for source in sources)
     mode = "external_plus_local" if has_external_source else "local_only"
+    fallback_used = bool(response.get("fallback_used") or metadata_obj.get("fallback_used"))
 
-    if "citations" not in response:
-        response["citations"] = citations
-    attribution = {
-        "channel": "careguard",
-        "mode": mode,
-        "source_count": len(sources),
-        "citation_count": len(citations),
-        "sources": sources,
-        "source_used": source_used,
-        "source_errors": source_errors,
-        "citations": citations,
-    }
-    response["attributions"] = [attribution]
-    response["attribution"] = attribution
-    return response
+    attribution = build_attribution(
+        channel="careguard",
+        mode=mode,
+        sources=sources,
+        citations_payload=response.get("citations"),
+        source_used=source_used,
+        source_errors=source_errors,
+        fallback_used=fallback_used,
+    )
+    return attach_attribution(response, attribution=attribution)
 
 
 def _require_user(
@@ -670,6 +604,7 @@ def add_cabinet_item(
 
 
 @router.patch("/cabinet/items/{item_id}", response_model=MedicineCabinetItemResponse)
+@router.put("/cabinet/items/{item_id}", response_model=MedicineCabinetItemResponse)
 def update_cabinet_item(
     item_id: int,
     payload: MedicineCabinetItemUpdate,
