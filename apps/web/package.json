@@ -12,7 +12,7 @@
     "axios": "^1.7.4",
     "html-to-image": "^1.11.13",
     "mermaid": "^11.2.1",
-    "next": "14.2.35",
+    "next": "16.2.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-markdown": "^9.0.1",
