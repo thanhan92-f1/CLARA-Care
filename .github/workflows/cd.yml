@@ -138,13 +138,20 @@ jobs:
           wait_http "http://127.0.0.1:${APP_API_PORT:-8100}/api/v1/health" "api-v1-health"
           wait_http "http://127.0.0.1:${APP_ML_PORT:-8110}/health" "ml-health"
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/" "web-home"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research" "web-research"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/deepdive" "web-research-deepdive"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/analyze" "web-research-analyze"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/citations" "web-research-citations"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/details" "web-research-details"
 
       - name: Upload staging smoke responses
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: staging-smoke-${{ github.run_id }}
-          path: /tmp/*health*.json
+          path: |
+            /tmp/*health*.json
+            /tmp/web-*.json
           if-no-files-found: ignore
 
       - name: Upload staging logs on failure
@@ -224,6 +231,11 @@ jobs:
           wait_http "http://127.0.0.1:${APP_API_PORT:-8100}/api/v1/health" "prod-api-v1-health"
           wait_http "http://127.0.0.1:${APP_ML_PORT:-8110}/health" "prod-ml-health"
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/" "prod-web-home"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research" "prod-web-research"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/deepdive" "prod-web-research-deepdive"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/analyze" "prod-web-research-analyze"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/citations" "prod-web-research-citations"
+          wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/details" "prod-web-research-details"
 
       - name: Upload production smoke responses
         if: always()

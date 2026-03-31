@@ -1,164 +1,101 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import HistoryPanel from "@/components/research/history-panel";
-import { useResearchFlow } from "@/components/research/hooks/use-research-flow";
-import { useResearchKnowledgeSources } from "@/components/research/hooks/use-research-knowledge-sources";
-import { useResearchUploads } from "@/components/research/hooks/use-research-uploads";
-import { ROLE_LABELS, SUGGESTED_QUERIES } from "@/components/research/lib/research-page-constants";
+import Link from "next/link";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import ResearchLabNav from "@/components/research/research-lab-nav";
+import ResearchLatestTier2 from "@/components/research/research-latest-tier2";
 import {
-  conversationLabel,
   createConversationItem,
   createConversationItemFromPersisted,
-  formatHistoryTime,
-  resolveFlowModeFromResult
+  formatHistoryTime
 } from "@/components/research/lib/research-page-helpers";
-import { ResearchMainCard, ResearchWorkspaceHeader } from "@/components/research/lib/research-page-sections";
-import { ConversationItem, FlowVisibilityMode, ResearchResult } from "@/components/research/lib/research-page-types";
-import ResearchRightRail from "@/components/research/right-rail";
+import { ConversationItem, ResearchResult } from "@/components/research/lib/research-page-types";
 import PageShell from "@/components/ui/page-shell";
 import { UserRole, getRole } from "@/lib/auth-store";
 import { ChatResponse, getChatIntentDebug, getChatReply } from "@/lib/chat";
 import api from "@/lib/http-client";
 import {
   ResearchExecutionMode,
-  ResearchFlowEvent,
-  ResearchFlowStage,
   ResearchTier,
-  Tier2Citation,
-  Tier2Step,
   createResearchConversation,
   listResearchConversations,
   normalizeResearchTier2,
   runResearchTier2
 } from "@/lib/research";
 
+const QUICK_LINKS: Array<{ href: string; label: string; description: string }> = [
+  {
+    href: "/research/deepdive",
+    label: "Deepdive",
+    description: "Luồng nghiên cứu chuyên sâu với deep mode và telemetry." 
+  },
+  {
+    href: "/research/analyze",
+    label: "Analyze",
+    description: "Đọc verification, flow và quality signal của kết quả gần nhất."
+  },
+  {
+    href: "/research/citations",
+    label: "Citations",
+    description: "Tập trung vào nguồn tham chiếu, link và snippet bằng chứng."
+  },
+  {
+    href: "/research/details",
+    label: "Details",
+    description: "Xem metadata/routing/debug chi tiết cho phiên gần nhất."
+  }
+];
+
 export default function ResearchPage() {
   const [role, setRole] = useState<UserRole>("normal");
   const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier1");
   const [selectedResearchMode, setSelectedResearchMode] = useState<ResearchExecutionMode>("fast");
   const [query, setQuery] = useState("");
-  const [lastQuery, setLastQuery] = useState("");
-  const [result, setResult] = useState<ResearchResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
   const [history, setHistory] = useState<ConversationItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const flow = useResearchFlow();
-  const uploads = useResearchUploads({
-    onBeforeUpload: () => {
-      setError("");
-    }
-  });
-  const sources = useResearchKnowledgeSources();
-
-  const isDev = process.env.NODE_ENV !== "production";
-  const roleLabel = useMemo(() => ROLE_LABELS[role] ?? ROLE_LABELS.normal, [role]);
-
-  const activeConversation = useMemo(
-    () => history.find((item) => item.id === activeConversationId) ?? null,
-    [history, activeConversationId]
-  );
-
-  const activeTier2Result = useMemo(() => {
-    if (activeConversation?.result.tier === "tier2") return activeConversation.result;
-    if (result?.tier === "tier2") return result;
-    return null;
-  }, [activeConversation, result]);
-
-  const evidenceCitations = useMemo<Tier2Citation[]>(() => activeTier2Result?.citations ?? [], [activeTier2Result]);
-  const evidenceSteps = useMemo<Tier2Step[]>(() => activeTier2Result?.steps ?? [], [activeTier2Result]);
-  const activeTelemetry = useMemo(
-    () =>
-      activeTier2Result?.telemetry ?? {
-        keywords: [],
-        searchPlan: {
-          keywords: [],
-          subqueries: [],
-          connectors: []
-        },
-        sourceAttempts: [],
-        indexSummary: {},
-        crawlSummary: {
-          domains: []
-        },
-        docs: [],
-        scores: [],
-        sourceReasoning: [],
-        errors: []
-      },
-    [activeTier2Result]
-  );
-
-  const persistedFlowStages = useMemo<ResearchFlowStage[]>(() => activeTier2Result?.flowStages ?? [], [activeTier2Result]);
-  const persistedFlowEvents = useMemo<ResearchFlowEvent[]>(() => activeTier2Result?.flowEvents ?? [], [activeTier2Result]);
-  const persistedFlowMode = useMemo<FlowVisibilityMode>(() => {
-    if (!activeTier2Result) return "idle";
-    return resolveFlowModeFromResult(activeTier2Result);
-  }, [activeTier2Result]);
-
-  const timelineStages = isSubmitting
-    ? flow.liveFlowStages
-    : persistedFlowStages.length
-      ? persistedFlowStages
-      : flow.liveFlowStages;
-  const timelineEvents = isSubmitting
-    ? flow.liveFlowEvents
-    : persistedFlowEvents.length
-      ? persistedFlowEvents
-      : flow.liveFlowEvents;
-  const timelineMode = isSubmitting ? flow.flowMode : persistedFlowMode !== "idle" ? persistedFlowMode : flow.flowMode;
-
-  const historyItems = useMemo(
-    () =>
-      history.map((item) => ({
-        id: item.id,
-        label: conversationLabel(item),
-        timestamp: formatHistoryTime(item.createdAt),
-        tier: item.result.tier,
-        active: item.id === activeConversationId
-      })),
-    [history, activeConversationId]
-  );
+  const [lastResult, setLastResult] = useState<ResearchResult | null>(null);
 
   useEffect(() => {
     setRole(getRole());
   }, []);
 
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
 
     const loadHistory = async () => {
       try {
-        const rows = await listResearchConversations(80);
-        if (isCancelled) return;
+        const rows = await listResearchConversations(50);
+        if (cancelled) return;
         const items = rows.map((row) => createConversationItemFromPersisted(row));
         setHistory(items);
-        if (items.length === 0) return;
-        const latest = items[0];
-        setActiveConversationId(latest.id);
-        setLastQuery(latest.query);
-        setResult(latest.result);
-        setSelectedTier(latest.result.tier);
-      } catch (historyError) {
-        if (isCancelled) return;
-        setError(
-          historyError instanceof Error
-            ? `Không thể tải lịch sử hội thoại từ database: ${historyError.message}`
-            : "Không thể tải lịch sử hội thoại từ database."
-        );
+        if (!items.length) return;
+        setActiveConversationId(items[0].id);
+        setLastResult(items[0].result);
+        setSelectedTier(items[0].result.tier);
+      } catch (cause) {
+        if (cancelled) return;
+        setError(cause instanceof Error ? cause.message : "Không thể tải lịch sử research.");
       }
     };
 
     void loadHistory();
     return () => {
-      isCancelled = true;
+      cancelled = true;
     };
   }, []);
+
+  const activeConversation = useMemo(
+    () => history.find((item) => item.id === activeConversationId) ?? null,
+    [history, activeConversationId]
+  );
+
+  const latestTier2 = useMemo(
+    () => history.find((item) => item.result.tier === "tier2") ?? null,
+    [history]
+  );
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -167,54 +104,33 @@ export default function ResearchPage() {
 
     setError("");
     setIsSubmitting(true);
-    setLastQuery(message);
 
     try {
       let nextResult: ResearchResult;
-
       if (selectedTier === "tier1") {
-        flow.resetFlow();
-
         const response = await api.post<ChatResponse>("/chat", { message });
         const answer = getChatReply(response.data);
         if (!answer) throw new Error("Chưa có nội dung trả lời hợp lệ.");
-
-        nextResult = { tier: "tier1", answer, debug: getChatIntentDebug(response.data) };
+        nextResult = {
+          tier: "tier1",
+          answer,
+          debug: getChatIntentDebug(response.data)
+        };
       } else {
-        flow.startServerProcessing();
-
         const response = await runResearchTier2(message, {
-          uploadedFileIds: uploads.uploadedFileIds,
-          sourceIds: sources.selectedSourceIds,
           researchMode: selectedResearchMode
         });
         const normalized = normalizeResearchTier2(response);
         if (!normalized.answer && !normalized.citations.length) {
           throw new Error("Chưa có phản hồi chuyên sâu hợp lệ.");
         }
-
-        const resolvedMode: FlowVisibilityMode =
-          normalized.flowEvents.length > 0
-            ? "flow-events"
-            : normalized.flowStages.length > 0
-              ? "metadata-stages"
-              : "idle";
-
-        const resolvedStages = normalized.flowStages.length > 0 ? normalized.flowStages : [];
-
-        flow.setResolvedFlow({
-          mode: resolvedMode,
-          events: normalized.flowEvents,
-          stages: resolvedStages
-        });
-
         nextResult = {
           tier: "tier2",
           ...normalized
         };
       }
 
-      setResult(nextResult);
+      setLastResult(nextResult);
 
       let conversation = createConversationItem(message, nextResult);
       try {
@@ -226,140 +142,236 @@ export default function ResearchPage() {
       } catch (persistError) {
         setError(
           persistError instanceof Error
-            ? `Đã trả lời nhưng lưu conversation thất bại: ${persistError.message}`
-            : "Đã trả lời nhưng lưu conversation thất bại."
+            ? `Đã trả lời nhưng lưu hội thoại thất bại: ${persistError.message}`
+            : "Đã trả lời nhưng lưu hội thoại thất bại."
         );
       }
 
       setHistory((prev) => [conversation, ...prev.filter((item) => item.id !== conversation.id)]);
       setActiveConversationId(conversation.id);
       setQuery("");
-    } catch (submitError) {
-      if (selectedTier === "tier2") {
-        flow.markFlowFailed();
-      }
-      setError(submitError instanceof Error ? submitError.message : "Không thể gửi câu hỏi.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không thể xử lý câu hỏi.");
     } finally {
-      flow.stopServerProcessing();
       setIsSubmitting(false);
     }
   };
 
-  const onOpenConversation = (conversationId: string) => {
-    const item = history.find((entry) => entry.id === conversationId);
-    if (!item) return;
-
-    setActiveConversationId(item.id);
-    setLastQuery(item.query);
-    setResult(item.result);
-    setSelectedTier(item.result.tier);
-    setError("");
-
-    if (item.result.tier === "tier2") {
-      flow.hydrateFlowFromTier2Result(item.result);
-    } else {
-      flow.resetFlow();
-    }
-  };
-
-  const showDebugHints = role === "admin" || isDev;
-
   return (
-    <PageShell title="Hỏi đáp y tế" variant="plain">
-      <div className="grid gap-4 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)_minmax(20rem,24rem)] 2xl:grid-cols-[18rem_minmax(0,1fr)_24rem] 2xl:gap-5">
-        <aside className="order-2 space-y-4 xl:order-1 xl:sticky xl:top-24 xl:max-h-[calc(100dvh-7.5rem)] xl:overflow-y-auto xl:pr-1">
-          <HistoryPanel
-            items={historyItems}
-            suggestions={SUGGESTED_QUERIES}
-            onOpenConversation={onOpenConversation}
-            onPickSuggestion={setQuery}
-          />
-        </aside>
+    <PageShell
+      title="CLARA Research"
+      description="Tách luồng research thành nhiều trang rõ nhiệm vụ: hỏi nhanh, deepdive, analyze, citations và details."
+    >
+      <div className="space-y-5">
+        <ResearchLabNav />
 
-        <section className="order-1 space-y-4 xl:order-2">
-          <ResearchWorkspaceHeader
-            roleLabel={roleLabel}
-            selectedSourceCount={sources.selectedSourceIds.length}
-            uploadedFileCount={uploads.uploadedFiles.length}
-          />
-
-          <ResearchMainCard
-            query={query}
-            selectedTier={selectedTier}
-            isSubmitting={isSubmitting}
-            isUploading={uploads.isUploading}
-            fileInputRef={fileInputRef}
-            onSubmit={onSubmit}
-            onUploadInputChange={uploads.onUploadInputChange}
-            onQueryChange={setQuery}
-            onSelectTier={setSelectedTier}
-            selectedResearchMode={selectedResearchMode}
-            onSelectResearchMode={setSelectedResearchMode}
-            lastQuery={lastQuery}
-            result={result}
-            showDebugHints={showDebugHints}
-            evidenceSteps={evidenceSteps}
-          />
-
-          {error ? (
-            <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300">
-              {error}
+        <section className="chrome-panel rounded-[1.6rem] p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--text-muted)]">Research Hub</p>
+              <h2 className="mt-2 text-2xl font-semibold text-[var(--text-primary)] sm:text-[2.2rem]">Một trang chỉ một trọng tâm</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-7 text-[var(--text-secondary)]">
+                Trang này chỉ tập trung đặt câu hỏi và nhận kết quả. Các phần nặng như citations, telemetry,
+                flow và debug được tách sang trang riêng để dễ đọc và dễ vận hành.
+              </p>
             </div>
+            <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-1 text-xs font-semibold text-[var(--text-secondary)]">
+              Vai trò hiện tại: {role}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {QUICK_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-3 transition hover:border-[color:var(--shell-border-strong)]"
+              >
+                <p className="text-sm font-semibold text-[var(--text-primary)]">{link.label}</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{link.description}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <section className="chrome-panel rounded-[1.6rem] p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-xl font-semibold text-[var(--text-primary)]">Run Research</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <fieldset className="inline-flex rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-1">
+                <legend className="sr-only">Chọn tier</legend>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTier("tier1")}
+                  disabled={isSubmitting}
+                  className={[
+                    "rounded-full px-3 py-1 text-xs font-semibold transition",
+                    selectedTier === "tier1"
+                      ? "bg-[var(--text-primary)] text-[var(--surface-panel)]"
+                      : "text-[var(--text-secondary)]"
+                  ].join(" ")}
+                >
+                  Nhanh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTier("tier2")}
+                  disabled={isSubmitting}
+                  className={[
+                    "rounded-full px-3 py-1 text-xs font-semibold transition",
+                    selectedTier === "tier2"
+                      ? "bg-[var(--text-primary)] text-[var(--surface-panel)]"
+                      : "text-[var(--text-secondary)]"
+                  ].join(" ")}
+                >
+                  Chuyên sâu
+                </button>
+              </fieldset>
+
+              {selectedTier === "tier2" ? (
+                <fieldset className="inline-flex rounded-full border border-cyan-300/65 bg-cyan-500/10 p-1">
+                  <legend className="sr-only">Chọn mode research</legend>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedResearchMode("fast")}
+                    disabled={isSubmitting}
+                    className={[
+                      "rounded-full px-3 py-1 text-xs font-semibold transition",
+                      selectedResearchMode === "fast"
+                        ? "bg-cyan-500 text-white"
+                        : "text-cyan-700 dark:text-cyan-200"
+                    ].join(" ")}
+                  >
+                    Fast
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedResearchMode("deep")}
+                    disabled={isSubmitting}
+                    className={[
+                      "rounded-full px-3 py-1 text-xs font-semibold transition",
+                      selectedResearchMode === "deep"
+                        ? "bg-cyan-500 text-white"
+                        : "text-cyan-700 dark:text-cyan-200"
+                    ].join(" ")}
+                  >
+                    Deep
+                  </button>
+                </fieldset>
+              ) : null}
+            </div>
+          </div>
+
+          <form onSubmit={onSubmit} className="mt-3 space-y-3">
+            <textarea
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              disabled={isSubmitting}
+              placeholder="Nhập câu hỏi y tế bạn cần CLARA xử lý..."
+              className="min-h-[140px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)] outline-none transition focus:border-[color:var(--shell-border-strong)]"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-[var(--text-muted)]">
+                {selectedTier === "tier2"
+                  ? `Mode hiện tại: ${selectedResearchMode.toUpperCase()} · cần phân tích sâu hơn thì mở trang Deepdive.`
+                  : "Tier nhanh phù hợp cho câu hỏi ngắn và trả lời tức thì."}
+              </p>
+              <button
+                type="submit"
+                disabled={isSubmitting || !query.trim()}
+                className="inline-flex min-h-[46px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {isSubmitting ? "Đang xử lý..." : "Chạy"}
+              </button>
+            </div>
+          </form>
+
+          {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+
+          {lastResult ? (
+            <article className="mt-4 rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)]">
+                  {lastResult.tier === "tier2" ? "Tier 2" : "Tier 1"}
+                </span>
+                {lastResult.tier === "tier2" && lastResult.researchMode ? (
+                  <span className="rounded-full border border-cyan-300/60 bg-cyan-500/15 px-2.5 py-1 text-xs font-semibold text-cyan-100">
+                    {lastResult.researchMode.toUpperCase()}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--text-primary)]">
+                {lastResult.answer || "Chưa có nội dung trả lời."}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  href="/research/citations"
+                  className="inline-flex min-h-[40px] items-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-primary)]"
+                >
+                  Mở Citations
+                </Link>
+                <Link
+                  href="/research/details"
+                  className="inline-flex min-h-[40px] items-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-primary)]"
+                >
+                  Mở Details
+                </Link>
+                <Link
+                  href="/research/analyze"
+                  className="inline-flex min-h-[40px] items-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-primary)]"
+                >
+                  Mở Analyze
+                </Link>
+              </div>
+            </article>
           ) : null}
         </section>
 
-        <aside className="order-3 space-y-4 xl:sticky xl:top-24 xl:max-h-[calc(100dvh-7.5rem)] xl:overflow-y-auto xl:pl-1">
-          <ResearchRightRail
-            citations={evidenceCitations}
-            flowStages={timelineStages}
-            flowEvents={timelineEvents}
-            flowMode={timelineMode}
-            telemetry={activeTelemetry}
-            isSubmitting={isSubmitting}
-            knowledgeSources={sources.knowledgeSources}
-            selectedSourceIds={sources.selectedSourceIds}
-            isLoadingSources={sources.isLoadingSources}
-            isCreatingSource={sources.isCreatingSource}
-            sourceError={sources.sourceError}
-            newSourceName={sources.newSourceName}
-            onSourceNameChange={sources.setNewSourceName}
-            onToggleSource={sources.onToggleSource}
-            onCreateSource={sources.onCreateSource}
-            uploadedFiles={uploads.uploadedFiles}
-            isUploading={uploads.isUploading}
-            isDragActive={uploads.isDragActive}
-            uploadError={uploads.uploadError}
-            onClearUploadedFiles={uploads.onClearUploadedFiles}
-            onRemoveUploadedFile={uploads.onRemoveUploadedFile}
-            onDropUpload={uploads.onDropUpload}
-            onDragOverUpload={uploads.onDragOverUpload}
-            onDragEnterUpload={uploads.onDragEnterUpload}
-            onDragLeaveUpload={uploads.onDragLeaveUpload}
-            showDebugHints={showDebugHints}
-            debugHints={{
-              roleLabel,
-              selectedTier,
-              conversationCount: history.length,
-              selectedSourceCount: sources.selectedSourceIds.length,
-              uploadedFileCount: uploads.uploadedFiles.length,
-              flowMode: timelineMode,
-              policyAction: activeTier2Result?.policyAction,
-              fallbackUsed: activeTier2Result?.fallbackUsed,
-              verificationVerdict: activeTier2Result?.verificationStatus?.verdict,
-              verificationConfidence: activeTier2Result?.verificationStatus?.confidence,
-              routingRole: activeTier2Result?.debug.routing?.role,
-              routingIntent: activeTier2Result?.debug.routing?.intent,
-              routingConfidence: activeTier2Result?.debug.routing?.confidence,
-              pipeline: activeTier2Result?.debug.pipeline,
-              telemetryKeywordCount: activeTier2Result?.debug.telemetryKeywordCount ?? activeTelemetry.keywords.length,
-              telemetryDocCount: activeTier2Result?.debug.telemetryDocCount ?? activeTelemetry.docs.length,
-              telemetrySourceAttemptCount: activeTelemetry.sourceAttempts.length,
-              telemetryErrorCount: activeTier2Result?.debug.telemetryErrorCount ?? activeTelemetry.errors.length,
-              telemetryTopError: activeTelemetry.errors[0],
-              crawlDomainCount: activeTelemetry.crawlSummary.domains.length
-            }}
-          />
-        </aside>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <section className="chrome-panel rounded-[1.35rem] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xl font-semibold text-[var(--text-primary)]">Lịch sử hội thoại gần đây</h3>
+              <span className="text-xs text-[var(--text-muted)]">{history.length} phiên</span>
+            </div>
+            {!history.length ? (
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">Chưa có hội thoại research nào được lưu.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {history.slice(0, 8).map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveConversationId(item.id);
+                        setLastResult(item.result);
+                        setSelectedTier(item.result.tier);
+                      }}
+                      className={[
+                        "w-full rounded-xl border px-3 py-2 text-left transition",
+                        item.id === activeConversationId
+                          ? "border-cyan-300/70 bg-cyan-500/10"
+                          : "border-[color:var(--shell-border)] bg-[var(--surface-muted)]"
+                      ].join(" ")}
+                    >
+                      <p className="line-clamp-1 text-sm font-semibold text-[var(--text-primary)]">{item.query}</p>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {formatHistoryTime(item.createdAt)} · {item.result.tier.toUpperCase()}
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <ResearchLatestTier2 result={latestTier2?.result.tier === "tier2" ? latestTier2.result : null} />
+        </div>
+
+        {activeConversation ? (
+          <p className="text-xs text-[var(--text-muted)]">
+            Đang xem: <span className="font-semibold text-[var(--text-secondary)]">{activeConversation.query}</span>
+          </p>
+        ) : null}
       </div>
     </PageShell>
   );

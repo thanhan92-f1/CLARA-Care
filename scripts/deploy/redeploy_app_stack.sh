@@ -137,6 +137,11 @@ fi
 wait_json "http://127.0.0.1:8100/health" '"status":"ok"'
 wait_json "http://127.0.0.1:8110/health" '"status":"ok"'
 wait_json "http://127.0.0.1:3100" "<html" 25 2
+wait_json "http://127.0.0.1:3100/research" "<html" 25 2
+wait_json "http://127.0.0.1:3100/research/deepdive" "<html" 25 2
+wait_json "http://127.0.0.1:3100/research/analyze" "<html" 25 2
+wait_json "http://127.0.0.1:3100/research/citations" "<html" 25 2
+wait_json "http://127.0.0.1:3100/research/details" "<html" 25 2
 
 if [[ "${REQUIRE_DEEPSEEK}" == "true" ]]; then
   wait_json "http://127.0.0.1:8110/health/details" '"deepseek_configured":true' 20 2
