@@ -76,6 +76,7 @@ api.interceptors.response.use(
         if (!nextAccessToken) {
           throw new Error("Không nhận được access token mới.");
         }
+        originalRequest.headers = originalRequest.headers ?? {};
         originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
         return api(originalRequest);
       } catch {
