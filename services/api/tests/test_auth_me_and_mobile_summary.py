@@ -153,6 +153,33 @@ def test_refresh_prefers_cookie_when_body_token_is_stale() -> None:
     assert second_refresh.json()["access_token"]
 
 
+def test_refresh_falls_back_to_payload_when_cookie_is_stale() -> None:
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "cookie-stale-fallback@example.com", "password": "secret"},
+    )
+    assert login_response.status_code == 200
+    stale_refresh_token = login_response.json()["refresh_token"]
+    assert stale_refresh_token
+
+    cookie_client = TestClient(app)
+    cookie_client.cookies.update(login_response.cookies)
+
+    first_refresh = cookie_client.post("/api/v1/auth/refresh", json={})
+    assert first_refresh.status_code == 200
+    fresh_refresh_token = first_refresh.json()["refresh_token"]
+    assert fresh_refresh_token and fresh_refresh_token != stale_refresh_token
+
+    # Simulate mobile/webview stale HttpOnly cookie while app still holds latest token in storage.
+    cookie_client.cookies.set("clara_refresh_token", stale_refresh_token)
+    second_refresh = cookie_client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": fresh_refresh_token},
+    )
+    assert second_refresh.status_code == 200
+    assert second_refresh.json()["access_token"]
+
+
 def test_logout_clears_auth_cookies() -> None:
     login_response = client.post(
         "/api/v1/auth/login",

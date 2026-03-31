@@ -266,19 +266,25 @@ def _clear_auth_cookies(response: Response) -> None:
     )
 
 
-def _extract_refresh_token(
+def _extract_refresh_token_candidates(
     *,
     request: Request,
     payload: RefreshTokenRequest | None,
-) -> str:
-    # Prefer HttpOnly cookie first: cookie value is rotated by server response and
-    # is typically fresher than a token cached in local storage across tabs/devices.
+) -> list[str]:
+    # Prefer HttpOnly cookie first, but keep payload token as fallback to tolerate
+    # stale cookies on mobile/webview clients.
     cookie_key = get_settings().auth_cookie_refresh_name
-    raw = request.cookies.get(cookie_key, "").strip()
-    if raw:
-        return raw
-    if payload and payload.refresh_token:
-        return payload.refresh_token
+    candidates: list[str] = []
+    cookie_token = request.cookies.get(cookie_key, "").strip()
+    payload_token = payload.refresh_token.strip() if payload and payload.refresh_token else ""
+
+    if cookie_token:
+        candidates.append(cookie_token)
+    if payload_token and payload_token not in candidates:
+        candidates.append(payload_token)
+
+    if candidates:
+        return candidates
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Thiếu refresh token",
@@ -485,10 +491,24 @@ def refresh_token(
 ) -> LoginResponse:
     _cleanup_auth_tokens(db)
     settings = get_settings()
-    raw_refresh_token = _extract_refresh_token(request=request, payload=payload)
-    token_payload = decode_refresh_token(raw_refresh_token)
-    session_token = _consume_refresh_session_token(db, raw_token=raw_refresh_token)
-    if not session_token:
+    refresh_candidates = _extract_refresh_token_candidates(request=request, payload=payload)
+    token_payload: TokenPayload | None = None
+    session_token: AuthToken | None = None
+    selected_token: str | None = None
+
+    for candidate in refresh_candidates:
+        try:
+            decoded = decode_refresh_token(candidate)
+        except HTTPException:
+            continue
+        consumed = _consume_refresh_session_token(db, raw_token=candidate)
+        if consumed:
+            token_payload = decoded
+            session_token = consumed
+            selected_token = candidate
+            break
+
+    if not session_token or not token_payload or not selected_token:
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

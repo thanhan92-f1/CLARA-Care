@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { resolvePostLoginPath } from "@/lib/navigation.config";
 
 const ACCESS_COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_ACCESS_COOKIE ?? "clara_access_token";
+const REFRESH_COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_REFRESH_COOKIE ?? "clara_refresh_token";
 
 const PUBLIC_PATHS = new Set([
   "/",
@@ -21,7 +22,9 @@ function isPublicPath(pathname: string): boolean {
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE_NAME)?.value);
+  const hasSession = Boolean(
+    request.cookies.get(ACCESS_COOKIE_NAME)?.value || request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  );
 
   if (isPublicPath(pathname)) {
     if (hasSession && pathname === "/") {
