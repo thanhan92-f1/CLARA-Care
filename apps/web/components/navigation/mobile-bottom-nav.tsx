@@ -10,6 +10,9 @@ type MobileBottomNavProps = {
 
 export default function MobileBottomNav({ role }: MobileBottomNavProps) {
   const pathname = usePathname();
+  if (pathname === "/research" || pathname.startsWith("/research/")) {
+    return null;
+  }
   const items = getMobilePrimaryNav(role);
 
   return (

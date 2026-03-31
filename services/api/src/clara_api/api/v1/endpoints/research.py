@@ -17,6 +17,7 @@ from clara_api.core.attribution import (
     normalize_source_errors,
     normalize_source_used,
 )
+from clara_api.core.config import get_settings
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.models import (
@@ -1514,6 +1515,7 @@ def research_tier2(
     token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    settings = get_settings()
     user = _get_user_by_token(db, token)
 
     upstream_payload = dict(payload)
@@ -1529,7 +1531,9 @@ def research_tier2(
     response = proxy_ml_post(
         "/v1/research/tier2",
         upstream_payload,
-        fail_soft_payload=_research_tier2_fallback_payload(payload),
+        fail_soft_payload=(
+            None if settings.deepseek_strict_mode else _research_tier2_fallback_payload(payload)
+        ),
     )
     normalized = _normalize_tier2_response(response)
     return _attach_research_attribution(normalized)

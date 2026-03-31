@@ -8,6 +8,7 @@ import { setAccessToken, setRefreshToken, setRole as setStoredRole } from "@/lib
 import AuthFormShell from "@/components/auth-form-shell";
 import AuthField from "@/components/auth/auth-field";
 import AuthFeedback from "@/components/auth/auth-feedback";
+import { resolvePostLoginPath } from "@/lib/navigation.config";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -37,15 +38,14 @@ export default function LoginPage() {
       setAccessToken(accessToken);
       setRefreshToken(refreshToken);
       setStoredRole(nextRole);
-      const nextPath =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("next")
-          : null;
-      if (nextPath && nextPath.startsWith("/")) {
-        router.push(nextPath);
-      } else {
-        router.push("/dashboard");
-      }
+      const targetPath = resolvePostLoginPath({
+        nextPath:
+          typeof window !== "undefined"
+            ? new URLSearchParams(window.location.search).get("next")
+            : null,
+        role: nextRole
+      });
+      router.push(targetPath);
     } catch (submitError) {
       const fallbackMessage = "Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.";
       if (submitError instanceof Error && submitError.message) {

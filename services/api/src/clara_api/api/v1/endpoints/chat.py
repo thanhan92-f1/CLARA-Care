@@ -2,7 +2,7 @@ import re
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -29,7 +29,9 @@ class ChatRequest(BaseModel):
 
 _SAFE_MODE_NOTICE = (
     "Hệ thống truy xuất chuyên sâu đang bận hoặc tạm thời không kết nối được nguồn RAG. "
-    "Tạm thời dùng chế độ an toàn để phản hồi nhanh."
+    "Tạm thời dùng chế độ an toàn: bạn nên ưu tiên phác đồ chính thống, "
+    "đối chiếu tương tác thuốc quan trọng, "
+    "và trao đổi bác sĩ khi có bệnh nền hoặc dấu hiệu nặng."
 )
 _GREETING_HINTS: tuple[str, ...] = (
     "hi",
@@ -131,11 +133,7 @@ def _safe_chat_fallback(message: str, role: str, reason: str) -> dict[str, Any]:
         "intent": "general_guidance",
         "confidence": 0.35,
         "emergency": False,
-        "answer": (
-            "Hệ thống đang quá tải tạm thời nên câu trả lời chi tiết chưa sẵn sàng. "
-            "Bạn có thể thử lại sau ít phút. Trong thời gian chờ, hãy ưu tiên nguồn chính thống "
-            "và liên hệ chuyên gia y tế nếu có dấu hiệu nặng hoặc bất thường."
-        ),
+        "answer": _SAFE_MODE_NOTICE,
         "retrieved_ids": [],
         "model_used": "api-safe-fallback-v1",
         "fallback_reason": reason,
@@ -147,6 +145,8 @@ def _decorate_safe_mode_answer(answer: str) -> str:
     cleaned = answer.strip()
     if not cleaned:
         return _SAFE_MODE_NOTICE
+    if cleaned.startswith(_SAFE_MODE_NOTICE):
+        return cleaned
     return f"{_SAFE_MODE_NOTICE}\n\n{cleaned}"
 
 
@@ -231,6 +231,12 @@ def _call_ml_service(
     except Exception as exc:  # pragma: no cover - defensive fallback
         primary_reason = f"ml_unexpected_exception:{exc.__class__.__name__}"
 
+    if settings.deepseek_strict_mode:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"deepseek_required_unavailable:{primary_reason}",
+        )
+
     safe_mode_reason = ""
     try:
         safe_mode_data = _post_to_ml(
@@ -275,12 +281,27 @@ def chat_placeholder(
     token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    settings = get_settings()
     control_tower = get_control_tower_config_service().load(db)
     rag_flow = control_tower.rag_flow
     rag_sources = [item.model_dump() for item in control_tower.rag_sources]
     ml_response = _call_ml_service(payload.message, token.role, rag_flow, rag_sources)
     model_used = ml_response.get("model_used")
-    if isinstance(model_used, str) and model_used.startswith("local-synth"):
+    if (
+        settings.deepseek_strict_mode
+        and isinstance(model_used, str)
+        and model_used.startswith("local-synth")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="deepseek_required_unavailable:local_synthesis_blocked",
+        )
+
+    if (
+        not settings.deepseek_strict_mode
+        and isinstance(model_used, str)
+        and model_used.startswith("local-synth")
+    ):
         ml_response["upstream_model_used"] = model_used
         if _is_general_greeting(payload.message):
             ml_response["answer"] = (
@@ -304,6 +325,12 @@ def chat_placeholder(
         ml_response["citations"] = []
 
     reply = ml_response.get("answer")
+    if settings.deepseek_strict_mode and (not isinstance(reply, str) or not reply.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="deepseek_required_unavailable:missing_answer",
+        )
+
     if not isinstance(reply, str):
         reply = _safe_chat_fallback(
             payload.message,

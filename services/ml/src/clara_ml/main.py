@@ -324,7 +324,12 @@ def routed_chat_infer(payload: dict) -> dict:
         route.intent = default_by_role.get(route.role, "symptom_triage")
         route.confidence = min(route.confidence, 0.6)
 
-    if route.intent == "general_guidance" and _is_general_greeting(pii.redacted_text):
+    if (
+        route.intent == "general_guidance"
+        and _is_general_greeting(pii.redacted_text)
+        and not settings.deepseek_required
+        and deepseek_fallback_enabled
+    ):
         return {
             "role": route.role,
             "intent": route.intent,
@@ -388,8 +393,14 @@ def routed_chat_infer(payload: dict) -> dict:
             file_retrieval_enabled=adjusted_file_retrieval_enabled,
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
+            strict_deepseek_required=settings.deepseek_required,
         )
     except Exception as exc:
+        if settings.deepseek_required or not deepseek_fallback_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail=f"deepseek_required_unavailable:{exc.__class__.__name__}",
+            ) from exc
         degraded_mode = True
         degraded_reason = exc.__class__.__name__
         rag_result = rag_pipeline.run(
@@ -401,6 +412,7 @@ def routed_chat_infer(payload: dict) -> dict:
             file_retrieval_enabled=file_retrieval_enabled,
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
+            strict_deepseek_required=False,
         )
     factcheck = (
         run_fides_lite(answer=rag_result.answer, retrieved_context=rag_result.retrieved_context)

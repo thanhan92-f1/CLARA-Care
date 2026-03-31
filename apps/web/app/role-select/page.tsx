@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { UserRole, setRole } from "@/lib/auth-store";
+import { getRoleHomePath } from "@/lib/navigation.config";
 
 const roles: Array<{ value: UserRole; label: string; description: string }> = [
   { value: "normal", label: "Người dùng cá nhân", description: "Tra cứu thông tin cơ bản và quản lý sức khỏe cá nhân." },
@@ -17,7 +18,7 @@ export default function RoleSelectionPage() {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     setRole(selectedRole);
-    router.push("/dashboard");
+    router.push(getRoleHomePath(selectedRole));
   };
 
   return (

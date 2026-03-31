@@ -150,6 +150,10 @@ class Settings(BaseSettings):
         validation_alias="ML_SERVICE_TIMEOUT_SECONDS",
         gt=0,
     )
+    deepseek_strict_mode: bool = Field(
+        default=False,
+        validation_alias="DEEPSEEK_STRICT_MODE",
+    )
     tgc_ocr_base_url: str = Field(
         default="http://host.docker.internal:8080",
         validation_alias="TGC_OCR_BASE_URL",

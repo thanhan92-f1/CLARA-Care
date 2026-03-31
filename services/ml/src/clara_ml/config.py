@@ -42,6 +42,10 @@ class Settings(BaseSettings):
         validation_alias="DEEPSEEK_BASE_URL",
     )
     deepseek_model: str = Field(default="deepseek-v3.2", validation_alias="DEEPSEEK_MODEL")
+    deepseek_required: bool = Field(
+        default=False,
+        validation_alias="DEEPSEEK_REQUIRED",
+    )
     deepseek_timeout_seconds: float = Field(
         default=30.0,
         validation_alias=AliasChoices("DEEPSEEK_TIMEOUT_SECONDS", "DEEPSEEK_TIMEOUT"),

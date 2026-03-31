@@ -332,6 +332,7 @@ class RagPipelineP1:
         uploaded_documents: object = None,
         planner_hints: dict[str, Any] | None = None,
         generation_enabled: bool = True,
+        strict_deepseek_required: bool = False,
     ) -> RagResult:
         run_started = perf_counter()
         planner_active = isinstance(planner_hints, dict) and bool(planner_hints)
@@ -831,9 +832,16 @@ class RagPipelineP1:
                 },
             )
 
+        if strict_deepseek_required and (not self._llm_client or not self._deepseek_api_key):
+            raise RuntimeError("deepseek_required_but_not_configured")
+
         if self._llm_client and self._deepseek_api_key:
             try:
-                if not has_relevant_context and not deepseek_fallback_enabled:
+                if (
+                    not has_relevant_context
+                    and not deepseek_fallback_enabled
+                    and not strict_deepseek_required
+                ):
                     used_stages.append("local_synthesis_no_fallback")
                     flow_events.append(
                         self._flow_event(
@@ -912,6 +920,8 @@ class RagPipelineP1:
                     },
                 )
             except Exception as exc:
+                if strict_deepseek_required or not deepseek_fallback_enabled:
+                    raise RuntimeError("deepseek_generation_failed") from exc
                 used_stages.append("llm_error_fallback")
                 flow_events.append(
                     self._flow_event(
@@ -923,6 +933,9 @@ class RagPipelineP1:
                         payload={"error": exc.__class__.__name__},
                     )
                 )
+
+        if strict_deepseek_required or not deepseek_fallback_enabled:
+            raise RuntimeError("deepseek_unavailable_and_fallback_disabled")
 
         used_stages.append("local_synthesis")
         flow_events.append(

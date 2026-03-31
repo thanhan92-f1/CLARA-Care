@@ -4,7 +4,6 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import FlowTimelinePanel from "@/components/research/flow-timeline-panel";
 import MarkdownAnswer from "@/components/research/markdown-answer";
-import ResearchLabNav from "@/components/research/research-lab-nav";
 import TelemetryDetailsPanel from "@/components/research/telemetry-details-panel";
 import {
   createConversationItem,
@@ -26,13 +25,6 @@ import {
   runResearchTier2
 } from "@/lib/research";
 
-const QUICK_LINKS: Array<{ href: string; label: string }> = [
-  { href: "/research/deepdive", label: "Deepdive" },
-  { href: "/research/analyze", label: "Analyze" },
-  { href: "/research/citations", label: "Citations" },
-  { href: "/research/details", label: "Details" }
-];
-
 const QUICK_PROMPTS: string[] = [
   "So sánh DASH và Địa Trung Hải cho bệnh tim mạch",
   "Tương tác Warfarin với thuốc giảm đau phổ biến",
@@ -40,23 +32,35 @@ const QUICK_PROMPTS: string[] = [
   "Tóm tắt cảnh báo DDI theo mức độ nguy cơ"
 ];
 
-function ResultBadge({ label, value }: { label: string; value: string | number }) {
-  return (
-    <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-      {label}: <span className="ml-1 text-[var(--text-primary)]">{value}</span>
-    </span>
-  );
-}
+const ADVANCED_LINKS: Array<{ href: string; label: string }> = [
+  { href: "/research/deepdive", label: "Deepdive" },
+  { href: "/research/analyze", label: "Analyze" },
+  { href: "/research/citations", label: "Citations" },
+  { href: "/research/details", label: "Details" }
+];
+
+const EMPTY_TELEMETRY = {
+  keywords: [],
+  searchPlan: { keywords: [], subqueries: [], connectors: [] },
+  sourceAttempts: [],
+  indexSummary: {},
+  crawlSummary: { domains: [] },
+  docs: [],
+  scores: [],
+  sourceReasoning: [],
+  errors: []
+};
 
 export default function ResearchPage() {
   const [role, setRole] = useState<UserRole>("normal");
   const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier1");
   const [selectedResearchMode, setSelectedResearchMode] = useState<ResearchExecutionMode>("fast");
   const [query, setQuery] = useState("");
+  const [lastQuestion, setLastQuestion] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
-  const [rightTab, setRightTab] = useState<"insights" | "timeline" | "telemetry">("insights");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [history, setHistory] = useState<ConversationItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -75,17 +79,22 @@ export default function ResearchPage() {
         if (cancelled) return;
         const items = rows.map((row) => createConversationItemFromPersisted(row));
         setHistory(items);
+
         if (!items.length) return;
-        setActiveConversationId(items[0].id);
-        setLastResult(items[0].result);
-        setSelectedTier(items[0].result.tier);
+
+        const firstItem = items[0];
+        setActiveConversationId(firstItem.id);
+        setLastQuestion(firstItem.query);
+        setLastResult(firstItem.result);
+        setSelectedTier(firstItem.result.tier);
       } catch (cause) {
         if (cancelled) return;
-        setError(cause instanceof Error ? cause.message : "Không thể tải lịch sử research.");
+        setError(cause instanceof Error ? cause.message : "Không thể tải lịch sử hội thoại.");
       }
     };
 
     void loadHistory();
+
     return () => {
       cancelled = true;
     };
@@ -96,16 +105,33 @@ export default function ResearchPage() {
     [history, activeConversationId]
   );
 
-  const latestTier2 = useMemo(
-    () => history.find((item) => item.result.tier === "tier2") ?? null,
-    [history]
-  );
-
-  const latestTier2Result = latestTier2?.result.tier === "tier2" ? latestTier2.result : null;
   const flowMode = useMemo(
     () => (lastResult?.tier === "tier2" ? resolveFlowModeFromResult(lastResult) : "idle"),
     [lastResult]
   );
+
+  const displayedQuestion = activeConversation?.query ?? lastQuestion;
+  const answerText =
+    lastResult?.tier === "tier2"
+      ? lastResult.answer || "Chưa có nội dung trả lời."
+      : lastResult?.answer || "Chưa có nội dung trả lời.";
+  const answerCitations = lastResult?.tier === "tier2" ? lastResult.citations : [];
+
+  const createNewConversation = () => {
+    setActiveConversationId(null);
+    setLastQuestion("");
+    setLastResult(null);
+    setQuery("");
+    setError("");
+  };
+
+  const onSelectConversation = (item: ConversationItem) => {
+    setActiveConversationId(item.id);
+    setLastQuestion(item.query);
+    setLastResult(item.result);
+    setSelectedTier(item.result.tier);
+    setError("");
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -120,7 +146,9 @@ export default function ResearchPage() {
       if (selectedTier === "tier1") {
         const response = await api.post<ChatResponse>("/chat", { message });
         const answer = getChatReply(response.data);
-        if (!answer) throw new Error("Chưa có nội dung trả lời hợp lệ.");
+        if (!answer) {
+          throw new Error("Chưa có nội dung trả lời hợp lệ.");
+        }
         nextResult = {
           tier: "tier1",
           answer,
@@ -140,6 +168,7 @@ export default function ResearchPage() {
         };
       }
 
+      setLastQuestion(message);
       setLastResult(nextResult);
 
       let conversation = createConversationItem(message, nextResult);
@@ -167,14 +196,6 @@ export default function ResearchPage() {
     }
   };
 
-  const answerText =
-    lastResult?.tier === "tier2"
-      ? lastResult.answer || "Chưa có nội dung trả lời."
-      : lastResult?.answer || "Chưa có nội dung trả lời.";
-
-  const answerCitations =
-    lastResult?.tier === "tier2" ? lastResult.citations : [];
-
   const copyAnswer = async () => {
     const content = answerText.trim();
     if (!content) return;
@@ -187,107 +208,104 @@ export default function ResearchPage() {
     window.setTimeout(() => setCopyMessage(""), 2000);
   };
 
+  const renderConversationList = (mobile = false) => (
+    <>
+      {!mobile ? (
+        <button
+          type="button"
+          onClick={createNewConversation}
+          className="chrome-nav-link mt-3 inline-flex min-h-[42px] w-full items-center justify-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm font-semibold text-[var(--text-primary)]"
+        >
+          + Chat mới
+        </button>
+      ) : null}
+
+      {!history.length ? (
+        <p className="mt-3 text-xs leading-6 text-[var(--text-secondary)]">
+          Chưa có lịch sử hội thoại.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-1.5">
+          {history.slice(0, mobile ? 8 : 20).map((item) => {
+            const active = item.id === activeConversationId;
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelectConversation(item)}
+                  className={[
+                    "w-full rounded-xl border px-3 py-2 text-left transition",
+                    active
+                      ? "border-cyan-300/70 bg-cyan-500/10"
+                      : "border-[color:var(--shell-border)] bg-[var(--surface-muted)]"
+                  ].join(" ")}
+                >
+                  <p className="line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">{item.query}</p>
+                  <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                    {formatHistoryTime(item.createdAt)} · {item.result.tier.toUpperCase()}
+                  </p>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+
   return (
     <PageShell
-      title="CLARA Research Studio"
-      description="Một workspace duy nhất cho hỏi nhanh, deep research, citation tracking và debug flow."
+      title="CLARA Chat"
+      description="Mở ứng dụng là chat ngay. Luồng chuyên sâu vẫn có sẵn nhưng nằm ở lớp mở rộng phía dưới."
     >
-      <div className="space-y-4">
-        <ResearchLabNav />
+      <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <aside className="chrome-panel hidden rounded-[1.35rem] p-4 lg:block">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+              Conversations
+            </h3>
+            <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+              {history.length}
+            </span>
+          </div>
 
-        <section className="chrome-panel relative overflow-hidden rounded-[1.6rem] p-5 sm:p-6">
-          <div className="pointer-events-none absolute -right-12 top-[-3.5rem] h-36 w-36 rounded-full bg-cyan-300/25 blur-3xl" />
-          <div className="pointer-events-none absolute -left-10 bottom-[-4.5rem] h-40 w-40 rounded-full bg-sky-300/20 blur-3xl" />
-          <div className="relative flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--text-muted)]">
-                Research cockpit
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold text-[var(--text-primary)] sm:text-[2.2rem]">
-                Hôm nay bạn muốn research gì?
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-7 text-[var(--text-secondary)]">
-                Composer ở giữa, lịch sử bên trái, insight và shortcuts bên phải. Tập trung câu hỏi,
-                không bị loãng bởi quá nhiều khối thông tin.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex min-h-[38px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]">
-                Vai trò: {role}
-              </span>
-              {QUICK_LINKS.map((item) => (
+          {renderConversationList()}
+
+          <div className="mt-4 border-t border-[color:var(--shell-border)] pt-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+              Chuyên sâu
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {ADVANCED_LINKS.map((link) => (
                 <Link
-                  key={item.href}
-                  href={item.href}
-                  className="inline-flex min-h-[38px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-3 text-xs font-semibold text-[var(--text-primary)] transition hover:border-[color:var(--shell-border-strong)] hover:bg-[var(--surface-muted)]"
+                  key={link.href}
+                  href={link.href}
+                  className="inline-flex min-h-[34px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-3 text-xs font-semibold text-[var(--text-secondary)] transition hover:border-[color:var(--shell-border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  {item.label}
+                  {link.label}
                 </Link>
               ))}
             </div>
           </div>
-        </section>
+        </aside>
 
-        <div className="grid gap-4 xl:grid-cols-[17rem_minmax(0,1fr)_20rem]">
-          <aside className="chrome-panel rounded-[1.35rem] p-4 sm:p-5">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Conversations</h3>
-              <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-secondary)]">
-                {history.length}
-              </span>
-            </div>
+        <section className="space-y-4">
+          <section className="chrome-panel rounded-[1.4rem] p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                  Chat-first workspace
+                </p>
+                <h2 className="mt-1.5 text-xl font-semibold text-[var(--text-primary)] sm:text-2xl">
+                  Hôm nay bạn muốn hỏi gì?
+                </h2>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveConversationId(null);
-                setLastResult(null);
-                setQuery("");
-              }}
-              className="mt-3 inline-flex min-h-[40px] w-full items-center justify-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm font-semibold text-[var(--text-primary)] transition hover:border-[color:var(--shell-border-strong)]"
-            >
-              + Cuộc hội thoại mới
-            </button>
-
-            {!history.length ? (
-              <p className="mt-3 text-xs leading-6 text-[var(--text-secondary)]">
-                Chưa có lịch sử. Hãy chạy câu hỏi đầu tiên.
-              </p>
-            ) : (
-              <ul className="mt-3 space-y-1.5">
-                {history.slice(0, 10).map((item) => {
-                  const active = item.id === activeConversationId;
-                  return (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveConversationId(item.id);
-                          setLastResult(item.result);
-                          setSelectedTier(item.result.tier);
-                        }}
-                        className={[
-                          "w-full rounded-xl border px-3 py-2 text-left transition",
-                          active
-                            ? "border-cyan-300/70 bg-cyan-500/10"
-                            : "border-[color:var(--shell-border)] bg-[var(--surface-muted)]"
-                        ].join(" ")}
-                      >
-                        <p className="line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">{item.query}</p>
-                        <p className="mt-1 text-[11px] text-[var(--text-muted)]">
-                          {formatHistoryTime(item.createdAt)} · {item.result.tier.toUpperCase()}
-                        </p>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </aside>
-
-          <section className="chrome-panel rounded-[1.35rem] p-4 sm:p-5 lg:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex min-h-[36px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]">
+                  Vai trò: {role}
+                </span>
+
                 <fieldset className="inline-flex rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-1">
                   <legend className="sr-only">Chọn tier</legend>
                   <button
@@ -350,238 +368,176 @@ export default function ResearchPage() {
                   </fieldset>
                 ) : null}
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  disabled={isSubmitting}
-                  className="inline-flex min-h-[36px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-                >
-                  Xóa prompt
-                </button>
-                <Link
-                  href="/research/deepdive"
-                  className="inline-flex min-h-[36px] items-center rounded-lg border border-cyan-300/70 bg-cyan-500/15 px-3 text-xs font-semibold text-cyan-800 dark:text-cyan-200"
-                >
-                  Mở Deepdive
-                </Link>
-              </div>
             </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {QUICK_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  onClick={() => setQuery(prompt)}
-                  className="inline-flex min-h-[34px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-3 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[color:var(--shell-border-strong)] hover:text-[var(--text-primary)]"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-
-            <form onSubmit={onSubmit} className="mt-3 space-y-3">
-              <textarea
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                disabled={isSubmitting}
-                placeholder="Nhập câu hỏi nghiên cứu... ví dụ: so sánh guideline điều trị và mức độ bằng chứng"
-                className="min-h-[160px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)] outline-none transition focus:border-[color:var(--shell-border-strong)]"
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-[var(--text-muted)]">
-                  {selectedTier === "tier2"
-                    ? `Research mode: ${selectedResearchMode.toUpperCase()} · hệ thống sẽ trả lời kèm nguồn và telemetry.`
-                    : "Quick mode: trả lời nhanh với guard an toàn."}
-                </p>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !query.trim()}
-                  className="inline-flex min-h-[46px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {isSubmitting ? "Đang nghiên cứu..." : "Run Research"}
-                </button>
-              </div>
-            </form>
-
-            {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
-
-            <article className="mt-4 rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4 sm:p-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <ResultBadge label="tier" value={lastResult?.tier === "tier2" ? "research" : "quick"} />
-                {lastResult?.tier === "tier2" && lastResult.researchMode ? (
-                  <ResultBadge label="mode" value={lastResult.researchMode.toUpperCase()} />
-                ) : null}
-                {lastResult?.tier === "tier2" && lastResult.verificationStatus?.verdict ? (
-                  <ResultBadge label="fides" value={lastResult.verificationStatus.verdict} />
-                ) : null}
-                {lastResult?.tier === "tier2" && typeof lastResult.fallbackUsed === "boolean" ? (
-                  <ResultBadge label="path" value={lastResult.fallbackUsed ? "fallback" : "rag"} />
-                ) : null}
-                <div className="ml-auto flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setQuery(activeConversation?.query ?? query)}
-                    className="inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-                  >
-                    Reuse query
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void copyAnswer()}
-                    className="inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-                  >
-                    Copy answer
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-3 max-h-[33rem] overflow-y-auto pr-1">
-                {lastResult ? (
-                  <MarkdownAnswer answer={answerText} citations={answerCitations} />
-                ) : (
-                  <p className="text-sm text-[var(--text-secondary)]">
-                    Chưa có kết quả. Hãy nhập câu hỏi và bấm <span className="font-semibold">Run Research</span>.
-                  </p>
-                )}
-              </div>
-
-              {lastResult?.tier === "tier1" && lastResult.debug ? (
-                <div className="mt-3 rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">
-                  role={lastResult.debug.role ?? "n/a"} · intent={lastResult.debug.intent ?? "n/a"} · confidence={
-                    typeof lastResult.debug.confidence === "number"
-                      ? lastResult.debug.confidence.toFixed(2)
-                      : "n/a"
-                  }
-                </div>
-              ) : null}
-              {copyMessage ? (
-                <p className="mt-2 text-xs text-cyan-700 dark:text-cyan-300">{copyMessage}</p>
-              ) : null}
-            </article>
           </section>
 
-          <aside className="space-y-4">
-            <section className="chrome-panel rounded-[1.35rem] p-3 sm:p-4">
-              <div className="inline-flex w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-1">
-                {(["insights", "timeline", "telemetry"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setRightTab(tab)}
-                    className={[
-                      "flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] transition",
-                      rightTab === tab
-                        ? "bg-[var(--text-primary)] text-[var(--surface-panel)]"
-                        : "text-[var(--text-secondary)]"
-                    ].join(" ")}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-            </section>
+          <details className="chrome-panel rounded-[1.3rem] p-3 lg:hidden">
+            <summary className="cursor-pointer text-sm font-semibold text-[var(--text-primary)]">
+              Lịch sử hội thoại ({history.length})
+            </summary>
+            {renderConversationList(true)}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ADVANCED_LINKS.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="inline-flex min-h-[34px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          </details>
 
-            {rightTab === "timeline" ? (
-              <FlowTimelinePanel
-                stages={lastResult?.tier === "tier2" ? lastResult.flowStages : []}
-                events={lastResult?.tier === "tier2" ? lastResult.flowEvents : []}
-                mode={flowMode}
-                isProcessing={isSubmitting && selectedTier === "tier2"}
-              />
-            ) : null}
-
-            {rightTab === "telemetry" ? (
-              <TelemetryDetailsPanel
-                telemetry={
-                  lastResult?.tier === "tier2"
-                    ? lastResult.telemetry
-                    : {
-                        keywords: [],
-                        searchPlan: { keywords: [], subqueries: [], connectors: [] },
-                        sourceAttempts: [],
-                        indexSummary: {},
-                        crawlSummary: { domains: [] },
-                        docs: [],
-                        scores: [],
-                        sourceReasoning: [],
-                        errors: []
-                      }
-                }
-                isProcessing={isSubmitting && selectedTier === "tier2"}
-              />
-            ) : null}
-
-            {rightTab === "insights" ? (
-              <>
-            <section className="chrome-panel rounded-[1.35rem] p-4 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Session snapshot</p>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-3">
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Citations</p>
-                  <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                    {lastResult?.tier === "tier2" ? lastResult.citations.length : 0}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-3">
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Flow events</p>
-                  <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                    {lastResult?.tier === "tier2" ? lastResult.debug.flowEventCount : 0}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-3">
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Telemetry docs</p>
-                  <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                    {lastResult?.tier === "tier2" ? lastResult.debug.telemetryDocCount : 0}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-3">
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Errors</p>
-                  <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                    {lastResult?.tier === "tier2" ? lastResult.debug.telemetryErrorCount : 0}
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <section className="chrome-panel rounded-[1.35rem] p-4 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Latest deep run</p>
-              {!latestTier2Result ? (
-                <p className="mt-2 text-sm text-[var(--text-secondary)]">Chưa có run deep nào.</p>
+          <section className="chrome-panel flex min-h-[66vh] flex-col rounded-[1.35rem] p-4 sm:p-5 lg:p-6">
+            <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+              {!lastResult ? (
+                <article className="rounded-2xl border border-dashed border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-6 text-sm leading-7 text-[var(--text-secondary)]">
+                  Bạn chưa có phiên trả lời nào trong lượt này. Nhập câu hỏi bên dưới để bắt đầu.
+                </article>
               ) : (
                 <>
-                  <p className="mt-2 line-clamp-3 text-sm leading-6 text-[var(--text-primary)]">
-                    {latestTier2?.query}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    <ResultBadge label="pass" value={latestTier2Result.deepPassCount ?? 1} />
-                    <ResultBadge
-                      label="confidence"
-                      value={
-                        typeof latestTier2Result.verificationStatus?.confidence === "number"
-                          ? latestTier2Result.verificationStatus.confidence.toFixed(2)
-                          : "n/a"
-                      }
-                    />
+                  <div className="flex justify-end">
+                    <article className="max-w-[90%] rounded-2xl border border-cyan-300/60 bg-cyan-500/10 px-4 py-3 text-sm leading-7 text-[var(--text-primary)]">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-300">
+                        Bạn
+                      </p>
+                      <p className="mt-1.5 whitespace-pre-wrap">{displayedQuestion}</p>
+                    </article>
+                  </div>
+
+                  <div className="flex justify-start">
+                    <article className="w-full max-w-[96%] rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-4 sm:px-5">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                          CLARA
+                        </span>
+                        <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                          {lastResult.tier === "tier2" ? `Research ${lastResult.researchMode?.toUpperCase() ?? ""}` : "Quick"}
+                        </span>
+                        {lastResult.tier === "tier2" && typeof lastResult.fallbackUsed === "boolean" ? (
+                          <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                            path: {lastResult.fallbackUsed ? "fallback" : "rag"}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => void copyAnswer()}
+                          className="ml-auto inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                        >
+                          Copy
+                        </button>
+                      </div>
+
+                      <MarkdownAnswer answer={answerText} citations={answerCitations} />
+
+                      {lastResult.tier === "tier1" && lastResult.debug ? (
+                        <div className="mt-3 rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                          role={lastResult.debug.role ?? "n/a"} · intent={lastResult.debug.intent ?? "n/a"} · confidence=
+                          {typeof lastResult.debug.confidence === "number"
+                            ? lastResult.debug.confidence.toFixed(2)
+                            : "n/a"}
+                        </div>
+                      ) : null}
+
+                      {copyMessage ? (
+                        <p className="mt-2 text-xs text-cyan-700 dark:text-cyan-300">{copyMessage}</p>
+                      ) : null}
+                    </article>
                   </div>
                 </>
               )}
-            </section>
+            </div>
 
-            <section className="chrome-panel rounded-[1.35rem] p-4 sm:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Now viewing</p>
-              {activeConversation ? (
-                <p className="mt-2 text-sm leading-6 text-[var(--text-primary)]">{activeConversation.query}</p>
-              ) : (
-                <p className="mt-2 text-sm text-[var(--text-secondary)]">Không có conversation đang chọn.</p>
-              )}
-            </section>
-              </>
-            ) : null}
-          </aside>
-        </div>
+            <div className="mt-4 border-t border-[color:var(--shell-border)] pt-4">
+              <div className="mb-3 flex flex-wrap gap-2">
+                {QUICK_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => setQuery(prompt)}
+                    className="inline-flex min-h-[34px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-3 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[color:var(--shell-border-strong)] hover:text-[var(--text-primary)]"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+
+              <form onSubmit={onSubmit} className="space-y-3">
+                <textarea
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  disabled={isSubmitting}
+                  placeholder="Nhập câu hỏi y khoa..."
+                  className="min-h-[120px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)] outline-none transition focus:border-[color:var(--shell-border-strong)]"
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {selectedTier === "tier2"
+                      ? `Research mode: ${selectedResearchMode.toUpperCase()} · trả lời kèm nguồn và timeline.`
+                      : "Quick mode: phản hồi nhanh với guard an toàn."}
+                  </p>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={createNewConversation}
+                      disabled={isSubmitting}
+                      className="inline-flex min-h-[44px] items-center rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 text-sm font-semibold text-[var(--text-secondary)]"
+                    >
+                      Chat mới
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || !query.trim()}
+                      className="inline-flex min-h-[46px] items-center rounded-xl border border-cyan-300/65 bg-gradient-to-r from-sky-600 to-cyan-500 px-5 text-sm font-semibold text-white disabled:opacity-60"
+                    >
+                      {isSubmitting ? "Đang xử lý..." : "Gửi"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {error ? <p className="mt-3 text-sm text-rose-500">{error}</p> : null}
+            </div>
+          </section>
+
+          <section className="chrome-panel rounded-[1.35rem] p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                Chuyên sâu
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((prev) => !prev)}
+                className="inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+              >
+                {showAdvanced ? "Ẩn panel" : "Mở panel"}
+              </button>
+            </div>
+
+            {showAdvanced ? (
+              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                <FlowTimelinePanel
+                  stages={lastResult?.tier === "tier2" ? lastResult.flowStages : []}
+                  events={lastResult?.tier === "tier2" ? lastResult.flowEvents : []}
+                  mode={flowMode}
+                  isProcessing={isSubmitting && selectedTier === "tier2"}
+                />
+
+                <TelemetryDetailsPanel
+                  telemetry={lastResult?.tier === "tier2" ? lastResult.telemetry : EMPTY_TELEMETRY}
+                  isProcessing={isSubmitting && selectedTier === "tier2"}
+                />
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                Flow timeline, telemetry và các route Deepdive/Analyze/Citations/Details được giữ lại ở chế độ mở rộng.
+              </p>
+            )}
+          </section>
+        </section>
       </div>
     </PageShell>
   );

@@ -27,19 +27,18 @@ export const PUBLIC_ROUTES = new Set([
   "/verify-email"
 ]);
 
+export const DEFAULT_POST_LOGIN_PATH = "/research";
+
+const AUTH_ENTRY_ROUTES = new Set(["/login", "/register"]);
+
+const ROLE_HOME_PATHS: Record<UserRole, string> = {
+  normal: "/research",
+  researcher: "/research",
+  doctor: "/research",
+  admin: "/research",
+};
+
 const NAV_ITEMS: NavigationItem[] = [
-  {
-    href: "/dashboard",
-    label: "Tổng quan",
-    desc: "Bức tranh nhanh hôm nay",
-    group: "core",
-    roles: ["normal", "researcher", "doctor", "admin"],
-    mobilePrimary: true,
-    page: {
-      title: "Tổng quan công việc",
-      subtitle: "Theo dõi nhanh các tác vụ chăm sóc và vận hành trong ngày."
-    }
-  },
   {
     href: "/research",
     label: "Hỏi đáp y tế",
@@ -50,6 +49,18 @@ const NAV_ITEMS: NavigationItem[] = [
     page: {
       title: "Hỏi đáp chuyên môn",
       subtitle: "Tra cứu câu trả lời có dẫn nguồn để hỗ trợ quyết định lâm sàng."
+    }
+  },
+  {
+    href: "/dashboard",
+    label: "Tổng quan",
+    desc: "Bức tranh nhanh hôm nay",
+    group: "core",
+    roles: ["normal", "researcher", "doctor", "admin"],
+    mobilePrimary: true,
+    page: {
+      title: "Tổng quan công việc",
+      subtitle: "Theo dõi nhanh các tác vụ chăm sóc và vận hành trong ngày."
     }
   },
   {
@@ -194,6 +205,26 @@ const DEFAULT_PAGE_META: PageMeta = {
 
 export function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname);
+}
+
+export function getRoleHomePath(role: UserRole = "normal"): string {
+  return ROLE_HOME_PATHS[role] ?? DEFAULT_POST_LOGIN_PATH;
+}
+
+export function sanitizeNextPath(nextPath: string | null | undefined): string | null {
+  if (!nextPath) return null;
+  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return null;
+  try {
+    const parsed = new URL(nextPath, "http://localhost");
+    if (AUTH_ENTRY_ROUTES.has(parsed.pathname)) return null;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+export function resolvePostLoginPath(options: { nextPath?: string | null; role?: UserRole }): string {
+  return sanitizeNextPath(options.nextPath) ?? getRoleHomePath(options.role ?? "normal");
 }
 
 export function getNavItemsByRole(role: UserRole): NavigationItem[] {

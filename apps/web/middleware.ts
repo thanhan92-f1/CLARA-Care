@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { resolvePostLoginPath } from "@/lib/navigation.config";
 
 const ACCESS_COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_ACCESS_COOKIE ?? "clara_access_token";
 
@@ -23,8 +24,17 @@ export function middleware(request: NextRequest) {
   const hasSession = Boolean(request.cookies.get(ACCESS_COOKIE_NAME)?.value);
 
   if (isPublicPath(pathname)) {
+    if (hasSession && pathname === "/") {
+      const target = resolvePostLoginPath({
+        nextPath: request.nextUrl.searchParams.get("next")
+      });
+      return NextResponse.redirect(new URL(target, request.url));
+    }
     if (hasSession && (pathname === "/login" || pathname === "/register")) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+      const target = resolvePostLoginPath({
+        nextPath: request.nextUrl.searchParams.get("next")
+      });
+      return NextResponse.redirect(new URL(target, request.url));
     }
     return NextResponse.next();
   }
