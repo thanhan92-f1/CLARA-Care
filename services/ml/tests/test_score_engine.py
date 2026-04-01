@@ -39,3 +39,26 @@ def test_score_engine_filters_ddi_irrelevant_documents() -> None:
     assert "pubmed-warfarin-diet" not in ranked_ids
     assert "openfda-warfarin-label" in ranked_ids
     assert "pubmed-warfarin-ibuprofen-ddi" in ranked_ids
+
+
+def test_score_engine_recognizes_primary_alias_coumadin() -> None:
+    scorer = DocumentScorer(embedder=_StubEmbedder())
+    query = "Tuong tac warfarin va aspirin"
+    docs = [
+        Document(
+            id="dailymed-coumadin-aspirin",
+            text="Coumadin and aspirin interaction can increase bleeding risk.",
+            metadata={"source": "dailymed", "url": "https://dailymed.nlm.nih.gov/"},
+        ),
+        Document(
+            id="pubmed-unrelated",
+            text="Mediterranean diet outcomes in primary prevention.",
+            metadata={"source": "pubmed", "url": "https://pubmed.ncbi.nlm.nih.gov/3/"},
+        ),
+    ]
+
+    ranked = scorer.score_documents(query, docs, top_k=2)
+    ranked_ids = [item.id for item in ranked]
+
+    assert "dailymed-coumadin-aspirin" in ranked_ids
+    assert "pubmed-unrelated" not in ranked_ids

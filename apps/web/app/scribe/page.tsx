@@ -18,7 +18,10 @@ export default function ScribePage() {
   const [sections, setSections] = useState<SoapSections | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [placeholderNotice, setPlaceholderNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
 
   const hasSoapContent = useMemo(() => {
     if (!sections) return false;
@@ -33,7 +36,7 @@ export default function ScribePage() {
     setError("");
     setIsSubmitting(true);
     setSections(null);
-    setPlaceholderNotice("");
+    setNotice(null);
 
     try {
       const response = await createSoap({ transcript: nextTranscript });
@@ -50,14 +53,65 @@ export default function ScribePage() {
     }
   };
 
-  const onCopyPlaceholder = () => {
-    if (!sections) return;
-    setPlaceholderNotice("Tính năng sao chép sẽ được bổ sung ở phase sau.");
+  const pushNotice = (tone: "success" | "error", message: string) => {
+    setNotice({ tone, message });
+    window.setTimeout(() => {
+      setNotice(null);
+    }, 2500);
   };
 
-  const onExportPlaceholder = () => {
+  const onCopySoap = async () => {
     if (!sections) return;
-    setPlaceholderNotice("Tính năng xuất file sẽ được bổ sung ở phase sau.");
+    const soapText = joinSoap(sections).trim();
+    if (!soapText) {
+      pushNotice("error", "Không có nội dung SOAP để sao chép.");
+      return;
+    }
+
+    if (!navigator?.clipboard) {
+      pushNotice("error", "Trình duyệt chưa hỗ trợ sao chép tự động.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(soapText);
+      pushNotice("success", "Đã sao chép SOAP vào clipboard.");
+    } catch {
+      pushNotice("error", "Không thể sao chép. Vui lòng thử lại.");
+    }
+  };
+
+  const onExportSoap = () => {
+    if (!sections) return;
+    const soapText = joinSoap(sections).trim();
+    if (!soapText) {
+      pushNotice("error", "Không có nội dung SOAP để xuất file.");
+      return;
+    }
+
+    try {
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
+        now.getHours()
+      )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const fileName = `clara-soap-${timestamp}.md`;
+      const content = `# SOAP Note\n\n${soapText}\n`;
+
+      const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      pushNotice("success", `Đã xuất file ${fileName}.`);
+    } catch {
+      pushNotice("error", "Không thể xuất file. Vui lòng thử lại.");
+    }
   };
 
   return (
@@ -91,24 +145,33 @@ export default function ScribePage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onCopyPlaceholder}
+                onClick={() => void onCopySoap()}
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!hasSoapContent}
               >
-                Sao chép (placeholder)
+                Sao chép
               </button>
               <button
                 type="button"
-                onClick={onExportPlaceholder}
+                onClick={onExportSoap}
                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!hasSoapContent}
               >
-                Xuất file (placeholder)
+                Xuất file
               </button>
             </div>
 
-            {placeholderNotice ? (
-              <p className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{placeholderNotice}</p>
+            {notice ? (
+              <p
+                className={[
+                  "rounded-md border px-3 py-2 text-xs",
+                  notice.tone === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-700",
+                ].join(" ")}
+              >
+                {notice.message}
+              </p>
             ) : null}
 
             <div className="grid gap-3 md:grid-cols-2">

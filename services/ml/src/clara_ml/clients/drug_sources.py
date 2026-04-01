@@ -19,6 +19,8 @@ _SEVERITY_MAP = {
     "minor": "low",
     "low": "low",
 }
+_CACHE_TTL_SECONDS = 600.0
+_DDI_CONTEXT_CACHE: dict[tuple[str, ...], tuple[float, "ExternalDDIResult"]] = {}
 
 
 @dataclass
@@ -46,6 +48,14 @@ class DrugSourceClient:
         result = ExternalDDIResult()
         if len(meds) < 2:
             return result
+        cache_key = tuple(meds)
+        now = time.time()
+        cached_item = _DDI_CONTEXT_CACHE.get(cache_key)
+        if cached_item:
+            cached_at, cached_value = cached_item
+            if (now - cached_at) <= _CACHE_TTL_SECONDS:
+                return self._clone_result(cached_value)
+            _DDI_CONTEXT_CACHE.pop(cache_key, None)
 
         rxnorm_map, rxnav_alerts, rxnav_errors = self._fetch_rxnav_interactions(meds)
         if rxnorm_map:
@@ -65,7 +75,24 @@ class DrugSourceClient:
         if openfda_errors:
             result.source_errors["openfda"] = sorted(openfda_errors)
 
+        _DDI_CONTEXT_CACHE[cache_key] = (now, self._clone_result(result))
         return result
+
+    @staticmethod
+    def _clone_result(result: ExternalDDIResult) -> ExternalDDIResult:
+        return ExternalDDIResult(
+            rxnorm_map=dict(result.rxnorm_map),
+            rxnav_alerts=[dict(item) for item in result.rxnav_alerts],
+            openfda_evidence={
+                tuple(pair): dict(values)
+                for pair, values in result.openfda_evidence.items()
+            },
+            source_used=list(result.source_used),
+            source_errors={
+                source_name: list(errors)
+                for source_name, errors in result.source_errors.items()
+            },
+        )
 
     def _fetch_rxnav_interactions(
         self,
@@ -113,29 +140,30 @@ class DrugSourceClient:
         success = False
 
         with httpx.Client(timeout=self._timeout_seconds) as client:
-            for med_a, med_b in list(combinations(medications, 2))[:8]:
+            # Keep a bounded pair-set for predictable latency on demo paths.
+            for med_a, med_b in list(combinations(medications, 2))[:4]:
                 pair_key = tuple(sorted((med_a, med_b)))
 
-                label_hits = 0
-                label_query_success = False
-                for subject, object_ in ((med_a, med_b), (med_b, med_a)):
-                    label_data, label_error = self._request_json(
-                        client,
-                        f"{_OPENFDA_BASE_URL}/label.json",
-                        params={
-                            "search": (
-                                f'openfda.generic_name:"{subject}" AND '
-                                f'drug_interactions:"{object_}"'
-                            ),
-                            "limit": 1,
-                        },
-                        allow_not_found=True,
-                    )
-                    if label_error:
-                        errors.add(label_error)
-                        continue
+                label_search = (
+                    f'(openfda.generic_name:"{med_a}" AND drug_interactions:"{med_b}") OR '
+                    f'(openfda.generic_name:"{med_b}" AND drug_interactions:"{med_a}")'
+                )
+                label_data, label_error = self._request_json(
+                    client,
+                    f"{_OPENFDA_BASE_URL}/label.json",
+                    params={
+                        "search": label_search,
+                        "limit": 1,
+                    },
+                    allow_not_found=True,
+                )
+                if label_error:
+                    errors.add(label_error)
+                    label_hits = 0
+                    label_query_success = False
+                else:
                     label_query_success = True
-                    label_hits = max(label_hits, self._extract_total_count(label_data))
+                    label_hits = self._extract_total_count(label_data)
 
                 event_data, event_error = self._request_json(
                     client,

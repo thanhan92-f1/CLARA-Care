@@ -304,7 +304,93 @@ sequenceDiagram
     A->>ADE: Gửi yêu cầu ADE multipart (các endpoint ADE đã cấu hình)
     ADE-->>A: văn bản ADE đã trích xuất
     A-->>M: danh sách phát hiện + nguồn ADE + endpoint ADE
-```
+``` 
+
+## TÀI LIỆU THAM KHẢO
+
+### A. Văn bản, tiêu chuẩn và nguồn chính thống
+
+1. Nghị định số 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân (Chính phủ Việt Nam):  
+   https://thuvienphapluat.vn/van-ban/Cong-nghe-thong-tin/Nghi-dinh-13-2023-ND-CP-bao-ve-du-lieu-ca-nhan-567048.aspx
+2. WHO Vietnam - Noncommunicable diseases:  
+   https://www.who.int/vietnam/health-topics/noncommunicable-diseases
+3. WHO Vietnam - Cardiovascular diseases:  
+   https://www.who.int/vietnam/health-topics/cardiovascular-diseases
+
+### B. Nguồn dữ liệu y khoa và dược học sử dụng trong hệ thống
+
+1. PubMed (NCBI): https://pubmed.ncbi.nlm.nih.gov/
+2. NCBI E-utilities API: https://www.ncbi.nlm.nih.gov/books/NBK25501/
+3. Europe PMC API: https://europepmc.org/RestfulWebService
+4. OpenAlex API: https://docs.openalex.org/
+5. Crossref REST API: https://api.crossref.org/
+6. ClinicalTrials.gov API v2: https://clinicaltrials.gov/data-api/about-api
+7. DailyMed API / Web services: https://dailymed.nlm.nih.gov/dailymed/webservices-help.cfm
+8. RxNav / RxNorm APIs (NLM): https://lhncbc.nlm.nih.gov/RxNav/APIs/
+9. openFDA API: https://open.fda.gov/apis/
+10. Semantic Scholar API: https://api.semanticscholar.org/api-docs/
+
+### C. Tài liệu kỹ thuật nền tảng triển khai
+
+1. FastAPI Documentation: https://fastapi.tiangolo.com/
+2. Next.js Documentation: https://nextjs.org/docs
+3. Flutter Documentation: https://docs.flutter.dev/
+4. PostgreSQL Documentation: https://www.postgresql.org/docs/
+5. Redis Documentation: https://redis.io/docs/
+6. Milvus Documentation: https://milvus.io/docs
+7. Elasticsearch Documentation: https://www.elastic.co/guide/
+8. Neo4j Documentation: https://neo4j.com/docs/
+
+### D. Tài liệu nội bộ dự án CLARA-Care (đính kèm trong repo)
+
+1. Kiến trúc runtime và routing:  
+   `/docs/architecture/clara-runtime-and-routing.md`
+2. Đề xuất tổng thể dự án:  
+   `/docs/proposal/clara-full-proposal-2026-03-29.md`
+3. Mô tả hạ tầng và quy trình phát triển:  
+   `/README.md`
+4. Tài liệu API service:  
+   `/services/api/README.md`
+5. Tài liệu ML service:  
+   `/services/ml/README.md`
+6. Bộ chỉ số và hiện vật demo hackathon:  
+   `/docs/hackathon/kpi-snapshot.md`, `/docs/hackathon/demo-artifact-pack.md`
+
+### E. Bối cảnh y tế Việt Nam, sử dụng thuốc và tuân thủ điều trị (bổ sung)
+
+1. WHO Vietnam news release (2025): NCDs are the leading cause of death in Viet Nam, accounting for about 80% of deaths.  
+   https://www.who.int/vietnam/news/detail/15-12-2025-viet-nam-unites-to-tackle-top-causes-of-disease-and-death
+2. WHO Vietnam CVD topic page: CVD burden and hypertension management context in Viet Nam.  
+   https://www.who.int/vietnam/health-topics/cardiovascular-diseases
+3. de Oliveira LM et al. Prevalence of drug interactions in hospitalised elderly patients: a systematic review. Eur J Hosp Pharm. 2021;28(1):4-9. PMID: 33355278 | DOI: 10.1136/ejhpharm-2019-002111  
+   https://pubmed.ncbi.nlm.nih.gov/33355278/
+4. Hughes JE et al. Prevalence of Drug-Drug Interactions in Older Community-Dwelling Individuals: A Systematic Review and Meta-analysis. Drugs Aging. 2023;40(2):117-134. PMID: 36692678 | DOI: 10.1007/s40266-022-01001-5  
+   https://pubmed.ncbi.nlm.nih.gov/36692678/
+5. Doan DA et al. Prevalence and associated factors of antibiotic self-medication and home storage among antibiotic users: a cross-sectional study in Vietnam. BMC Public Health. 2025;25(1):1940. PMID: 40420096 | DOI: 10.1186/s12889-025-23202-4  
+   https://pubmed.ncbi.nlm.nih.gov/40420096/
+6. Nguyen TPL et al. Adherence to hypertension medication: Quantitative and qualitative investigations in a rural Northern Vietnamese community. PLoS One. 2017;12(2):e0171203. PMID: 28146584 | DOI: 10.1371/journal.pone.0171203  
+   https://pubmed.ncbi.nlm.nih.gov/28146584/
+7. Hien HA et al. Factors influencing medication adherence among hypertensive patients in primary care settings in Central Vietnam: A cross-sectional study. PLoS One. 2025;20(1):e0307588. PMID: 39874240 | DOI: 10.1371/journal.pone.0307588  
+   https://pubmed.ncbi.nlm.nih.gov/39874240/
+8. Scotti S et al. Enhancing Medication Adherence in Older Adults: A Systematic Review of Evidence-Based Strategies. J Am Geriatr Soc. 2025. PMID: 41467772 | DOI: 10.1111/jgs.70257  
+   https://pubmed.ncbi.nlm.nih.gov/41467772/
+9. World Bank WDI indicator (SP.POP.65UP.TO.ZS): Population ages 65 and above (% of total population), Viet Nam, 1960-2024 series.  
+   https://data.worldbank.org/indicator/SP.POP.65UP.TO.ZS?locations=VN
+
+### F. Medical AI và RAG trong y khoa (bổ sung)
+
+1. Singhal K et al. Large language models encode clinical knowledge. Nature. 2023;620(7972):172-180. PMID: 37438534 | DOI: 10.1038/s41586-023-06291-2  
+   https://pubmed.ncbi.nlm.nih.gov/37438534/
+2. Xiong G, Jin Q, Lu Z, Zhang A. Benchmarking Retrieval-Augmented Generation for Medicine. arXiv:2402.13178 (2024).  
+   https://arxiv.org/abs/2402.13178
+3. Xiong G, Jin Q, Wang X, Zhang M, Lu Z, Zhang A. Improving Retrieval-Augmented Generation in Medicine with Iterative Follow-up Questions. arXiv:2408.00727 (2024).  
+   https://arxiv.org/abs/2408.00727
+4. Zhao X, Liu S, Yang SY, Miao C. MedRAG: Enhancing Retrieval-augmented Generation with Knowledge Graph-Elicited Reasoning for Healthcare Copilot. arXiv:2502.04413 (2025).  
+   https://arxiv.org/abs/2502.04413
+5. Jin Q et al. BiomedRAG: A retrieval augmented large language model for biomedicine. J Biomed Inform. 2025;162:104769. DOI: 10.1016/j.jbi.2024.104769  
+   https://doi.org/10.1016/j.jbi.2024.104769
+6. Peng C et al. A study of generative large language model for medical research and healthcare. npj Digit Med. 2023;6:188. DOI: 10.1038/s41746-023-00958-w  
+   https://www.nature.com/articles/s41746-023-00958-w
 
 ### Phụ lục 2: Sơ đồ kiến trúc hệ thống và tích hợp ứng dụng web
 (Routing qua chat/research/careguard/council/scribe và kết nối dịch vụ ngoài)

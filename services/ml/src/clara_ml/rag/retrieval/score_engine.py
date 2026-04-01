@@ -68,18 +68,54 @@ class DocumentScorer:
         for doc, doc_vector in zip(normalized_docs, doc_vectors):
             base_score = sum(a * b for a, b in zip(query_vector, doc_vector))
             lexical_overlap = self._lexical_overlap(query_tokens, doc.text)
-            doc_tokens = self._tokenize(doc.text)
+            metadata = doc.metadata or {}
+            doc_haystack = " ".join(
+                [
+                    doc.text,
+                    str(metadata.get("title") or ""),
+                    str(metadata.get("url") or ""),
+                    str(doc.id or ""),
+                ]
+            )
+            doc_tokens = self._tokenize(doc_haystack)
             primary_drug = str(query_profile.get("primary_drug") or "").strip().lower()
+            primary_aliases = {
+                str(item).strip().lower()
+                for item in query_profile.get("primary_aliases", [])
+                if str(item).strip()
+            }
+            if primary_drug:
+                primary_aliases.add(primary_drug)
             co_drugs = {
                 str(item).strip().lower()
                 for item in query_profile.get("co_drugs", [])
                 if str(item).strip()
             }
-            has_primary_drug = bool(primary_drug) and primary_drug in doc_tokens
-            has_codrug_signal = bool(co_drugs.intersection(doc_tokens))
+            co_drug_aliases = set(co_drugs)
+            co_drug_aliases_raw = query_profile.get("co_drug_aliases")
+            if isinstance(co_drug_aliases_raw, dict):
+                for aliases in co_drug_aliases_raw.values():
+                    if not isinstance(aliases, list):
+                        continue
+                    for item in aliases:
+                        alias = str(item).strip().lower()
+                        if alias:
+                            co_drug_aliases.add(alias)
+            has_primary_drug = bool(primary_aliases) and bool(primary_aliases.intersection(doc_tokens))
+            has_codrug_signal = bool(co_drug_aliases.intersection(doc_tokens))
             has_interaction_signal = bool(
                 doc_tokens.intersection(
-                    {"interaction", "ddi", "bleeding", "contraindication", "adverse", "risk"}
+                    {
+                        "interaction",
+                        "ddi",
+                        "bleeding",
+                        "contraindication",
+                        "adverse",
+                        "risk",
+                        "hemorrhage",
+                        "pharmacokinetic",
+                        "pharmacodynamic",
+                    }
                 )
             )
             is_ddi_query = bool(query_profile.get("is_ddi_query"))
@@ -162,6 +198,17 @@ class DocumentScorer:
                 * tag_factor
                 * pdf_factor
             )
+            ddi_boost = 1.0
+            if is_ddi_query:
+                if has_primary_drug and has_codrug_signal and has_interaction_signal:
+                    ddi_boost = 1.3
+                elif has_primary_drug and has_codrug_signal:
+                    ddi_boost = 1.22
+                elif has_primary_drug and has_interaction_signal:
+                    ddi_boost = 1.16
+                elif trusted_label_source and has_primary_drug:
+                    ddi_boost = 1.1
+            score *= ddi_boost
 
             score_breakdown = {
                 "base_score": float(base_score),
@@ -173,6 +220,7 @@ class DocumentScorer:
                 "trust_factor": float(trust_factor),
                 "tag_factor": float(tag_factor),
                 "pdf_factor": float(pdf_factor),
+                "ddi_boost": float(ddi_boost),
                 "final_score": float(score),
                 "ddi_query": is_ddi_query,
                 "has_primary_drug": has_primary_drug,
@@ -186,6 +234,7 @@ class DocumentScorer:
             doc.metadata["trust_factor"] = trust_factor
             doc.metadata["tag_factor"] = tag_factor
             doc.metadata["pdf_factor"] = pdf_factor
+            doc.metadata["ddi_boost"] = ddi_boost
             doc.metadata["score"] = float(score)
             doc.metadata["score_breakdown"] = score_breakdown
             trace_rows.append(

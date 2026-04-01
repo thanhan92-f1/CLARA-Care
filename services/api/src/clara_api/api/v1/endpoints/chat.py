@@ -1,10 +1,9 @@
-import re
 import logging
+import re
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from clara_api.core.attribution import (
@@ -20,14 +19,10 @@ from clara_api.core.flow import get_chat_flow_event_persister
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.session import get_db
-from clara_api.schemas import RagFlowConfig
+from clara_api.schemas import ChatRequest, ChatResponse, RagFlowConfig
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-class ChatRequest(BaseModel):
-    message: str
 
 
 _SAFE_MODE_NOTICE = (
@@ -289,9 +284,9 @@ def _load_rag_runtime(db: Session) -> tuple[RagFlowConfig, list[dict[str, Any]]]
         return fallback.rag_flow, [item.model_dump() for item in fallback.rag_sources]
 
 
-@router.post("/")
-@router.post("")
-def chat_placeholder(
+@router.post("/", response_model=ChatResponse, response_model_exclude_none=True)
+@router.post("", response_model=ChatResponse, response_model_exclude_none=True)
+def chat_completion(
     payload: ChatRequest,
     token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
     db: Session = Depends(get_db),
@@ -373,6 +368,12 @@ def chat_placeholder(
             logger.exception("Failed to persist chat flow event")
 
         attribution = _build_chat_attribution(ml_response, rag_sources)
+        retrieved_ids = ml_response.get("retrieved_ids")
+        if not isinstance(retrieved_ids, list):
+            retrieved_ids = []
+        fallback_reason = ml_response.get("fallback_reason")
+        fallback_used = bool(attribution.get("fallback_used"))
+
         response_payload = {
             "message": payload.message,
             "reply": reply,
@@ -381,9 +382,12 @@ def chat_placeholder(
             "confidence": ml_response.get("confidence"),
             "emergency": ml_response.get("emergency"),
             "model_used": ml_response.get("model_used"),
-            "retrieved_ids": ml_response.get("retrieved_ids", []),
+            "retrieved_ids": retrieved_ids,
             "ml": ml_response,
+            "fallback": fallback_used,
         }
+        if isinstance(fallback_reason, str) and fallback_reason.strip():
+            response_payload["fallback_reason"] = fallback_reason.strip()
         return attach_attribution(response_payload, attribution=attribution)
     except HTTPException:
         raise
@@ -393,13 +397,14 @@ def chat_placeholder(
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"deepseek_required_unavailable:chat_internal_error:{exc.__class__.__name__}",
-            )
+            ) from exc
 
         fallback_ml = _safe_chat_fallback(
             payload.message,
             token.role,
             reason=f"chat_internal_error:{exc.__class__.__name__}",
         )
+        fallback_reason = fallback_ml.get("fallback_reason")
         response_payload = {
             "message": payload.message,
             "reply": str(fallback_ml.get("answer", "")).strip() or _SAFE_MODE_NOTICE,
@@ -410,6 +415,9 @@ def chat_placeholder(
             "model_used": fallback_ml.get("model_used"),
             "retrieved_ids": fallback_ml.get("retrieved_ids", []),
             "ml": fallback_ml,
+            "fallback": True,
         }
+        if isinstance(fallback_reason, str) and fallback_reason.strip():
+            response_payload["fallback_reason"] = fallback_reason.strip()
         attribution = _build_chat_attribution(fallback_ml, rag_sources)
         return attach_attribution(response_payload, attribution=attribution)

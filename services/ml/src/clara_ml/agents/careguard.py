@@ -525,9 +525,11 @@ def run_careguard_analyze(payload: dict) -> dict:
 
     if needs_external_lookup and external_ddi_enabled:
         try:
-            external = DrugSourceClient(timeout_seconds=settings.external_ddi_timeout_seconds).fetch_ddi_context(
-                medications
-            )
+            # Favor deterministic fallback behavior on slow upstreams by avoiding retry storms.
+            external = DrugSourceClient(
+                timeout_seconds=settings.external_ddi_timeout_seconds,
+                max_retries=0,
+            ).fetch_ddi_context(medications)
             external_ddi_alerts = external.rxnav_alerts
             openfda_evidence = external.openfda_evidence
             source_errors = external.source_errors

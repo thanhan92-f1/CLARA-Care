@@ -26,7 +26,13 @@ Workflow: `.github/workflows/branch-protection-sync.yml`
 
 `required-ci-gates` gom 2 lop:
 
-- Blocking core checks (luon bat buoc): `quality`, `api-tests`, `ml-tests`, `web-lint-build`.
+- Blocking core checks (luon bat buoc):
+  - `quality`
+  - `scripts-syntax`
+  - `hackathon-artifacts-smoke`
+  - `api-tests`
+  - `ml-tests`
+  - `web-lint-build`
 - Hardening checks (`security-audit`, `docker-compose-smoke`, `container-scan`):
   - `push/workflow_dispatch`: blocking.
   - `pull_request`: advisory mac dinh.

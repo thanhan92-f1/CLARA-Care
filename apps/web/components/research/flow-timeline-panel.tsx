@@ -14,6 +14,16 @@ type FlowTimelinePanelProps = {
   mode: FlowTimelineMode;
 };
 
+type TimelineSummary = {
+  total: number;
+  pending: number;
+  inProgress: number;
+  completed: number;
+  warning: number;
+  failed: number;
+  skipped: number;
+};
+
 const STATUS_META: Record<
   ResearchFlowStageStatus,
   {
@@ -132,12 +142,69 @@ function isErrorDetail(detail?: string): boolean {
   );
 }
 
+function summarizeStages(stages: ResearchFlowStage[]): TimelineSummary {
+  const summary: TimelineSummary = {
+    total: stages.length,
+    pending: 0,
+    inProgress: 0,
+    completed: 0,
+    warning: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const stage of stages) {
+    const status = normalizeStatus(stage.status);
+    if (status === "pending") summary.pending += 1;
+    if (status === "in_progress") summary.inProgress += 1;
+    if (status === "completed") summary.completed += 1;
+    if (status === "warning") summary.warning += 1;
+    if (status === "failed") summary.failed += 1;
+    if (status === "skipped") summary.skipped += 1;
+  }
+  return summary;
+}
+
+function getProgressPercent(summary: TimelineSummary): number {
+  if (summary.total <= 0) return 0;
+  const done = summary.completed + summary.warning + summary.skipped + summary.failed;
+  return Math.max(0, Math.min(100, Math.round((done / summary.total) * 100)));
+}
+
+function formatPayloadValue(value: unknown): string {
+  if (value == null) return "null";
+  if (typeof value === "string") return value.length > 72 ? `${value.slice(0, 72)}...` : value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (typeof value === "object") return "object";
+  return String(value);
+}
+
+function extractPayloadChips(payload?: Record<string, unknown>): Array<{ key: string; value: string }> {
+  if (!payload) return [];
+  return Object.entries(payload)
+    .slice(0, 6)
+    .map(([key, value]) => ({ key, value: formatPayloadValue(value) }));
+}
+
+function safeStringifyPayload(payload?: Record<string, unknown>): string {
+  if (!payload) return "";
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return "[Payload không thể stringify]";
+  }
+}
+
 export default function FlowTimelinePanel({
   stages,
   events,
   isProcessing,
   mode
 }: FlowTimelinePanelProps) {
+  const summary = summarizeStages(stages);
+  const progressPercent = getProgressPercent(summary);
+
   return (
     <section className="rounded-3xl border border-slate-200/85 bg-white/90 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
       <div className="flex items-center justify-between gap-2">
@@ -158,6 +225,41 @@ export default function FlowTimelinePanel({
           </span>
         ) : null}
       </div>
+
+      {stages.length ? (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <p className="font-semibold text-slate-700 dark:text-slate-200">Tiến độ xử lý</p>
+            <p className="text-slate-600 dark:text-slate-300">{progressPercent}%</p>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+            <div
+              className={[
+                "h-full transition-all",
+                summary.failed ? "bg-rose-500" : summary.warning ? "bg-amber-500" : "bg-emerald-500",
+              ].join(" ")}
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              completed: {summary.completed}
+            </span>
+            <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-sky-700 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+              in progress: {summary.inProgress}
+            </span>
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+              warning: {summary.warning}
+            </span>
+            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-rose-700 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+              failed: {summary.failed}
+            </span>
+            <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              pending: {summary.pending}
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       {stages.length ? (
         <ol className="mt-4 space-y-2">
@@ -198,12 +300,13 @@ export default function FlowTimelinePanel({
       {events.length ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-800/70">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Event Log</p>
-          <ul className="mt-2 space-y-1.5">
-            {events.slice(-6).map((event) => {
+          <ul className="mt-2 max-h-[22rem] space-y-1.5 overflow-y-auto pr-1">
+            {events.slice(-10).map((event) => {
               const status = STATUS_META[normalizeStatus(event.status)];
               const payloadPreview = formatPayloadPreview(event.payload);
+              const payloadChips = extractPayloadChips(event.payload);
               return (
-                <li key={event.id} className="text-xs text-slate-600 dark:text-slate-300">
+                <li key={event.id} className="rounded-lg border border-slate-200 bg-white/80 p-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
                   <div className="flex flex-wrap items-center gap-1">
                     <span className="font-semibold text-slate-700 dark:text-slate-200">{event.label}</span>
                     {event.component ? (
@@ -230,6 +333,28 @@ export default function FlowTimelinePanel({
                   ) : null}
                   {payloadPreview ? (
                     <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{payloadPreview}</p>
+                  ) : null}
+                  {payloadChips.length ? (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {payloadChips.map((chip) => (
+                        <span
+                          key={`${event.id}-${chip.key}`}
+                          className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        >
+                          {chip.key}: {chip.value}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {event.payload ? (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        Payload chi tiết
+                      </summary>
+                      <pre className="mt-1 overflow-x-auto rounded-md border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                        {safeStringifyPayload(event.payload)}
+                      </pre>
+                    </details>
                   ) : null}
                 </li>
               );

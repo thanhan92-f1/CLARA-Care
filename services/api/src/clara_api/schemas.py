@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -185,6 +185,26 @@ class UnifiedContractMetadata(BaseModel):
     attributions: list[AttributionEntry] = Field(default_factory=list)
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
+class ChatResponse(BaseModel):
+    message: str
+    reply: str
+    role: str
+    intent: str | None = None
+    confidence: float | None = None
+    emergency: bool | None = None
+    model_used: str | None = None
+    retrieved_ids: list[Any] = Field(default_factory=list)
+    ml: dict[str, Any] = Field(default_factory=dict)
+    fallback: bool = False
+    fallback_reason: str | None = None
+    attribution: dict[str, Any] = Field(default_factory=dict)
+    attributions: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class MedicineCabinetItemCreate(BaseModel):
     drug_name: str = Field(min_length=1, max_length=255)
     dosage: str = ""
@@ -289,6 +309,35 @@ class SystemControlTowerConfig(BaseModel):
     rag_sources: list[RagSourceEntry] = Field(default_factory=list)
     rag_flow: RagFlowConfig = Field(default_factory=RagFlowConfig)
     careguard_runtime: CareguardRuntimeConfig = Field(default_factory=CareguardRuntimeConfig)
+
+
+class SystemSourceRegistryItem(BaseModel):
+    id: str
+    name: str
+    group: str
+    phase: Literal["public_no_key", "key_required", "commercial"]
+    key_required: bool
+    status: str
+    notes: str
+
+
+class SystemSourcesRegistryResponse(BaseModel):
+    public_no_key: list[SystemSourceRegistryItem] = Field(default_factory=list)
+    key_required: list[SystemSourceRegistryItem] = Field(default_factory=list)
+    commercial: list[SystemSourceRegistryItem] = Field(default_factory=list)
+
+
+class MobileApiHealth(BaseModel):
+    status: str
+    endpoint: str
+
+
+class MobileSummaryResponse(BaseModel):
+    role: Role
+    api_health: MobileApiHealth
+    quick_links: dict[str, str] = Field(default_factory=dict)
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
+    last_updated: datetime
 
 
 class KnowledgeSourceCreateRequest(BaseModel):

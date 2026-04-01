@@ -60,6 +60,8 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
     assert isinstance(body["attribution"]["source_used"], list)
     assert body["attribution"]["source_errors"] == {}
     assert body["attribution"]["fallback_used"] is False
+    assert body["fallback"] is False
+    assert body.get("fallback_reason") is None
     assert isinstance(body["attributions"], list)
     assert body["attributions"][0]["channel"] == "chat"
 
@@ -109,6 +111,8 @@ def test_chat_returns_safe_fallback_when_ml_unavailable(monkeypatch) -> None:
     assert body["model_used"] == "api-safe-fallback-v1"
     assert "không kết nối được nguồn RAG" in body["reply"]
     assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")
+    assert body["fallback"] is True
+    assert body["fallback_reason"].startswith("ml_unavailable:")
     assert body["attribution"]["channel"] == "chat"
     assert body["attribution"]["mode"] == "safe_mode"
     assert body["attribution"]["citation_count"] == 0
@@ -137,6 +141,8 @@ def test_chat_returns_smalltalk_safe_fallback_for_greeting(monkeypatch) -> None:
     assert body["model_used"] == "api-safe-smalltalk-v1"
     assert "chào" in body["reply"].lower()
     assert body["ml"]["fallback_reason"].startswith("ml_unavailable:")
+    assert body["fallback"] is True
+    assert body["fallback_reason"].startswith("ml_unavailable:")
 
 
 def test_chat_recovers_with_safe_mode_retry_when_primary_5xx(monkeypatch) -> None:
@@ -188,6 +194,8 @@ def test_chat_recovers_with_safe_mode_retry_when_primary_5xx(monkeypatch) -> Non
     assert body["model_used"] == "deepseek-v3.2"
     assert body["ml"]["safe_mode_used"] is True
     assert body["ml"]["fallback_reason"].startswith("ml_upstream_5xx:")
+    assert body["fallback"] is True
+    assert "safe_mode_recovered" in body["fallback_reason"]
     assert call_count["count"] == 2
     assert len(captured_payloads) == 2
 
@@ -244,6 +252,8 @@ def test_chat_uses_safe_mode_when_primary_ml_path_times_out(monkeypatch) -> None
     assert "truy xuất chuyên sâu đang bận" in body["reply"].lower()
     assert "safe_mode_recovered" in str(body["ml"].get("fallback_reason", ""))
     assert body["ml"].get("safe_mode_used") is True
+    assert body["fallback"] is True
+    assert "safe_mode_recovered" in str(body.get("fallback_reason", ""))
 
     assert len(calls) == 2
     safe_mode_payload = calls[1]["json"]

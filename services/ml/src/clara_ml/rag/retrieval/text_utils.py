@@ -7,6 +7,56 @@ from typing import Any, Sequence
 from .domain import Document, TRUST_TIER_FACTOR
 
 
+_INTERACTION_SIGNALS = {
+    "tuong",
+    "tac",
+    "tuongtac",
+    "interaction",
+    "ddi",
+    "contraindication",
+    "bleeding",
+    "inr",
+    "interact",
+    "uong",
+    "chung",
+}
+
+_MEDICATION_ALIASES: dict[str, tuple[str, ...]] = {
+    "warfarin": ("warfarin", "coumadin", "jantoven"),
+    "ibuprofen": ("ibuprofen", "advil", "motrin"),
+    "naproxen": ("naproxen", "aleve"),
+    "diclofenac": ("diclofenac", "voltaren"),
+    "aspirin": ("aspirin", "asa", "acetylsalicylic"),
+    "paracetamol": ("paracetamol", "acetaminophen", "tylenol"),
+    "nsaid": (
+        "nsaid",
+        "nonsteroidal",
+        "anti-inflammatory",
+        "khang_viem",
+        "khang",
+        "viem",
+        "giam_dau",
+        "analgesic",
+        "painkiller",
+    ),
+    "clopidogrel": ("clopidogrel", "plavix"),
+    "omeprazole": ("omeprazole", "prilosec"),
+    "simvastatin": ("simvastatin",),
+    "atorvastatin": ("atorvastatin",),
+    "clarithromycin": ("clarithromycin",),
+}
+
+_GENERIC_ANALGESIC_MARKERS = {
+    "giam dau",
+    "thuoc giam dau",
+    "painkiller",
+    "analgesic",
+    "nsaid",
+    "khang viem",
+    "nonsteroidal",
+}
+
+
 def safe_float(value: Any, default: float) -> float:
     try:
         return float(value)
@@ -252,41 +302,36 @@ def analyze_query_profile(query: str) -> dict[str, Any]:
     lowered = query.lower()
     folded = _ascii_fold(query)
     terms = _tokenize_terms(query)
-    interaction_signals = {
-        "tuong",
-        "tac",
-        "tuongtac",
-        "interaction",
-        "ddi",
-        "contraindication",
-        "bleeding",
-        "inr",
-    }
-    medication_aliases: dict[str, tuple[str, ...]] = {
-        "warfarin": ("warfarin", "coumadin"),
-        "ibuprofen": ("ibuprofen",),
-        "naproxen": ("naproxen",),
-        "diclofenac": ("diclofenac",),
-        "aspirin": ("aspirin",),
-        "paracetamol": ("paracetamol", "acetaminophen"),
-        "nsaid": ("nsaid", "nonsteroidal"),
-    }
 
     normalized_drugs: list[str] = []
-    for canonical, aliases in medication_aliases.items():
+    for canonical, aliases in _MEDICATION_ALIASES.items():
         if any(alias in terms for alias in aliases):
             normalized_drugs.append(canonical)
 
-    is_ddi_query = bool(terms.intersection(interaction_signals)) and bool(normalized_drugs)
+    is_ddi_query = bool(terms.intersection(_INTERACTION_SIGNALS)) and bool(normalized_drugs)
     if "tuong tac" in folded and normalized_drugs:
         is_ddi_query = True
     if "drug interaction" in lowered and normalized_drugs:
         is_ddi_query = True
+    if "uong chung" in folded and normalized_drugs:
+        is_ddi_query = True
 
-    primary_drug = "warfarin" if "warfarin" in normalized_drugs else (normalized_drugs[0] if normalized_drugs else "")
+    primary_drug = (
+        "warfarin" if "warfarin" in normalized_drugs else (normalized_drugs[0] if normalized_drugs else "")
+    )
     co_drugs = [item for item in normalized_drugs if item != primary_drug]
+    has_generic_analgesic = any(marker in folded for marker in _GENERIC_ANALGESIC_MARKERS)
+    if primary_drug == "warfarin" and has_generic_analgesic and "nsaid" not in co_drugs:
+        co_drugs.append("nsaid")
     if is_ddi_query and primary_drug == "warfarin" and not co_drugs:
         co_drugs = ["ibuprofen", "naproxen", "diclofenac", "aspirin", "paracetamol", "nsaid"]
+
+    primary_aliases = sorted(
+        {primary_drug, *_MEDICATION_ALIASES.get(primary_drug, ())} if primary_drug else set()
+    )
+    co_drug_aliases = {
+        drug: sorted({drug, *_MEDICATION_ALIASES.get(drug, ())}) for drug in co_drugs
+    }
 
     return {
         "query": query,
@@ -294,7 +339,9 @@ def analyze_query_profile(query: str) -> dict[str, Any]:
         "is_ddi_query": is_ddi_query,
         "primary_drug": primary_drug,
         "co_drugs": co_drugs,
-        "interaction_signals": sorted(list(interaction_signals.intersection(terms))),
+        "primary_aliases": primary_aliases,
+        "co_drug_aliases": co_drug_aliases,
+        "interaction_signals": sorted(list(_INTERACTION_SIGNALS.intersection(terms))),
     }
 
 

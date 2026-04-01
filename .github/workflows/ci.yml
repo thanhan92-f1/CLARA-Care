@@ -29,6 +29,8 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       docker: ${{ steps.filter.outputs.docker }}
       ci: ${{ steps.filter.outputs.ci }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      hackathon: ${{ steps.filter.outputs.hackathon }}
       python: ${{ steps.filter.outputs.python }}
       python_changed_files: ${{ steps.filter.outputs.python_changed_files }}
     steps:
@@ -49,6 +51,12 @@ jobs:
               - 'apps/web/**'
             docs:
               - 'docs/**'
+            scripts:
+              - 'scripts/**'
+            hackathon:
+              - 'scripts/demo/**'
+              - 'data/demo/**'
+              - 'docs/hackathon/**'
             docker:
               - 'deploy/docker/**'
               - 'services/**/Dockerfile'
@@ -56,7 +64,6 @@ jobs:
               - '.env.example'
             ci:
               - '.github/workflows/**'
-              - 'scripts/docs/**'
               - 'Makefile'
               - 'README.md'
             python:
@@ -188,6 +195,70 @@ jobs:
               check=True,
           )
           PY
+
+  scripts-syntax:
+    name: scripts syntax check
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.scripts == 'true' ||
+      needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate shell script syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r script_file; do
+            echo "bash -n ${script_file}"
+            bash -n "${script_file}"
+          done < <(find scripts -type f -name '*.sh' | sort)
+
+  hackathon-artifacts-smoke:
+    name: hackathon artifacts smoke
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 20
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.hackathon == 'true' ||
+      needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Run artifact + KPI static smoke
+        id: smoke
+        run: |
+          set -euo pipefail
+          run_id="ci-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+
+          python3 scripts/demo/generate_demo_artifacts.py --run-id "${run_id}"
+          python3 scripts/demo/run_hackathon_kpis.py --mode static --run-id "${run_id}"
+
+          test -f "artifacts/round2/${run_id}/kpi-report/kpi-report.json"
+          test -f "artifacts/round2/${run_id}/test-report/test-report.json"
+          test -f "artifacts/round2/${run_id}/fallback-proof/fallback-proof.json"
+
+      - name: Upload hackathon smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hackathon-artifacts-${{ github.run_id }}
+          path: |
+            artifacts/round2/${{ steps.smoke.outputs.run_id }}
+            docs/hackathon/data-manifest.json
+            docs/hackathon/kpi-snapshot.md
+          if-no-files-found: ignore
 
   api-tests:
     name: pytest api
@@ -541,6 +612,8 @@ jobs:
     if: always()
     needs:
       - quality
+      - scripts-syntax
+      - hackathon-artifacts-smoke
       - api-tests
       - ml-tests
       - web-lint-build
@@ -555,6 +628,8 @@ jobs:
           EVENT_BASE_REF: ${{ github.base_ref }}
           STRICT_PR_HARDENING: ${{ vars.CI_STRICT_PR_HARDENING || 'false' }}
           QUALITY_RESULT: ${{ needs.quality.result }}
+          SCRIPTS_SYNTAX_RESULT: ${{ needs.scripts-syntax.result }}
+          HACKATHON_ARTIFACTS_RESULT: ${{ needs.hackathon-artifacts-smoke.result }}
           API_TESTS_RESULT: ${{ needs.api-tests.result }}
           ML_TESTS_RESULT: ${{ needs.ml-tests.result }}
           WEB_RESULT: ${{ needs.web-lint-build.result }}
@@ -603,6 +678,8 @@ jobs:
           fi
 
           check_required_job "quality" "$QUALITY_RESULT" || status=1
+          check_required_job "scripts-syntax" "$SCRIPTS_SYNTAX_RESULT" || status=1
+          check_required_job "hackathon-artifacts-smoke" "$HACKATHON_ARTIFACTS_RESULT" || status=1
           check_required_job "api-tests" "$API_TESTS_RESULT" || status=1
           check_required_job "ml-tests" "$ML_TESTS_RESULT" || status=1
           check_required_job "web-lint-build" "$WEB_RESULT" || status=1
@@ -646,6 +723,8 @@ jobs:
             echo "- Policy mode: \`${policy_mode}\`"
             echo "- Strict PR hardening: \`${strict_pr_hardening}\`"
             echo "- quality: \`${QUALITY_RESULT}\`"
+            echo "- scripts-syntax: \`${SCRIPTS_SYNTAX_RESULT}\`"
+            echo "- hackathon-artifacts-smoke: \`${HACKATHON_ARTIFACTS_RESULT}\`"
             echo "- api-tests: \`${API_TESTS_RESULT}\`"
             echo "- ml-tests: \`${ML_TESTS_RESULT}\`"
             echo "- web-lint-build: \`${WEB_RESULT}\`"

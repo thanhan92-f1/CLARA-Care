@@ -165,8 +165,15 @@ def _build_planner_hints(
             "ddi",
             "contraindication",
             "polypharmacy",
+            "tuong tac",
+            "tương tác",
+            "da thuoc",
+            "đa thuốc",
+            "thuoc",
+            "thuốc",
         }
     )
+    evidence_query = bool(evidence_query or is_ddi_query)
 
     reason_codes: list[str] = ["tier2_standard_flow"]
     if research_mode == "deep":
@@ -178,9 +185,13 @@ def _build_planner_hints(
         reason_codes.append("knowledge_sources_present")
     if evidence_query:
         reason_codes.append("evidence_heavy_query")
+    if is_ddi_query:
+        reason_codes.append("ddi_query_detected")
 
     internal_top_k = 4 if has_uploaded else 3
     if has_knowledge_sources:
+        internal_top_k += 1
+    if is_ddi_query:
         internal_top_k += 1
     hybrid_top_k = max(internal_top_k + 1, 5 if evidence_query else 4)
 
@@ -188,7 +199,7 @@ def _build_planner_hints(
     if deep_mode:
         internal_top_k = min(12, internal_top_k + 2)
         hybrid_top_k = min(12, hybrid_top_k + 3)
-        target_pass_count = 8 if evidence_query else 7
+        target_pass_count = 9 if is_ddi_query else (8 if evidence_query else 7)
     else:
         target_pass_count = 1
     web_enabled = bool(deep_mode or evidence_query or is_ddi_query)
@@ -445,6 +456,17 @@ def _normalize_retrieval_events(
     default_component: str = "retrieval",
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
+    first_timestamp: datetime | None = None
+
+    def _parse_timestamp(value: Any) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
     for item in events:
         if not isinstance(item, dict):
             continue
@@ -454,13 +476,27 @@ def _normalize_retrieval_events(
             source_count = int(source_count_raw)
         except (TypeError, ValueError):
             source_count = 0
+        parsed_timestamp = _parse_timestamp(item.get("timestamp"))
+        if parsed_timestamp and first_timestamp is None:
+            first_timestamp = parsed_timestamp
+        elapsed_ms = (
+            round((parsed_timestamp - first_timestamp).total_seconds() * 1000.0, 3)
+            if parsed_timestamp and first_timestamp
+            else None
+        )
+        sequence = len(normalized) + 1
         payload.setdefault("source_count", max(source_count, 0))
+        payload.setdefault("event_sequence", sequence)
+        if elapsed_ms is not None:
+            payload.setdefault("elapsed_ms", elapsed_ms)
         normalized.append(
             {
                 **item,
                 "component": str(item.get("component") or default_component),
                 "detail": str(item.get("detail") or item.get("note") or ""),
                 "payload": payload,
+                "event_sequence": sequence,
+                **({"elapsed_ms": elapsed_ms} if elapsed_ms is not None else {}),
             }
         )
     return normalized
@@ -607,11 +643,28 @@ def _filter_context_for_topic(topic: str, rows: list[dict[str, Any]]) -> list[di
 
     profile = analyze_query_profile(topic)
     primary = str(profile.get("primary_drug") or "").strip().lower()
+    primary_aliases = {
+        str(item).strip().lower()
+        for item in profile.get("primary_aliases", [])
+        if str(item).strip()
+    }
+    if primary:
+        primary_aliases.add(primary)
     co_drugs = {
         str(item).strip().lower()
         for item in profile.get("co_drugs", [])
         if str(item).strip()
     }
+    co_drug_aliases = set(co_drugs)
+    co_drug_aliases_raw = profile.get("co_drug_aliases")
+    if isinstance(co_drug_aliases_raw, dict):
+        for aliases in co_drug_aliases_raw.values():
+            if not isinstance(aliases, list):
+                continue
+            for item in aliases:
+                alias = str(item).strip().lower()
+                if alias:
+                    co_drug_aliases.add(alias)
     interaction_terms = {"interaction", "ddi", "bleeding", "inr", "contraindication", "adverse"}
     filtered: list[dict[str, Any]] = []
 
@@ -627,14 +680,14 @@ def _filter_context_for_topic(topic: str, rows: list[dict[str, Any]]) -> list[di
             ]
         ).lower()
         tokens = {token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]{2,}", haystack) if token}
-        if primary and primary not in tokens:
+        if primary_aliases and not primary_aliases.intersection(tokens):
             continue
 
         source_name = str(row.get("source") or "").strip().lower()
-        has_primary = bool(primary and primary in tokens)
-        has_codrug = bool(co_drugs.intersection(tokens))
+        has_primary = bool(primary_aliases.intersection(tokens))
+        has_codrug = bool(co_drug_aliases.intersection(tokens))
         has_interaction = bool(interaction_terms.intersection(tokens))
-        trusted_label_source = source_name in {"openfda", "dailymed", "rxnav"}
+        trusted_label_source = source_name in {"openfda", "dailymed", "rxnorm", "rxnav"}
 
         # Keep strong DDI rows (primary + co-drug or interaction).
         if has_primary and (has_codrug or has_interaction):
@@ -647,6 +700,52 @@ def _filter_context_for_topic(topic: str, rows: list[dict[str, Any]]) -> list[di
             filtered.append(row)
 
     return filtered
+
+
+def _infer_fallback_used(rag_result: Any) -> bool:
+    trace = rag_result.trace if isinstance(getattr(rag_result, "trace", None), dict) else {}
+    generation = trace.get("generation") if isinstance(trace.get("generation"), dict) else {}
+    generation_mode = str(generation.get("mode") or "").strip().lower()
+    if generation_mode in {"llm", "retrieval_only"}:
+        return False
+    if generation_mode == "local_synthesis":
+        return True
+
+    model_used = str(getattr(rag_result, "model_used", "") or "").strip().lower()
+    if model_used.startswith("local-synth"):
+        return True
+    return "fallback" in model_used
+
+
+def _trace_rows_for_citation(retrieval_trace: dict[str, Any]) -> list[dict[str, Any]]:
+    retriever_debug = (
+        retrieval_trace.get("retriever_debug")
+        if isinstance(retrieval_trace.get("retriever_debug"), dict)
+        else {}
+    )
+    top_documents = retriever_debug.get("top_documents")
+    if not isinstance(top_documents, list):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for item in top_documents[:10]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "retrieved")
+        doc_id = str(item.get("id") or "")
+        url = _safe_url(item.get("url"))
+        score = item.get("score")
+        rows.append(
+            {
+                "id": doc_id or f"{source}-{len(rows) + 1}",
+                "source": source,
+                "title": doc_id or f"{source} evidence",
+                "text": "",
+                "url": url,
+                "score": score,
+            }
+        )
+    return rows
 
 
 def _has_markdown_heading(content: str, heading: str) -> bool:
@@ -727,9 +826,34 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         planner_hints=planner_hints,
         plan_steps=plan_steps,
     )
+    run_started_at = perf_counter()
+
+    def _event(
+        *,
+        stage: str,
+        status: str,
+        source_count: int,
+        note: str,
+        component: str,
+        payload: dict[str, Any] | None = None,
+        started_at: float | None = None,
+    ) -> dict[str, Any]:
+        now = perf_counter()
+        event_payload = dict(payload or {})
+        event_payload.setdefault("elapsed_ms", round((now - run_started_at) * 1000.0, 3))
+        if started_at is not None:
+            event_payload.setdefault("duration_ms", round((now - started_at) * 1000.0, 3))
+        return _flow_event(
+            stage=stage,
+            status=status,
+            source_count=source_count,
+            note=note,
+            component=component,
+            payload=event_payload,
+        )
 
     flow_events: list[dict[str, Any]] = [
-        _flow_event(
+        _event(
             stage="planner",
             status="started",
             source_count=0,
@@ -742,7 +866,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "research_mode": research_mode,
             },
         ),
-        _flow_event(
+        _event(
             stage="planner",
             status="completed",
             source_count=0,
@@ -805,7 +929,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             },
         ]
         flow_events.append(
-            _flow_event(
+            _event(
                 stage="deep_research",
                 status="started",
                 source_count=0,
@@ -824,7 +948,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         for pass_index, subquery in enumerate(subqueries, start=1):
             pass_started = perf_counter()
             deep_pass_flow_events.append(
-                _flow_event(
+                _event(
                     stage="deep_retrieval_pass",
                     status="started",
                     source_count=0,
@@ -911,7 +1035,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 )
             )
             deep_pass_flow_events.append(
-                _flow_event(
+                _event(
                     stage="deep_retrieval_pass",
                     status="completed",
                     source_count=len(pass_result.retrieved_ids),
@@ -925,12 +1049,13 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                         "duration_ms": duration_ms,
                         "source_errors": source_errors,
                     },
+                    started_at=pass_started,
                 )
             )
 
         flow_events.extend(deep_pass_flow_events)
         flow_events.append(
-            _flow_event(
+            _event(
                 stage="deep_research",
                 status="completed",
                 source_count=sum(item["retrieved_count"] for item in deep_pass_summaries),
@@ -982,10 +1107,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     citations = _build_citations(topic, effective_context, uploaded_documents)
     if not citations and merged_context:
         citations = _build_citations(topic, merged_context[:10], uploaded_documents)
-    fallback_used = (
-        rag_result.model_used.startswith("local-synth")
-        or "fallback" in rag_result.model_used.lower()
-    )
+    if not citations:
+        trace_rows = _trace_rows_for_citation(retrieval_trace)
+        if trace_rows:
+            citations = _build_citations(topic, trace_rows, uploaded_documents)
+    fallback_used = _infer_fallback_used(rag_result)
     if not citations:
         citations = [
             Citation(
@@ -997,7 +1123,38 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             )
         ]
 
+    synthesis_started = perf_counter()
+    flow_events.append(
+        _event(
+            stage="answer_synthesis",
+            status="started",
+            source_count=len(effective_context),
+            note="Preparing final markdown answer from retrieved evidence.",
+            component="postprocess",
+            payload={
+                "retrieved_count": len(rag_result.retrieved_ids),
+                "citation_count": len(citations),
+                "model_used": rag_result.model_used,
+            },
+        )
+    )
     answer_markdown = _ensure_markdown_structure(rag_result.answer, citations)
+    answer_status = "warning" if fallback_used else "completed"
+    flow_events.append(
+        _event(
+            stage="answer_synthesis",
+            status=answer_status,
+            source_count=len(citations),
+            note="Final markdown answer assembled.",
+            component="postprocess",
+            payload={
+                "citation_count": len(citations),
+                "fallback_used": fallback_used,
+                "answer_chars": len(answer_markdown),
+            },
+            started_at=synthesis_started,
+        )
+    )
     factcheck_result = run_fides_lite(answer=answer_markdown, retrieved_context=effective_context)
     policy_action = "allow" if factcheck_result.verdict == "pass" else "warn"
     verification_state = "verified" if policy_action == "allow" else "warning"
@@ -1016,7 +1173,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "note": factcheck_result.note,
     }
     flow_events.append(
-        _flow_event(
+        _event(
             stage="verification",
             status="started",
             source_count=factcheck_result.evidence_count,
@@ -1026,7 +1183,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         )
     )
     flow_events.append(
-        _flow_event(
+        _event(
             stage="verification",
             status=factcheck_result.verdict,
             source_count=factcheck_result.evidence_count,
@@ -1041,7 +1198,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         )
     )
     flow_events.append(
-        _flow_event(
+        _event(
             stage="verification_matrix",
             status="completed",
             source_count=factcheck_result.evidence_count,
@@ -1057,7 +1214,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         )
     )
     flow_events.append(
-        _flow_event(
+        _event(
             stage="citation_selection",
             status="completed",
             source_count=len(citations),
@@ -1066,6 +1223,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             payload={"citation_count": len(citations)},
         )
     )
+    flow_events = _normalize_retrieval_events(flow_events, default_component="tier2_orchestrator")
 
     retrieval_status = (
         "warning"

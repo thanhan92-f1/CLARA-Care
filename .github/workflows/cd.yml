@@ -109,8 +109,25 @@ jobs:
       - name: Pull and deploy staging stack
         run: |
           set -euo pipefail
-          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml pull
-          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml up -d
+          retry_cmd() {
+            local max_attempts="$1"
+            shift
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "[error] command failed after ${max_attempts} attempts: $*"
+                return 1
+              fi
+              echo "[warn] command failed (attempt ${attempt}/${max_attempts}): $*"
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+            return 0
+          }
+
+          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml config >/dev/null
+          retry_cmd 3 docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml pull
+          retry_cmd 3 docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml up -d
 
       - name: Run staging smoke checks
         run: |
@@ -144,6 +161,11 @@ jobs:
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/citations" "web-research-citations"
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/details" "web-research-details"
 
+      - name: Capture staging compose status
+        if: always()
+        run: |
+          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml ps > /tmp/cd-staging-ps.txt || true
+
       - name: Upload staging smoke responses
         if: always()
         uses: actions/upload-artifact@v7
@@ -152,6 +174,7 @@ jobs:
           path: |
             /tmp/*health*.json
             /tmp/web-*.json
+            /tmp/cd-staging-ps.txt
           if-no-files-found: ignore
 
       - name: Upload staging logs on failure
@@ -202,8 +225,25 @@ jobs:
       - name: Pull and deploy production stack
         run: |
           set -euo pipefail
-          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml pull
-          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml up -d
+          retry_cmd() {
+            local max_attempts="$1"
+            shift
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "[error] command failed after ${max_attempts} attempts: $*"
+                return 1
+              fi
+              echo "[warn] command failed (attempt ${attempt}/${max_attempts}): $*"
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+            return 0
+          }
+
+          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml config >/dev/null
+          retry_cmd 3 docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml pull
+          retry_cmd 3 docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml up -d
 
       - name: Run production smoke checks
         run: |
@@ -237,12 +277,19 @@ jobs:
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/citations" "prod-web-research-citations"
           wait_http "http://127.0.0.1:${APP_WEB_PORT:-3100}/research/details" "prod-web-research-details"
 
+      - name: Capture production compose status
+        if: always()
+        run: |
+          docker compose --env-file .env -f deploy/docker/docker-compose.deploy.yml ps > /tmp/cd-production-ps.txt || true
+
       - name: Upload production smoke responses
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: production-smoke-${{ github.run_id }}
-          path: /tmp/prod-*.json
+          path: |
+            /tmp/prod-*.json
+            /tmp/cd-production-ps.txt
           if-no-files-found: ignore
 
       - name: Upload production logs on failure

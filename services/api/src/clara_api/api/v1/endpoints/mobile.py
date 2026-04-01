@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
+from clara_api.schemas import MobileSummaryResponse
 
 router = APIRouter()
 
@@ -36,10 +37,10 @@ _FEATURE_FLAGS_BY_ROLE = {
 }
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=MobileSummaryResponse)
 def mobile_summary(
     token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
-) -> dict[str, object]:
+) -> MobileSummaryResponse:
     role = token.role
     feature_flags = _FEATURE_FLAGS_BY_ROLE.get(
         role,

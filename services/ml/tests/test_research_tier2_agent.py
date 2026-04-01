@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from clara_ml.agents import research_tier2 as tier2
 from clara_ml.rag.pipeline import RagResult
 
@@ -98,3 +100,58 @@ def test_build_planner_hints_enables_web_retrieval_for_fast_ddi_query():
     )
     assert hints["scientific_retrieval_enabled"] is True
     assert hints["web_retrieval_enabled"] is True
+
+
+def test_filter_context_for_ddi_keeps_primary_alias_rows():
+    topic = "Tương tác warfarin với thuốc giảm đau"
+    rows = [
+        {
+            "id": "dailymed-coumadin",
+            "source": "dailymed",
+            "title": "Coumadin prescribing information",
+            "text": "Coumadin (warfarin) interaction warnings with NSAID.",
+            "url": "https://dailymed.nlm.nih.gov/",
+        },
+        {
+            "id": "unrelated-topic",
+            "source": "pubmed",
+            "title": "Hypertension diet article",
+            "text": "DASH nutrition intervention outcomes.",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/999/",
+        },
+    ]
+
+    filtered = tier2._filter_context_for_topic(topic, rows)
+
+    assert any(item.get("id") == "dailymed-coumadin" for item in filtered)
+    assert all(item.get("id") != "unrelated-topic" for item in filtered)
+
+
+def test_normalize_retrieval_events_adds_sequence_and_elapsed():
+    base = tier2._now_iso()
+    later = (tier2.datetime.fromisoformat(base) + timedelta(milliseconds=35)).isoformat()
+    events = [
+        {
+            "stage": "planner",
+            "status": "completed",
+            "timestamp": base,
+            "source_count": 0,
+            "note": "ok",
+            "payload": {},
+        },
+        {
+            "stage": "retrieval",
+            "status": "completed",
+            "timestamp": later,
+            "source_count": 2,
+            "note": "ok",
+            "payload": {},
+        },
+    ]
+
+    normalized = tier2._normalize_retrieval_events(events)
+
+    assert normalized[0]["event_sequence"] == 1
+    assert normalized[1]["event_sequence"] == 2
+    assert normalized[1]["payload"]["event_sequence"] == 2
+    assert normalized[1]["payload"]["elapsed_ms"] >= 30

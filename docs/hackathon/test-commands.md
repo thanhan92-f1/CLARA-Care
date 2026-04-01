@@ -9,6 +9,80 @@ Tài liệu này chốt các lệnh ngắn gọn để team tạo bộ bằng ch
 - `data/demo/fallback-scenarios.jsonl`
 - `data/demo/latency-scenarios.jsonl`
 
+## 0. Chạy one-shot matrix (khuyến nghị cho Vòng 2)
+Script này orchestration toàn bộ flow theo thứ tự:
+1. Generate artifacts
+2. KPI static
+3. KPI live online strict-live
+4. KPI live offline fallback (toggle `external_ddi_enabled` OFF rồi ON lại)
+5. Tổng hợp output và fail ngay nếu bước bắt buộc lỗi
+
+```bash
+bash scripts/demo/run_round2_matrix.sh
+```
+
+Kết quả chính:
+- `artifacts/round2/<run_id>/matrix-summary.md`
+- `artifacts/round2/<run_id>/matrix-summary.json`
+- `artifacts/round2/<run_id>-static/*`
+- `artifacts/round2/<run_id>-online/*`
+- `artifacts/round2/<run_id>-offline/*`
+
+Lưu ý:
+- Script sẽ cố chạy đủ các bước để thu thập evidence (kể cả khi một bước fail), sau đó mới trả exit code fail ở cuối.
+- Danh sách bước fail được ghi trong `matrix-summary.md/.json` (`failed_steps`).
+
+Biến môi trường quan trọng:
+- `CLARA_MATRIX_RUN_ID`: run id gốc (mặc định tự sinh theo timestamp).
+- `CLARA_API_BASE_URL`, `CLARA_ML_BASE_URL`: base URL API/ML.
+- `CLARA_MATRIX_TIMEOUT_SECONDS`: timeout cho runner KPI.
+- `CLARA_DEMO_EMAIL`, `CLARA_DEMO_PASSWORD`: tài khoản user cho live KPI.
+- `CLARA_DOCTOR_EMAIL`, `CLARA_DOCTOR_PASSWORD`: tài khoản doctor/admin để toggle runtime offline.
+- `CLARA_BEARER_TOKEN`, `CLARA_DOCTOR_BEARER_TOKEN`: dùng token thay cho password.
+- `CLARA_MATRIX_REQUIRE_ONLINE`: `true|false` (mặc định `true`).
+- `CLARA_MATRIX_REQUIRE_OFFLINE`: `true|false` (mặc định `true`).
+- `CLARA_MATRIX_PYTHON`: binary python (mặc định `python3`).
+
+Ví dụ chạy đầy đủ:
+
+```bash
+CLARA_MATRIX_RUN_ID=round2-final \
+CLARA_API_BASE_URL=http://127.0.0.1:8000 \
+CLARA_ML_BASE_URL=http://127.0.0.1:8001 \
+CLARA_DEMO_EMAIL=admin@example.com \
+CLARA_DEMO_PASSWORD='Clara#Admin2026!' \
+CLARA_DOCTOR_EMAIL=admin@example.com \
+CLARA_DOCTOR_PASSWORD='Clara#Admin2026!' \
+bash scripts/demo/run_round2_matrix.sh
+```
+
+Ví dụ chỉ chạy static + generate (bỏ qua online/offline):
+
+```bash
+CLARA_MATRIX_REQUIRE_ONLINE=false \
+CLARA_MATRIX_REQUIRE_OFFLINE=false \
+bash scripts/demo/run_round2_matrix.sh
+```
+
+## 0.1. Preflight local giống CI (khuyến nghị trước khi push)
+
+Chạy nhanh 2 check blocking mới trong CI:
+
+```bash
+# 1) syntax check scripts shell
+find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+# 2) artifact + KPI static smoke
+RUN_ID=local-ci-smoke-$(date +%Y%m%d-%H%M%S)
+python3 scripts/demo/generate_demo_artifacts.py --run-id "$RUN_ID"
+python3 scripts/demo/run_hackathon_kpis.py --mode static --run-id "$RUN_ID"
+```
+
+Expected output:
+- `artifacts/round2/<RUN_ID>/kpi-report/kpi-report.json`
+- `artifacts/round2/<RUN_ID>/test-report/test-report.json`
+- `artifacts/round2/<RUN_ID>/fallback-proof/fallback-proof.json`
+
 ## 1. Regenerate artifact tĩnh từ source repo
 Lệnh này không cần service đang chạy.
 

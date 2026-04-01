@@ -46,8 +46,9 @@ Neu can manual approval, cau hinh required reviewers tren tung environment.
    - `clara-web:<image_tag>`
 3. `deploy-staging`:
    - Tao `.env` tu `.env.example`, inject `API_IMAGE`, `ML_IMAGE`, `WEB_IMAGE`
-   - `docker compose -f deploy/docker/docker-compose.deploy.yml pull`
-   - `docker compose ... up -d`
+   - Validate compose config.
+   - `docker compose -f deploy/docker/docker-compose.deploy.yml pull` (co retry 3 lan)
+   - `docker compose ... up -d` (co retry 3 lan)
    - Smoke localhost:
      - `http://127.0.0.1:${APP_API_PORT:-8100}/health`
      - `http://127.0.0.1:${APP_API_PORT:-8100}/api/v1/health`
@@ -59,6 +60,9 @@ Neu can manual approval, cau hinh required reviewers tren tung environment.
 
 - Staging smoke responses: `staging-smoke-<run_id>`
 - Production smoke responses: `production-smoke-<run_id>` (neu co promote)
+- Compose status snapshots:
+  - `/tmp/cd-staging-ps.txt`
+  - `/tmp/cd-production-ps.txt`
 - Log failure:
   - `cd-staging-logs-<run_id>`
   - `cd-production-logs-<run_id>`

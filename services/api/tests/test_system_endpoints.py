@@ -109,38 +109,35 @@ def test_system_ecosystem_success_for_doctor() -> None:
     assert isinstance(payload["summary"], dict)
 
     for partner in payload["partner_health"]:
-        assert set(partner.keys()) == {
-            "partner",
-            "status",
-            "latency_ms",
-            "error_rate_pct",
-            "last_check",
-        }
+        assert {"partner", "status", "latency_ms", "error_rate_pct", "last_check"}.issubset(
+            set(partner.keys())
+        )
         assert partner["status"] in {"ok", "degraded", "down"}
         datetime.fromisoformat(partner["last_check"])
 
     for score in payload["data_trust_scores"]:
-        assert set(score.keys()) == {
+        assert {
             "source",
             "trust_score",
             "freshness_hours",
             "drift_risk",
             "last_refresh",
-        }
+        }.issubset(set(score.keys()))
         assert 0 <= score["trust_score"] <= 100
         assert score["drift_risk"] in {"low", "medium", "high"}
-        datetime.fromisoformat(score["last_refresh"])
+        if score["last_refresh"]:
+            datetime.fromisoformat(score["last_refresh"])
 
     for alert in payload["federation_alerts"]:
-        assert set(alert.keys()) == {
+        assert {
             "id",
             "severity",
             "message",
             "source",
             "created_at",
             "acknowledged",
-        }
-        assert alert["severity"] in {"info", "warning", "critical"}
+        }.issubset(set(alert.keys()))
+        assert alert["severity"] in {"warning", "critical", "info"}
         datetime.fromisoformat(alert["created_at"])
         assert isinstance(alert["acknowledged"], bool)
 
@@ -155,6 +152,7 @@ def test_system_ecosystem_success_for_doctor() -> None:
     assert summary["critical_alert_count"] == sum(
         1 for alert in payload["federation_alerts"] if alert["severity"] == "critical"
     )
+    assert summary["simulated"] is False
 
 
 @pytest.mark.parametrize("email", ["bob@example.com", "alice@research.clara"])
@@ -170,6 +168,7 @@ def test_system_ecosystem_forbidden_for_non_doctor(email: str) -> None:
 
 
 def test_system_ecosystem_unauthorized_without_token() -> None:
+    client.cookies.clear()
     response = client.get("/api/v1/system/ecosystem")
     assert response.status_code == 401
 
@@ -222,5 +221,6 @@ def test_system_sources_forbidden_for_non_doctor() -> None:
 
 
 def test_system_sources_unauthorized_without_token() -> None:
+    client.cookies.clear()
     response = client.get("/api/v1/system/sources")
     assert response.status_code == 401

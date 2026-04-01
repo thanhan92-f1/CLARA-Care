@@ -1,7 +1,7 @@
 # CLARA Hackathon KPI Snapshot
 
-Generated at (UTC): 2026-03-31T15:23:19.492185+00:00
-Round2 run_id: `local-smoke-kpi`
+Generated at (UTC): 2026-04-01T01:18:35.729717+00:00
+Round2 run_id: `local-ci-smoke`
 
 ## Core Metrics (Demo-Ready)
 - Local DDI rules count: **62** pairs

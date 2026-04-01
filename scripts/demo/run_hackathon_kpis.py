@@ -26,6 +26,14 @@ REFUSAL_SCENARIOS_PATH = DATA_DIR / "refusal-scenarios.jsonl"
 FALLBACK_SCENARIOS_PATH = DATA_DIR / "fallback-scenarios.jsonl"
 LATENCY_SCENARIOS_PATH = DATA_DIR / "latency-scenarios.jsonl"
 
+GO_NO_GO_THRESHOLDS: dict[str, float] = {
+    "ddi_precision": 0.95,
+    "fallback_success_rate": 1.0,
+    "refusal_compliance_rate": 1.0,
+    "latency_online_p95_seconds": 3.0,
+    "latency_offline_p95_seconds": 0.5,
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -62,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         "--strict-live",
         action="store_true",
         help="Fail if live mode cannot reach services or cannot authenticate.",
+    )
+    parser.add_argument(
+        "--enforce-gate",
+        action="store_true",
+        help="Enforce go/no-go gate on non-live-strict modes too.",
     )
     return parser.parse_args()
 
@@ -353,23 +366,44 @@ def detect_live_capability(
     api_base_url: str,
     ml_base_url: str,
 ) -> dict[str, Any]:
-    api_health = client.request_json("GET", join_url(api_base_url, "/health"))
-    ml_health = client.request_json("GET", join_url(ml_base_url, "/health"))
+    def probe_health(base_url: str, candidates: list[str]) -> tuple[bool, dict[str, Any]]:
+        last_result: HttpResult | None = None
+        last_path = ""
+        for path in candidates:
+            result = client.request_json("GET", join_url(base_url, path))
+            last_result = result
+            last_path = path
+            if result.ok and result.status_code == 200:
+                return True, {
+                    "ok": result.ok,
+                    "status_code": result.status_code,
+                    "elapsed_ms": round(result.elapsed_ms, 2),
+                    "error": result.error,
+                    "path": path,
+                }
+        if last_result is None:
+            return False, {
+                "ok": False,
+                "status_code": 0,
+                "elapsed_ms": 0.0,
+                "error": "no_probe_path",
+                "path": "",
+            }
+        return False, {
+            "ok": last_result.ok,
+            "status_code": last_result.status_code,
+            "elapsed_ms": round(last_result.elapsed_ms, 2),
+            "error": last_result.error,
+            "path": last_path,
+        }
+
+    api_reachable, api_health = probe_health(api_base_url, ["/api/v1/health", "/health"])
+    ml_reachable, ml_health = probe_health(ml_base_url, ["/health", "/api/v1/health"])
     return {
-        "api_reachable": api_health.ok and api_health.status_code == 200,
-        "ml_reachable": ml_health.ok and ml_health.status_code == 200,
-        "api_health": {
-            "ok": api_health.ok,
-            "status_code": api_health.status_code,
-            "elapsed_ms": round(api_health.elapsed_ms, 2),
-            "error": api_health.error,
-        },
-        "ml_health": {
-            "ok": ml_health.ok,
-            "status_code": ml_health.status_code,
-            "elapsed_ms": round(ml_health.elapsed_ms, 2),
-            "error": ml_health.error,
-        },
+        "api_reachable": api_reachable,
+        "ml_reachable": ml_reachable,
+        "api_health": api_health,
+        "ml_health": ml_health,
     }
 
 
@@ -551,6 +585,150 @@ def summarize_latencies(samples: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def ratio_from_summary(summary: dict[str, Any]) -> float:
+    total = int(summary.get("total") or 0)
+    passed = int(summary.get("passed") or 0)
+    if total <= 0:
+        return 0.0
+    return passed / total
+
+
+def summarize_latency_by_profile_seconds(latency_cases: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    buckets_ms: dict[str, list[float]] = defaultdict(list)
+    for item in latency_cases:
+        if str(item.get("status") or "").strip().lower() == "blocked":
+            continue
+        profile = str(item.get("profile") or "default").strip().lower()
+        buckets_ms[profile].append(float(item.get("latency_ms") or 0.0))
+    output: dict[str, dict[str, float]] = {}
+    for profile, values in buckets_ms.items():
+        sorted_values = sorted(values)
+        output[profile] = {
+            "count": float(len(sorted_values)),
+            "p95_seconds": percentile(sorted_values, 0.95) / 1000.0 if sorted_values else 0.0,
+        }
+    return output
+
+
+def evaluate_go_no_go(
+    *,
+    run_id: str,
+    execution_mode: str,
+    kpi_report: dict[str, Any],
+    test_report: dict[str, Any],
+    enforced: bool,
+) -> dict[str, Any]:
+    metrics = kpi_report.get("metrics", {}) if isinstance(kpi_report.get("metrics"), dict) else {}
+    ddi_summary = metrics.get("ddi_precision", {}) if isinstance(metrics.get("ddi_precision"), dict) else {}
+    fallback_summary = (
+        metrics.get("fallback_success_rate", {})
+        if isinstance(metrics.get("fallback_success_rate"), dict)
+        else {}
+    )
+    refusal_summary = (
+        metrics.get("refusal_compliance", {})
+        if isinstance(metrics.get("refusal_compliance"), dict)
+        else {}
+    )
+    latency_cases = []
+    cases_obj = test_report.get("cases")
+    if isinstance(cases_obj, dict):
+        maybe_latency_cases = cases_obj.get("latency_cases")
+        if isinstance(maybe_latency_cases, list):
+            latency_cases = maybe_latency_cases
+    latency_profiles = summarize_latency_by_profile_seconds(latency_cases)
+
+    online_latency = latency_profiles.get("online", {}).get("p95_seconds")
+    offline_latency = latency_profiles.get("offline", {}).get("p95_seconds")
+
+    evaluated_metrics = [
+        {
+            "name": "ddi_precision",
+            "actual": round(ratio_from_summary(ddi_summary), 6),
+            "operator": ">=",
+            "threshold": GO_NO_GO_THRESHOLDS["ddi_precision"],
+            "passed": ratio_from_summary(ddi_summary) >= GO_NO_GO_THRESHOLDS["ddi_precision"],
+            "detail": (
+                f"passed={ddi_summary.get('passed', 0)}/total={ddi_summary.get('total', 0)}"
+            ),
+        },
+        {
+            "name": "fallback_success_rate",
+            "actual": round(ratio_from_summary(fallback_summary), 6),
+            "operator": ">=",
+            "threshold": GO_NO_GO_THRESHOLDS["fallback_success_rate"],
+            "passed": ratio_from_summary(fallback_summary)
+            >= GO_NO_GO_THRESHOLDS["fallback_success_rate"],
+            "detail": (
+                f"passed={fallback_summary.get('passed', 0)}/total={fallback_summary.get('total', 0)}"
+            ),
+        },
+        {
+            "name": "refusal_compliance_rate",
+            "actual": round(ratio_from_summary(refusal_summary), 6),
+            "operator": ">=",
+            "threshold": GO_NO_GO_THRESHOLDS["refusal_compliance_rate"],
+            "passed": ratio_from_summary(refusal_summary)
+            >= GO_NO_GO_THRESHOLDS["refusal_compliance_rate"],
+            "detail": (
+                f"passed={refusal_summary.get('passed', 0)}/total={refusal_summary.get('total', 0)}"
+            ),
+        },
+        {
+            "name": "latency_online_p95_seconds",
+            "actual": None if online_latency is None else round(float(online_latency), 6),
+            "operator": "<",
+            "threshold": GO_NO_GO_THRESHOLDS["latency_online_p95_seconds"],
+            "passed": (
+                online_latency is not None
+                and float(online_latency) < GO_NO_GO_THRESHOLDS["latency_online_p95_seconds"]
+            ),
+            "detail": (
+                "missing online latency samples"
+                if online_latency is None
+                else f"online_samples={int(latency_profiles.get('online', {}).get('count', 0.0))}"
+            ),
+        },
+        {
+            "name": "latency_offline_p95_seconds",
+            "actual": None if offline_latency is None else round(float(offline_latency), 6),
+            "operator": "<",
+            "threshold": GO_NO_GO_THRESHOLDS["latency_offline_p95_seconds"],
+            "passed": (
+                offline_latency is not None
+                and float(offline_latency) < GO_NO_GO_THRESHOLDS["latency_offline_p95_seconds"]
+            ),
+            "detail": (
+                "missing offline latency samples"
+                if offline_latency is None
+                else f"offline_samples={int(latency_profiles.get('offline', {}).get('count', 0.0))}"
+            ),
+        },
+    ]
+
+    failure_reasons: list[str] = []
+    for item in evaluated_metrics:
+        if item["passed"]:
+            continue
+        actual_value = item["actual"]
+        failure_reasons.append(
+            f"{item['name']} failed: actual={actual_value} {item['operator']} threshold={item['threshold']} ({item['detail']})"
+        )
+
+    passed = len(failure_reasons) == 0
+    return {
+        "run_id": run_id,
+        "generated_at": utcnow(),
+        "execution_mode": execution_mode,
+        "enforced": enforced,
+        "go": passed,
+        "thresholds": GO_NO_GO_THRESHOLDS,
+        "metrics": evaluated_metrics,
+        "failure_reasons": failure_reasons,
+        "latency_profiles_seconds": latency_profiles,
+    }
+
+
 def render_simple_table(rows: list[list[str]]) -> str:
     if not rows:
         return ""
@@ -692,6 +870,38 @@ def render_fallback_proof_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         lines.append("## Notes")
         lines.extend(f"- {note}" for note in report["notes"])
+    return "\n".join(lines) + "\n"
+
+
+def render_go_no_go_markdown(report: dict[str, Any]) -> str:
+    rows = [["Metric", "Actual", "Rule", "Passed", "Detail"]]
+    for metric in report.get("metrics", []):
+        rows.append(
+            [
+                str(metric.get("name") or ""),
+                str(metric.get("actual")),
+                f"{metric.get('operator')} {metric.get('threshold')}",
+                "yes" if bool(metric.get("passed")) else "no",
+                str(metric.get("detail") or ""),
+            ]
+        )
+    lines = [
+        "# Go / No-Go Gate",
+        "",
+        f"- Run ID: `{report['run_id']}`",
+        f"- Generated at (UTC): `{report['generated_at']}`",
+        f"- Execution mode: `{report['execution_mode']}`",
+        f"- Enforced: `{str(report.get('enforced', False)).lower()}`",
+        f"- Decision: **{'GO' if report.get('go') else 'NO-GO'}**",
+        "",
+        "## Metrics",
+        render_simple_table(rows),
+    ]
+    failure_reasons = report.get("failure_reasons", [])
+    if isinstance(failure_reasons, list) and failure_reasons:
+        lines.append("")
+        lines.append("## Failure Reasons")
+        lines.extend(f"- {reason}" for reason in failure_reasons)
     return "\n".join(lines) + "\n"
 
 
@@ -1027,6 +1237,12 @@ def write_reports(
     write_text(run_root / "fallback-proof/README.md", render_fallback_proof_markdown(fallback_proof))
 
 
+def write_go_no_go_report(run_id: str, go_no_go_report: dict[str, Any]) -> None:
+    run_root = ARTIFACTS_ROOT / run_id
+    write_json(run_root / "go-no-go/go-no-go.json", go_no_go_report)
+    write_text(run_root / "go-no-go/go-no-go.md", render_go_no_go_markdown(go_no_go_report))
+
+
 def ensure_run_id(raw_value: str) -> str:
     normalized = raw_value.strip()
     if normalized:
@@ -1085,10 +1301,30 @@ def main() -> None:
 
     write_reports(args.run_id, kpi_report, test_report, fallback_proof)
 
+    gate_enforced = bool(args.enforce_gate or (args.mode == "live" and args.strict_live))
+    go_no_go_report = evaluate_go_no_go(
+        run_id=args.run_id,
+        execution_mode=str(kpi_report.get("execution_mode") or args.mode),
+        kpi_report=kpi_report,
+        test_report=test_report,
+        enforced=gate_enforced,
+    )
+    write_go_no_go_report(args.run_id, go_no_go_report)
+
     print(f"Generated KPI artifacts for run_id={args.run_id}")
     print(f"- {ARTIFACTS_ROOT.joinpath(args.run_id, 'kpi-report/kpi-report.json').relative_to(ROOT)}")
     print(f"- {ARTIFACTS_ROOT.joinpath(args.run_id, 'test-report/test-report.json').relative_to(ROOT)}")
     print(f"- {ARTIFACTS_ROOT.joinpath(args.run_id, 'fallback-proof/fallback-proof.json').relative_to(ROOT)}")
+    print(f"- {ARTIFACTS_ROOT.joinpath(args.run_id, 'go-no-go/go-no-go.json').relative_to(ROOT)}")
+    if go_no_go_report.get("go"):
+        print("Go/No-Go gate: GO")
+    else:
+        print("Go/No-Go gate: NO-GO")
+        for reason in go_no_go_report.get("failure_reasons", []):
+            print(f"  - {reason}")
+
+    if gate_enforced and not go_no_go_report.get("go"):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,12 @@ type MermaidBlockProps = {
   code: string;
 };
 
+type CodeFenceProps = {
+  code: string;
+  language?: string;
+  isChartSpec: boolean;
+};
+
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
 const CHART_SPEC_LANGUAGES = new Set(["chart", "chart-spec", "vega-lite", "echarts-option", "json", "yaml", "yml"]);
 
@@ -129,15 +135,77 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   }
 
   return (
-    <div
-      className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/70"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/70">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+        <span>Mermaid Diagram</span>
+        <span className="rounded-full border border-cyan-300/60 bg-cyan-500/15 px-2 py-0.5 text-[10px] text-cyan-700 dark:text-cyan-200">
+          an toàn
+        </span>
+      </div>
+      <div
+        className="overflow-x-auto p-3"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </section>
   );
 }
 
 function normalizeAnswer(answer: string): string {
   return answer.replace(/\r\n/g, "\n").trim();
+}
+
+function getFenceLanguageLabel(language?: string): string {
+  if (!language) return "text";
+  if (language === "ts" || language === "tsx") return "typescript";
+  if (language === "js" || language === "jsx") return "javascript";
+  return language;
+}
+
+function CodeFence({ code, language, isChartSpec }: CodeFenceProps) {
+  const [notice, setNotice] = useState<"" | "success" | "error">("");
+  const label = getFenceLanguageLabel(language);
+
+  const onCopy = async () => {
+    if (!navigator?.clipboard) {
+      setNotice("error");
+      window.setTimeout(() => setNotice(""), 1500);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(code);
+      setNotice("success");
+    } catch {
+      setNotice("error");
+    }
+    window.setTimeout(() => setNotice(""), 1500);
+  };
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900 text-slate-100 dark:border-slate-700">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700/80 bg-slate-950/50 px-3 py-2">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-slate-300">
+          <span className="font-semibold">{isChartSpec ? "chart spec" : "code block"}</span>
+          <span className="rounded-full border border-slate-600 px-2 py-0.5">{label}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void onCopy()}
+          className="rounded-md border border-slate-600 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-500 hover:bg-slate-800"
+          aria-label="Sao chép code block"
+        >
+          {notice === "success" ? "Đã copy" : notice === "error" ? "Copy lỗi" : "Copy"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 text-[13px] leading-6">
+        <code className={language ? `language-${language}` : undefined}>{code}</code>
+      </pre>
+      {isChartSpec ? (
+        <p className="border-t border-slate-700/80 bg-slate-950/40 px-3 py-2 text-[11px] text-slate-300">
+          Block này là spec dữ liệu biểu đồ. Nếu UI có chart-engine, có thể dựng chart trực tiếp từ nội dung này.
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProps) {
@@ -208,31 +276,20 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
             }
 
             const isChartSpec = language ? CHART_SPEC_LANGUAGES.has(language) : false;
-            return (
-              <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-900 p-3 text-slate-100 dark:border-slate-700">
-                {isChartSpec ? (
-                  <div className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-300">
-                    chart spec · {language}
-                  </div>
-                ) : null}
-                <code {...props} className={className}>
-                  {code}
-                </code>
-              </pre>
-            );
+            return <CodeFence code={code} language={language} isChartSpec={isChartSpec} />;
           },
           table: ({ children }) => (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
               <table className="w-full border-collapse text-sm">{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-slate-300 bg-slate-100 px-2 py-1 text-left font-semibold dark:border-slate-600 dark:bg-slate-800">
+            <th className="border border-slate-300 bg-slate-100 px-2 py-1.5 text-left font-semibold dark:border-slate-600 dark:bg-slate-800">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-slate-300 px-2 py-1 align-top dark:border-slate-700">{children}</td>
+            <td className="border border-slate-300 px-2 py-1.5 align-top dark:border-slate-700">{children}</td>
           ),
           blockquote: ({ children }) => (
             <blockquote className="border-l-4 border-sky-400 bg-sky-50/60 px-3 py-2 text-slate-700 dark:bg-sky-950/20 dark:text-slate-200">
