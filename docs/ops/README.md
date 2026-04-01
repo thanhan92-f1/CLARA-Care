@@ -11,7 +11,8 @@ Chạy nhanh:
 ```bash
 SOURCE_HUB_ACCOUNT="ops@research.clara" \
 SOURCE_HUB_PASSWORD="secret" \
-SOURCE_HUB_TOPICS="warfarin interaction;pubmed=hypertension guideline" \
+SOURCE_HUB_TOPICS="en: warfarin interaction;vi: tương tác warfarin" \
+SOURCE_HUB_AUTO_KEYWORDS=true \
 ./scripts/ops/source_hub_auto_crawl.sh --mode once
 ```
 

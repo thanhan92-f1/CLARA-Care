@@ -11,6 +11,7 @@ SOURCE_HUB_TIMEOUT_SECONDS="${SOURCE_HUB_TIMEOUT_SECONDS:-30}"
 SOURCE_HUB_MODE="${SOURCE_HUB_MODE:-once}"
 SOURCE_HUB_LOOP_SECONDS="${SOURCE_HUB_LOOP_SECONDS:-1}"
 SOURCE_HUB_LOCK_FILE="${SOURCE_HUB_LOCK_FILE:-/tmp/clara-source-hub-crawl.lock}"
+SOURCE_HUB_AUTO_KEYWORDS="${SOURCE_HUB_AUTO_KEYWORDS:-true}"
 
 HTTP_STATUS=""
 HTTP_BODY=""
@@ -29,6 +30,8 @@ Options:
   --topics <string>             Topic list separated by ';' or newline
                                 Supports global topic: "warfarin interaction"
                                 Supports source-specific topic: "pubmed=hypertension guideline"
+                                Supports language-scoped topic: "vi: tương tác warfarin"
+                                or "en: warfarin interaction"
   --sources <string>            Optional source filter list (comma/semicolon/newline)
   --limit <int>                 Total target fetch limit per source/topic (default: 500)
   --timeout-seconds <int>       HTTP timeout in seconds (default: 30)
@@ -202,13 +205,20 @@ build_sync_plan() {
   catalog_file="$(mktemp)"
   printf '%s' "$catalog_json" >"$catalog_file"
 
-  python3 - "$catalog_file" "$SOURCE_HUB_TOPICS" "$SOURCE_HUB_SOURCES" <<'PY'
+  python3 - "$catalog_file" "$SOURCE_HUB_TOPICS" "$SOURCE_HUB_SOURCES" "$SOURCE_HUB_AUTO_KEYWORDS" <<'PY'
 import json
 import sys
 
 catalog_path = sys.argv[1]
 topics_raw = sys.argv[2]
 sources_raw = sys.argv[3]
+auto_keywords_raw = sys.argv[4]
+
+
+def to_bool(raw):
+    if raw is None:
+        return True
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def split_topics(raw):
@@ -230,6 +240,89 @@ with open(catalog_path, "r", encoding="utf-8") as file_obj:
 
 sources = payload.get("sources") or []
 requested_sources = split_sources(sources_raw)
+auto_keywords_enabled = to_bool(auto_keywords_raw)
+
+source_language = {
+    "pubmed": "en",
+    "rxnorm": "en",
+    "openfda": "en",
+    "dailymed": "en",
+    "europepmc": "en",
+    "semantic_scholar": "en",
+    "clinicaltrials": "en",
+    "vn_moh": "vi",
+    "vn_kcb": "vi",
+    "vn_canhgiacduoc": "vi",
+    "vn_vbpl_byt": "vi",
+    "vn_dav": "vi",
+    "davidrug": "vi",
+}
+
+source_auto_keywords = {
+    "pubmed": [
+        "drug drug interaction warfarin nsaid",
+        "polypharmacy elderly adverse drug events",
+        "hypertension guideline older adults",
+    ],
+    "europepmc": [
+        "warfarin ibuprofen bleeding risk",
+        "medication adherence chronic disease",
+    ],
+    "semantic_scholar": [
+        "drug interaction clinical decision support",
+        "medication safety community elderly",
+    ],
+    "clinicaltrials": [
+        "warfarin interaction trial",
+        "polypharmacy medication safety",
+    ],
+    "rxnorm": [
+        "warfarin",
+        "ibuprofen",
+        "paracetamol",
+        "metformin",
+    ],
+    "openfda": [
+        "warfarin",
+        "ibuprofen",
+        "drug interaction warning",
+    ],
+    "dailymed": [
+        "warfarin",
+        "ibuprofen",
+        "acetaminophen",
+    ],
+    "vn_moh": [
+        "hướng dẫn chẩn đoán điều trị",
+        "phác đồ điều trị bộ y tế",
+        "quản lý bệnh không lây nhiễm",
+    ],
+    "vn_kcb": [
+        "hướng dẫn khám chữa bệnh",
+        "quy trình chuyên môn y tế",
+        "hướng dẫn tăng huyết áp",
+    ],
+    "vn_canhgiacduoc": [
+        "cảnh giác dược",
+        "phản ứng có hại của thuốc",
+        "tương tác thuốc",
+    ],
+    "vn_vbpl_byt": [
+        "thông tư bộ y tế",
+        "quy định kê đơn thuốc",
+        "văn bản quy phạm y tế",
+    ],
+    "vn_dav": [
+        "thu hồi thuốc",
+        "công bố thuốc lưu hành",
+        "cảnh báo an toàn thuốc",
+    ],
+    "davidrug": [
+        "paracetamol",
+        "amoxicillin",
+        "thuốc không kê đơn",
+    ],
+}
 
 selected = []
 selected_keys = set()
@@ -253,6 +346,7 @@ if requested_sources:
         )
 
 global_topics = []
+language_topics = {"vi": [], "en": []}
 source_topics = {}
 for topic in split_topics(topics_raw):
     if "=" in topic:
@@ -261,6 +355,13 @@ for topic in split_topics(topics_raw):
         source_query = rhs.strip()
         if source_key and source_query:
             source_topics.setdefault(source_key, []).append(source_query)
+            continue
+    if ":" in topic:
+        lhs, rhs = topic.split(":", 1)
+        lang = lhs.strip().lower()
+        scoped_query = rhs.strip()
+        if lang in language_topics and scoped_query:
+            language_topics[lang].append(scoped_query)
             continue
     global_topics.append(topic)
 
@@ -271,8 +372,12 @@ if not selected:
 emitted = 0
 for source_key, default_query in selected:
     candidates = []
+    lang = source_language.get(source_key, "en")
+    candidates.extend(language_topics.get(lang, []))
     candidates.extend(global_topics)
     candidates.extend(source_topics.get(source_key, []))
+    if auto_keywords_enabled:
+        candidates.extend(source_auto_keywords.get(source_key, []))
     if not candidates and default_query:
         candidates.append(default_query)
 

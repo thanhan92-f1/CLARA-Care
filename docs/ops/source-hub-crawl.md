@@ -16,10 +16,19 @@ Optional:
 - `SOURCE_HUB_TIMEOUT_SECONDS` (default: `30`)
 - `SOURCE_HUB_LOCK_FILE` (default: `/tmp/clara-source-hub-crawl.lock`)
 - `SOURCE_HUB_LOOP_SECONDS` (default: `1`, dùng cho mode loop)
+- `SOURCE_HUB_AUTO_KEYWORDS` (default: `true`, tự bổ sung keyword phù hợp theo từng source)
 
 `SOURCE_HUB_TOPICS` hỗ trợ:
 - Topic global áp cho mọi source: `warfarin interaction`
 - Topic theo source: `pubmed=hypertension guideline`
+- Topic theo ngôn ngữ nguồn:
+  - `vi: tương tác warfarin`
+  - `en: warfarin interaction`
+
+Chiến lược keyword mới:
+- Nguồn VN (`vn_*`, `davidrug`) ưu tiên keyword tiếng Việt.
+- Nguồn quốc tế (`pubmed`, `europepmc`, `clinicaltrials`, `rxnorm`, `openfda`, `dailymed`, `semantic_scholar`) ưu tiên keyword tiếng Anh.
+- Nếu không truyền `SOURCE_HUB_TOPICS`, script tự dùng bộ keyword mặc định theo source khi `SOURCE_HUB_AUTO_KEYWORDS=true`.
 
 Ví dụ:
 
@@ -27,7 +36,8 @@ Ví dụ:
 export SOURCE_HUB_API_BASE="http://127.0.0.1:8100/api/v1"
 export SOURCE_HUB_ACCOUNT="ops@research.clara"
 export SOURCE_HUB_PASSWORD="secret"
-export SOURCE_HUB_TOPICS="warfarin nsaid bleeding risk;metformin renal dosing;davidrug=paracetamol"
+export SOURCE_HUB_TOPICS="en: warfarin nsaid bleeding risk;vi: tương tác warfarin thuốc giảm đau;davidrug=paracetamol"
+export SOURCE_HUB_AUTO_KEYWORDS=true
 export SOURCE_HUB_LIMIT=500
 ```
 
