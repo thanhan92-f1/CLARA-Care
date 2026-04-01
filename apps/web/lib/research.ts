@@ -1,4 +1,5 @@
 import api from "@/lib/http-client";
+import { getAccessToken } from "@/lib/auth-store";
 
 export type ResearchTier = "tier1" | "tier2";
 export type ResearchExecutionMode = "fast" | "deep";
@@ -6,6 +7,7 @@ export type ResearchExecutionMode = "fast" | "deep";
 export const RESEARCH_UPLOAD_TIMEOUT_MS = 60000;
 export const RESEARCH_TIER2_TIMEOUT_MS = 120000;
 export const RESEARCH_TIER2_JOB_POLL_MS = 1800;
+export const RESEARCH_TIER2_STREAM_MAX_WAIT_MS = 30 * 60 * 1000;
 
 export type Tier2Citation = {
   title: string;
@@ -212,6 +214,13 @@ export type ResearchTier2JobResponse = {
   error?: string | null;
 };
 
+export type ResearchTier2JobStreamEventType = "progress" | "done" | "error";
+
+export type ResearchTier2JobStreamEvent = {
+  event: ResearchTier2JobStreamEventType;
+  payload: ResearchTier2JobResponse | { message?: string };
+};
+
 export type UploadedResearchFile = {
   id: string;
   name: string;
@@ -309,6 +318,14 @@ export type PersistedResearchConversation = {
   createdAt: number;
 };
 
+export type PersistedResearchMessage = {
+  queryId?: string;
+  query: string;
+  result: Record<string, unknown>;
+  tier: ResearchTier;
+  createdAt: number;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -355,6 +372,50 @@ function uniqueText(values: string[]): string[] {
         .filter(Boolean)
     )
   );
+}
+
+function resolveApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/api/v1`;
+  }
+  return "http://localhost:8100/api/v1";
+}
+
+function parseSseBlocks(chunkBuffer: string): { blocks: string[]; tail: string } {
+  const normalized = chunkBuffer.replace(/\r\n/g, "\n");
+  const parts = normalized.split("\n\n");
+  if (parts.length <= 1) {
+    return { blocks: [], tail: normalized };
+  }
+  return {
+    blocks: parts.slice(0, -1).filter((item) => item.trim().length > 0),
+    tail: parts[parts.length - 1] ?? "",
+  };
+}
+
+function parseSseEventBlock(
+  block: string
+): { event: string; data: string } | null {
+  const lines = block.split("\n");
+  let eventName = "message";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim() || "message";
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  if (!dataLines.length) return null;
+  return { event: eventName, data: dataLines.join("\n") };
 }
 
 function pickFromRecords(
@@ -489,6 +550,75 @@ function toFlowLabel(value: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+const FLOW_STAGE_ALIAS_MAP: Record<string, { stageId: string; label: string }> = {
+  input_gateway: { stageId: "input_gateway", label: "Input Gateway" },
+  dispatch_ml: { stageId: "input_gateway", label: "Input Gateway" },
+  session_guard: { stageId: "session_guard", label: "Session Guard" },
+  safety_ingress: { stageId: "safety_ingress", label: "Safety Ingress" },
+  legal_guard: { stageId: "legal_guard", label: "Legal Hard Guard" },
+  legal_hard_guard: { stageId: "legal_guard", label: "Legal Hard Guard" },
+  role_router: { stageId: "role_router", label: "Role Router" },
+  intent_router: { stageId: "intent_router", label: "Intent Router" },
+  query_canonicalizer: { stageId: "query_canonicalizer", label: "Query Canonicalizer" },
+  query_canonicalization: { stageId: "query_canonicalizer", label: "Query Canonicalizer" },
+  query_rewrite: { stageId: "query_canonicalizer", label: "Query Canonicalizer" },
+  query_decomposition: { stageId: "query_decomposition", label: "Query Decomposition" },
+  query_plan: { stageId: "planner", label: "Research Planner" },
+  planner: { stageId: "planner", label: "Research Planner" },
+  planner_v1: { stageId: "planner", label: "Research Planner" },
+  retrieval_v2: { stageId: "retrieval_orchestrator", label: "Retrieval Orchestrator" },
+  collect_evidence: { stageId: "retrieval_orchestrator", label: "Retrieval Orchestrator" },
+  source_attempts: { stageId: "retrieval_orchestrator", label: "Retrieval Orchestrator" },
+  retrieval_orchestrator: { stageId: "retrieval_orchestrator", label: "Retrieval Orchestrator" },
+  deep_research: { stageId: "deep_research", label: "Deep Research Loop" },
+  deep_retrieval_pass: { stageId: "deep_research", label: "Deep Research Loop" },
+  retrieval_internal: { stageId: "retrieval_internal", label: "Internal Corpus" },
+  internal_retrieval: { stageId: "retrieval_internal", label: "Internal Corpus" },
+  retrieval_scientific: { stageId: "retrieval_scientific", label: "Scientific Retrieval" },
+  external_scientific_retrieval: { stageId: "retrieval_scientific", label: "Scientific Retrieval" },
+  retrieval_web: { stageId: "retrieval_web", label: "Web Retrieval" },
+  retrieval_file: { stageId: "retrieval_file", label: "File Retrieval" },
+  evidence_search: { stageId: "retrieval_orchestrator", label: "Retrieval Orchestrator" },
+  evidence_index: { stageId: "evidence_index", label: "Evidence Index + Rerank" },
+  contradiction_miner: { stageId: "contradiction_miner", label: "Contradiction Miner" },
+  synthesis: { stageId: "synthesis", label: "Answer Synthesis" },
+  answer_synthesis: { stageId: "synthesis", label: "Answer Synthesis" },
+  rag_generation: { stageId: "synthesis", label: "Answer Synthesis" },
+  verification: { stageId: "verification", label: "FIDES Verification" },
+  verifier_v1: { stageId: "verification", label: "FIDES Verification" },
+  verification_matrix: { stageId: "verification_matrix", label: "Claim Matrix" },
+  citation_selection: { stageId: "citation_selection", label: "Citation Selection" },
+  policy_gate: { stageId: "policy_gate", label: "Policy Gate" },
+  policy_action: { stageId: "policy_gate", label: "Policy Gate" },
+  deepseek_fallback: { stageId: "deepseek_fallback", label: "DeepSeek Fallback" },
+  fallback_response: { stageId: "deepseek_fallback", label: "DeepSeek Fallback" },
+  responder: { stageId: "responder", label: "Responder" },
+  final_response: { stageId: "responder", label: "Responder" },
+  evaluation_feedback: { stageId: "evaluation_feedback", label: "Eval + Feedback Loop" },
+};
+
+function resolveFlowStageIdentity(rawStage?: string, rawLabel?: string): { stageId: string; label?: string } {
+  const candidates = [rawStage, rawLabel]
+    .map((item) => (typeof item === "string" ? toFlowKey(item) : ""))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const alias = FLOW_STAGE_ALIAS_MAP[candidate];
+    if (alias) {
+      return alias;
+    }
+  }
+
+  if (rawStage) {
+    return { stageId: toFlowKey(rawStage) };
+  }
+  if (rawLabel) {
+    return { stageId: toFlowKey(rawLabel) };
+  }
+
+  return { stageId: "stage" };
+}
+
 function parseFlowStage(value: unknown, index: number): ResearchFlowStage | null {
   const item = asRecord(value);
   if (!item) return null;
@@ -504,8 +634,11 @@ function parseFlowStage(value: unknown, index: number): ResearchFlowStage | null
   const rawLabel = asText(item.label) ?? asText(item.title) ?? rawStage;
   if (!rawStage && !rawLabel) return null;
 
-  const stageId = toFlowKey(rawStage ?? `stage_${index + 1}`);
-  const label = rawLabel ? toFlowLabel(rawLabel) : toFlowLabel(stageId);
+  const { stageId, label: stageLabel } = resolveFlowStageIdentity(
+    rawStage ?? `stage_${index + 1}`,
+    rawLabel
+  );
+  const label = stageLabel ?? (rawLabel ? toFlowLabel(rawLabel) : toFlowLabel(stageId));
   const detail =
     asText(item.detail) ??
     asText(item.description) ??
@@ -536,7 +669,9 @@ function parseFlowEvent(value: unknown, index: number): ResearchFlowEvent | null
     asText(item.id);
   if (!rawStage) return null;
 
-  const label = toFlowLabel(asText(item.label) ?? asText(item.title) ?? rawStage);
+  const rawLabel = asText(item.label) ?? asText(item.title) ?? rawStage;
+  const { stageId, label: stageLabel } = resolveFlowStageIdentity(rawStage, rawLabel);
+  const label = stageLabel ?? toFlowLabel(rawLabel);
   const detail = asText(item.detail) ?? asText(item.message) ?? asText(item.note) ?? asText(item.description);
   const timestamp =
     asText(item.timestamp) ??
@@ -546,8 +681,8 @@ function parseFlowEvent(value: unknown, index: number): ResearchFlowEvent | null
     asText(item.at);
 
   return {
-    id: `${toFlowKey(rawStage)}-${index + 1}`,
-    stageId: toFlowKey(rawStage),
+    id: `${stageId}-${index + 1}`,
+    stageId,
     label,
     detail,
     status: normalizeFlowStatus(item.status ?? item.state ?? item.event_type ?? item.type),
@@ -968,23 +1103,88 @@ function dedupeTelemetrySourceReasoning(items: ResearchTier2SourceReasoning[]): 
 }
 
 function parseSearchPlan(value: unknown): ResearchTier2SearchPlan {
+  const text = asText(value);
+  if (text) {
+    return {
+      query: text,
+      keywords: [],
+      subqueries: [],
+      connectors: []
+    };
+  }
+
+  if (Array.isArray(value)) {
+    const subqueries = uniqueText(
+      value
+        .map((item) => {
+          if (typeof item === "string" || typeof item === "number") return String(item);
+          const row = asRecord(item);
+          if (!row) return "";
+          return (
+            asText(row.subquery) ??
+            asText(row.sub_query) ??
+            asText(row.query) ??
+            asText(row.term) ??
+            asText(row.keyword) ??
+            asText(row.name) ??
+            asText(row.value) ??
+            ""
+          );
+        })
+        .filter(Boolean)
+    );
+    return {
+      query: subqueries[0],
+      keywords: [],
+      subqueries,
+      connectors: []
+    };
+  }
+
   const record = asRecord(value) ?? {};
   const rawConnectors =
     record.connectors ??
+    record.connector_names ??
+    record.connectorNameList ??
     record.connector_list ??
+    record.connectorList ??
     record.sources ??
     record.provider_list ??
+    record.providerList ??
     record.providers;
-  const rawSubqueries = record.subqueries ?? record.sub_queries ?? record.queries;
+  const rawSubqueries =
+    record.subqueries ??
+    record.sub_queries ??
+    record.subquery_list ??
+    record.subqueryList ??
+    record.query_list ??
+    record.queries;
   return {
-    query: asText(record.query) ?? asText(record.topic),
+    query:
+      asText(record.query) ??
+      asText(record.query_text) ??
+      asText(record.search_query) ??
+      asText(record.topic),
     researchMode:
       asText(record.research_mode) ?? asText(record.researchMode) ?? asText(record.mode),
-    topK: asNumber(record.top_k) ?? asNumber(record.topK),
-    totalCandidates: asNumber(record.total_candidates) ?? asNumber(record.totalCandidates),
-    durationMs: asNumber(record.duration_ms) ?? asNumber(record.durationMs),
+    topK: asNumber(record.top_k) ?? asNumber(record.topK) ?? asNumber(record.k),
+    totalCandidates:
+      asNumber(record.total_candidates) ??
+      asNumber(record.totalCandidates) ??
+      asNumber(record.candidate_count) ??
+      asNumber(record.candidateCount),
+    durationMs:
+      asNumber(record.duration_ms) ??
+      asNumber(record.durationMs) ??
+      asNumber(record.latency_ms) ??
+      asNumber(record.latencyMs),
     keywords: parseKeywordList(
-      record.keywords ?? record.query_keywords ?? record.keyword_list ?? record.query_terms
+      record.keywords ??
+      record.query_keywords ??
+      record.keyword_list ??
+      record.keywordList ??
+      record.query_terms ??
+      record.terms
     ),
     subqueries: parseKeywordList(rawSubqueries),
     connectors: parseKeywordList(rawConnectors)
@@ -998,21 +1198,33 @@ function parseSourceAttempt(value: unknown): ResearchTier2SourceAttempt | null {
     asText(item.source) ??
     asText(item.provider) ??
     asText(item.connector) ??
-    asText(item.name);
+    asText(item.name) ??
+    asText(item.source_name) ??
+    asText(item.source_id);
   if (!source) return null;
   return {
     source,
-    status: asText(item.status),
-    documents: asNumber(item.documents) ?? asNumber(item.doc_count),
+    status: asText(item.status) ?? asText(item.state) ?? asText(item.result) ?? asText(item.outcome),
+    documents:
+      asNumber(item.documents) ??
+      asNumber(item.doc_count) ??
+      asNumber(item.document_count) ??
+      asNumber(item.retrieved_count) ??
+      asNumber(item.retrievedCount) ??
+      asNumber(item.selected_count),
     error:
       asText(item.error) ??
       asText(item.error_code) ??
       asText(item.error_message) ??
       asText(item.failure_reason),
     durationMs: asNumber(item.duration_ms) ?? asNumber(item.durationMs),
-    query: asText(item.query),
-    subquery: asText(item.subquery),
-    passIndex: asNumber(item.pass_index) ?? asNumber(item.passIndex)
+    query: asText(item.query) ?? asText(item.search_query) ?? asText(item.query_text),
+    subquery: asText(item.subquery) ?? asText(item.sub_query) ?? asText(item.query_focus),
+    passIndex:
+      asNumber(item.pass_index) ??
+      asNumber(item.passIndex) ??
+      asNumber(item.pass) ??
+      asNumber(item.round)
   };
 }
 
@@ -1022,8 +1234,69 @@ function parseSourceAttempts(value: unknown): ResearchTier2SourceAttempt[] {
       .map((item) => parseSourceAttempt(item))
       .filter((item): item is ResearchTier2SourceAttempt => Boolean(item));
   }
+
+  const record = asRecord(value);
+  if (record) {
+    const direct = parseSourceAttempt(record);
+    if (direct) return [direct];
+
+    return Object.entries(record).flatMap(([sourceName, raw]) => {
+      if (Array.isArray(raw)) {
+        return raw
+          .map((entry) => {
+            const row = asRecord(entry);
+            if (row) {
+              return parseSourceAttempt({ source: sourceName, ...row });
+            }
+            const text = asText(entry);
+            if (text) {
+              return parseSourceAttempt({ source: sourceName, status: text });
+            }
+            return null;
+          })
+          .filter((item): item is ResearchTier2SourceAttempt => Boolean(item));
+      }
+
+      const nested = asRecord(raw);
+      if (nested) {
+        const parsed = parseSourceAttempt({ source: sourceName, ...nested });
+        return parsed ? [parsed] : [];
+      }
+
+      const text = asText(raw);
+      if (text) {
+        const parsed = parseSourceAttempt({ source: sourceName, status: text });
+        return parsed ? [parsed] : [];
+      }
+
+      const numeric = asNumber(raw);
+      if (numeric !== undefined) {
+        const parsed = parseSourceAttempt({ source: sourceName, documents: numeric });
+        return parsed ? [parsed] : [];
+      }
+
+      return [];
+    });
+  }
+
   const single = parseSourceAttempt(value);
   return single ? [single] : [];
+}
+
+function parseDeepPassSourceAttempts(value: unknown): ResearchTier2SourceAttempt[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    const row = asRecord(item);
+    if (!row) return [];
+    const passIndex = asNumber(row.pass_index) ?? asNumber(row.passIndex);
+    const attempts = parseSourceAttempts(row.source_attempts ?? row.sourceAttempts);
+    if (passIndex === undefined) return attempts;
+    return attempts.map((attempt) => ({
+      ...attempt,
+      passIndex: attempt.passIndex ?? passIndex
+    }));
+  });
 }
 
 function dedupeSourceAttempts(items: ResearchTier2SourceAttempt[]): ResearchTier2SourceAttempt[] {
@@ -1246,6 +1519,75 @@ export async function getResearchTier2Job(jobId: string): Promise<ResearchTier2J
   return response.data;
 }
 
+export async function streamResearchTier2Job(
+  jobId: string,
+  handlers: {
+    onEvent: (event: ResearchTier2JobStreamEvent) => void;
+    signal?: AbortSignal;
+    maxWaitMs?: number;
+  }
+): Promise<void> {
+  const accessToken = getAccessToken();
+  if (!accessToken) {
+    throw new Error("Thiếu access token để mở streaming research.");
+  }
+
+  const maxWaitMs = Math.max(30000, handlers.maxWaitMs ?? RESEARCH_TIER2_STREAM_MAX_WAIT_MS);
+  const streamUrl = `${resolveApiBaseUrl().replace(/\/$/, "")}/research/tier2/jobs/${encodeURIComponent(jobId)}/stream?heartbeat_seconds=10&poll_interval_seconds=0.7`;
+  const startedAt = Date.now();
+  const response = await fetch(streamUrl, {
+    method: "GET",
+    headers: {
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${accessToken}`,
+      "Cache-Control": "no-cache",
+    },
+    signal: handlers.signal,
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Không thể mở stream research (status=${response.status}).`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    if (Date.now() - startedAt > maxWaitMs) {
+      throw new Error("Streaming research vượt quá thời gian chờ.");
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    buffer += decoder.decode(value, { stream: true });
+    const { blocks, tail } = parseSseBlocks(buffer);
+    buffer = tail;
+
+    for (const block of blocks) {
+      const parsed = parseSseEventBlock(block);
+      if (!parsed) continue;
+      if (parsed.event !== "progress" && parsed.event !== "done" && parsed.event !== "error") {
+        continue;
+      }
+      let payload: unknown = {};
+      try {
+        payload = JSON.parse(parsed.data);
+      } catch {
+        payload = { message: parsed.data };
+      }
+      handlers.onEvent({
+        event: parsed.event,
+        payload: payload as ResearchTier2JobResponse | { message?: string },
+      });
+      if (parsed.event === "done" || parsed.event === "error") {
+        return;
+      }
+    }
+  }
+}
+
 export function normalizeResearchTier2JobProgress(value: unknown): ResearchTier2JobProgress {
   const record = asRecord(value) ?? {};
   const flowEvents = parseFlowEvents(record.flow_events ?? record.events);
@@ -1308,18 +1650,32 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
     pickFromRecords(telemetryRecords, [
       "search_plan",
       "search_trace",
-      "query_plan"
+      "query_plan",
+      "searchPlan",
+      "queryPlan"
     ])
   );
   const sourceAttempts = dedupeSourceAttempts(
-    parseSourceAttempts(
-      pickFromRecords(telemetryRecords, [
-        "source_attempts",
-        "connector_attempts",
-        "provider_events",
-        "retrieval_attempts"
-      ])
-    )
+    [
+      ...parseSourceAttempts(
+        pickFromRecords(telemetryRecords, [
+          "source_attempts",
+          "connector_attempts",
+          "provider_events",
+          "retrieval_attempts",
+          "sourceAttempts",
+          "retrievalAttempts",
+          "attempts_by_source",
+          "attemptsBySource"
+        ])
+      ),
+      ...parseDeepPassSourceAttempts(
+        pickFromRecords(telemetryRecords, [
+          "deep_pass_summaries",
+          "deepPassSummaries"
+        ])
+      )
+    ]
   );
   const indexSummary = parseIndexSummary(
     pickFromRecords(telemetryRecords, [
@@ -1404,7 +1760,11 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
         "error_list",
         "source_errors",
         "retrieval_errors",
-        "failed_sources"
+        "failed_sources",
+        "errors_list",
+        "sourceErrors",
+        "retrievalErrors",
+        "failedSources"
       ])
     ),
     ...parseTelemetryErrors(data.source_errors),
@@ -1426,8 +1786,18 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
     errors
   };
 
-  const flowEvents = parseFlowEvents(data.flow_events ?? metadata.flow_events ?? data.events);
-  const metadataStages = parseFlowStages(metadata.stages ?? data.stages);
+  const flowEvents = parseFlowEvents(
+    data.flow_events ??
+      metadata.flow_events ??
+      data.events ??
+      metadata.events
+  );
+  const metadataStages = parseFlowStages(
+    metadata.flow_stages ??
+      data.flow_stages ??
+      metadata.stages ??
+      data.stages
+  );
   const flowStages = metadataStages.length ? metadataStages : deriveStagesFromFlowEvents(flowEvents);
   const parsedSteps = parseList(data.steps ?? data.workflow_steps ?? data.plan_steps, parseStep);
   const steps = parsedSteps.length
@@ -1645,6 +2015,33 @@ function parsePersistedConversation(item: unknown): PersistedResearchConversatio
   };
 }
 
+function parsePersistedMessage(item: unknown): PersistedResearchMessage | null {
+  const value = asRecord(item);
+  if (!value) return null;
+
+  const query = asText(value.query) ?? asText(value.user_input) ?? asText(value.message);
+  const result = parseConversationResultPayload(value.result ?? value.response_text ?? value.response);
+  const createdAt =
+    asTimestampMs(value.created_at) ??
+    asTimestampMs(value.createdAt) ??
+    asTimestampMs(value.timestamp) ??
+    Date.now();
+
+  if (!query || !result) return null;
+  const tier =
+    String(result.tier ?? value.tier ?? "tier1").toLowerCase() === "tier2"
+      ? "tier2"
+      : "tier1";
+
+  return {
+    queryId: asId(value.query_id),
+    query,
+    tier,
+    result: { ...result, tier },
+    createdAt,
+  };
+}
+
 export async function listKnowledgeSources(): Promise<KnowledgeSource[]> {
   const response = await api.get<{ items?: unknown }>("/research/knowledge-sources");
   const items = asRecord(response.data)?.items;
@@ -1755,6 +2152,41 @@ export async function createResearchConversation(
   const parsed = parsePersistedConversation(response.data);
   if (!parsed) throw new Error("Không thể lưu conversation vào database.");
   return parsed;
+}
+
+export async function appendResearchConversationMessage(
+  conversationId: string | number,
+  query: string,
+  result: Record<string, unknown>
+): Promise<PersistedResearchConversation> {
+  const normalizedId =
+    typeof conversationId === "number" ? conversationId : Math.trunc(Number(conversationId));
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+    throw new Error("conversationId không hợp lệ.");
+  }
+  const response = await api.post<unknown>(
+    `/research/conversations/${normalizedId}/messages`,
+    { query, result }
+  );
+  const parsed = parsePersistedConversation(response.data);
+  if (!parsed) throw new Error("Không thể lưu message vào conversation.");
+  return parsed;
+}
+
+export async function listResearchConversationMessages(
+  conversationId: string | number,
+  limit = 100
+): Promise<PersistedResearchMessage[]> {
+  const normalizedId =
+    typeof conversationId === "number" ? conversationId : Math.trunc(Number(conversationId));
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) return [];
+  const response = await api.get<{ items?: unknown }>(
+    `/research/conversations/${normalizedId}/messages`,
+    { params: { limit } }
+  );
+  const root = asRecord(response.data);
+  const items = root?.items ?? response.data;
+  return parseList(items, parsePersistedMessage);
 }
 
 export async function deleteResearchConversation(

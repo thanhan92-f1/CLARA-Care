@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
 import json
 import math
 import os
 import re
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -16,7 +18,8 @@ from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -52,6 +55,8 @@ from clara_api.schemas import (
     KnowledgeSourceUpdateRequest,
     ResearchConversationCreateRequest,
     ResearchConversationListResponse,
+    ResearchConversationMessageResponse,
+    ResearchConversationMessagesResponse,
     ResearchConversationResponse,
     ResearchTier2JobCreateRequest,
     ResearchTier2JobResponse,
@@ -448,7 +453,19 @@ def _coerce_stored_result(raw_text: str) -> dict[str, Any]:
     payload = parsed.get("result")
     result = payload if isinstance(payload, dict) else parsed
     if "tier" not in result:
-        if any(key in result for key in ("citations", "flowEvents", "flow_events", "telemetry")):
+        if any(
+            key in result
+            for key in (
+                "citations",
+                "flowEvents",
+                "flow_events",
+                "telemetry",
+                "source_attempts",
+                "source_errors",
+                "fallback_reason",
+                "query_plan",
+            )
+        ):
             result = {"tier": "tier2", **result}
         else:
             result = {"tier": "tier1", **result}
@@ -476,6 +493,23 @@ def _serialize_research_conversation(
         query=query_obj.user_input,
         result=result_payload,
         tier=tier,
+        created_at=created_at,
+    )
+
+
+def _serialize_research_message(query_obj: QueryModel) -> ResearchConversationMessageResponse:
+    result_payload = _coerce_stored_result(query_obj.response_text)
+    tier = str(result_payload.get("tier") or "tier1").strip().lower()
+    if tier not in {"tier1", "tier2"}:
+        tier = "tier1"
+        result_payload["tier"] = tier
+
+    created_at = query_obj.created_at or datetime.now(tz=UTC)
+    return ResearchConversationMessageResponse(
+        query_id=query_obj.id,
+        query=query_obj.user_input,
+        tier=tier,  # type: ignore[arg-type]
+        result=result_payload,
         created_at=created_at,
     )
 
@@ -821,6 +855,23 @@ def _build_tier2_telemetry(
         if search_plan is not None:
             telemetry["search_plan"] = search_plan
 
+    if "query_plan" not in telemetry:
+        query_plan = _first_value(
+            sources,
+            keys=("query_plan", "search_plan", "search_trace"),
+        )
+        if query_plan is None and isinstance(retrieval_trace, dict):
+            query_plan = retrieval_trace.get("query_plan")
+            if query_plan is None:
+                query_plan = retrieval_trace.get("search_plan")
+        if query_plan is not None:
+            telemetry["query_plan"] = query_plan
+
+    if "query_plan" not in telemetry and "search_plan" in telemetry:
+        telemetry["query_plan"] = telemetry.get("search_plan")
+    if "search_plan" not in telemetry and "query_plan" in telemetry:
+        telemetry["search_plan"] = telemetry.get("query_plan")
+
     if "source_attempts" not in telemetry:
         source_attempts = _first_value(
             sources,
@@ -977,13 +1028,61 @@ def _normalize_tier2_response(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(nested_flow_events, list):
             normalized["flow_events"] = nested_flow_events
 
+    metadata_telemetry_obj = (
+        metadata_obj.get("telemetry")
+        if metadata_obj is not None and isinstance(metadata_obj.get("telemetry"), dict)
+        else None
+    )
+    retrieval_trace_obj = (
+        context_debug_obj.get("retrieval_trace")
+        if context_debug_obj is not None
+        and isinstance(context_debug_obj.get("retrieval_trace"), dict)
+        else None
+    )
+
+    if "source_attempts" not in normalized:
+        source_attempts = _first_value(
+            [metadata_obj, metadata_telemetry_obj, context_debug_obj, retrieval_trace_obj],
+            keys=(
+                "source_attempts",
+                "connector_attempts",
+                "provider_events",
+                "retrieval_attempts",
+            ),
+        )
+        if source_attempts is not None:
+            normalized["source_attempts"] = source_attempts
+
     if "source_errors" not in normalized:
         source_errors = _first_value(
-            [metadata_obj, context_debug_obj],
-            keys=("source_errors",),
+            [metadata_obj, metadata_telemetry_obj, context_debug_obj, retrieval_trace_obj],
+            keys=("source_errors", "retrieval_errors"),
         )
         if source_errors is not None:
             normalized["source_errors"] = source_errors
+
+    if "fallback_reason" not in normalized:
+        fallback_reason = _first_value(
+            [metadata_obj, metadata_telemetry_obj, context_debug_obj, retrieval_trace_obj],
+            keys=("fallback_reason",),
+        )
+        if isinstance(fallback_reason, str):
+            stripped_reason = fallback_reason.strip()
+            if stripped_reason:
+                normalized["fallback_reason"] = stripped_reason
+
+    if "query_plan" not in normalized:
+        query_plan = _first_value(
+            [metadata_obj, metadata_telemetry_obj, context_debug_obj, retrieval_trace_obj],
+            keys=("query_plan", "search_plan", "search_trace"),
+        )
+        if query_plan is not None:
+            normalized["query_plan"] = query_plan
+
+    if "query_plan" not in normalized and normalized.get("search_plan") is not None:
+        normalized["query_plan"] = normalized.get("search_plan")
+    if "search_plan" not in normalized and normalized.get("query_plan") is not None:
+        normalized["search_plan"] = normalized.get("query_plan")
 
     telemetry = _build_tier2_telemetry(
         normalized=normalized,
@@ -992,6 +1091,21 @@ def _normalize_tier2_response(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if telemetry is not None:
         normalized["telemetry"] = telemetry
+        if "source_attempts" not in normalized and telemetry.get("source_attempts") is not None:
+            normalized["source_attempts"] = telemetry.get("source_attempts")
+        if "query_plan" not in normalized and telemetry.get("query_plan") is not None:
+            normalized["query_plan"] = telemetry.get("query_plan")
+        if "search_plan" not in normalized and telemetry.get("search_plan") is not None:
+            normalized["search_plan"] = telemetry.get("search_plan")
+        if "source_errors" not in normalized:
+            telemetry_source_errors = telemetry.get("source_errors")
+            if telemetry_source_errors is None and isinstance(telemetry.get("errors"), dict):
+                telemetry_source_errors = telemetry.get("errors")
+            if telemetry_source_errors is not None:
+                normalized["source_errors"] = telemetry_source_errors
+
+    if "source_errors" in normalized:
+        normalized["source_errors"] = normalize_source_errors(normalized.get("source_errors"))
 
     answer_markdown = normalized.get("answer_markdown")
     if not isinstance(answer_markdown, str) or not answer_markdown.strip():
@@ -1024,7 +1138,11 @@ def _extract_research_source_used(normalized: dict[str, Any]) -> list[str]:
     source_used = normalize_source_used(
         normalized.get("source_used") or metadata_obj.get("source_used") or []
     )
-    source_attempts = telemetry_obj.get("source_attempts")
+    source_attempts = normalized.get("source_attempts")
+    if not isinstance(source_attempts, list):
+        source_attempts = telemetry_obj.get("source_attempts")
+    if not isinstance(source_attempts, list):
+        source_attempts = metadata_obj.get("source_attempts")
     if isinstance(source_attempts, list):
         for attempt in source_attempts:
             if not isinstance(attempt, dict):
@@ -1061,10 +1179,25 @@ def _attach_research_attribution(normalized: dict[str, Any]) -> dict[str, Any]:
         if isinstance(normalized.get("metadata"), dict)
         else {}
     )
+    telemetry_obj = (
+        normalized.get("telemetry")
+        if isinstance(normalized.get("telemetry"), dict)
+        else {}
+    )
     source_used = _extract_research_source_used(normalized)
     source_errors = normalize_source_errors(
-        normalized.get("source_errors") or metadata_obj.get("source_errors") or {}
+        normalized.get("source_errors")
+        or metadata_obj.get("source_errors")
+        or telemetry_obj.get("source_errors")
+        or (
+            telemetry_obj.get("errors")
+            if isinstance(telemetry_obj.get("errors"), dict)
+            else {}
+        )
+        or {}
     )
+    if "source_errors" not in normalized and source_errors:
+        normalized["source_errors"] = source_errors
     mode = str(
         normalized.get("research_mode")
         or metadata_obj.get("research_mode")
@@ -1082,11 +1215,19 @@ def _attach_research_attribution(normalized: dict[str, Any]) -> dict[str, Any]:
         }
         for source_id in source_used
     ]
+    fallback_reason = normalized.get("fallback_reason")
+    if not isinstance(fallback_reason, str) or not fallback_reason.strip():
+        metadata_fallback_reason = metadata_obj.get("fallback_reason")
+        if isinstance(metadata_fallback_reason, str) and metadata_fallback_reason.strip():
+            fallback_reason = metadata_fallback_reason.strip()
+            normalized["fallback_reason"] = fallback_reason
+        else:
+            fallback_reason = ""
     fallback_used = bool(
         normalized.get("fallback_used")
         or metadata_obj.get("fallback_used")
         or normalized.get("fallback")
-        or normalized.get("fallback_reason")
+        or fallback_reason
     )
     if fallback_used:
         normalized["fallback"] = True
@@ -1287,7 +1428,7 @@ def _invoke_ml_tier2_with_progress(
 ) -> dict[str, Any]:
     settings = get_settings()
     url = f"{settings.ml_service_url.rstrip('/')}/v1/research/tier2"
-    timeout_seconds = max(settings.ml_service_timeout_seconds * 3.0, 180.0)
+    timeout_seconds = max(settings.ml_service_timeout_seconds * 3.0, 480.0)
     started = datetime.now(tz=UTC)
 
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="research-ml-call") as executor:
@@ -2509,6 +2650,93 @@ def create_research_conversation(
     return _serialize_research_conversation(session_obj=session_obj, query_obj=query_obj)
 
 
+@router.get("/conversations/{conversation_id}/messages")
+def list_research_conversation_messages(
+    conversation_id: int,
+    limit: int = 100,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+) -> ResearchConversationMessagesResponse:
+    user = _get_user_by_token(db, token)
+    session_obj = db.execute(
+        select(SessionModel).where(
+            SessionModel.id == conversation_id,
+            SessionModel.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+    if session_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation không tồn tại.",
+        )
+
+    safe_limit = max(1, min(500, int(limit)))
+    rows = (
+        db.execute(
+            select(QueryModel)
+            .where(QueryModel.session_id == session_obj.id)
+            .order_by(QueryModel.created_at.asc(), QueryModel.id.asc())
+            .limit(safe_limit)
+        )
+        .scalars()
+        .all()
+    )
+    return ResearchConversationMessagesResponse(
+        conversation_id=session_obj.id,
+        items=[_serialize_research_message(row) for row in rows],
+    )
+
+
+@router.post("/conversations/{conversation_id}/messages")
+def append_research_conversation_message(
+    conversation_id: int,
+    payload: ResearchConversationCreateRequest,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+) -> ResearchConversationResponse:
+    user = _get_user_by_token(db, token)
+    session_obj = db.execute(
+        select(SessionModel).where(
+            SessionModel.id == conversation_id,
+            SessionModel.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+    if session_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation không tồn tại.",
+        )
+
+    query_text = payload.query.strip()
+    if not query_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="query không được rỗng.",
+        )
+    result_payload = _validate_result_payload(payload.result)
+    try:
+        stored_result = json.dumps({"result": result_payload}, ensure_ascii=False)
+    except TypeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"result chứa dữ liệu không thể lưu JSON: {exc}",
+        ) from exc
+
+    query_obj = QueryModel(
+        session_id=session_obj.id,
+        role=token.role,
+        user_input=query_text,
+        response_text=stored_result,
+    )
+    db.add(query_obj)
+    session_obj.title = query_text[:255]
+    db.add(session_obj)
+    db.commit()
+    db.refresh(session_obj)
+    db.refresh(query_obj)
+    return _serialize_research_conversation(session_obj=session_obj, query_obj=query_obj)
+
+
 @router.delete("/conversations/{conversation_id}")
 def delete_research_conversation(
     conversation_id: int,
@@ -2861,6 +3089,122 @@ def get_research_tier2_job(
             detail="Research job không tồn tại.",
         )
     return _serialize_research_job(job)
+
+
+def _build_research_job_stream_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def _sse_event(event_name: str, payload: dict[str, Any], event_id: str | None = None) -> str:
+    data = json.dumps(payload, ensure_ascii=False, default=str)
+    lines: list[str] = []
+    if event_id:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event_name}")
+    lines.append(f"data: {data}")
+    return "\n".join(lines) + "\n\n"
+
+
+@router.get("/tier2/jobs/{job_id}/stream")
+async def stream_research_tier2_job(
+    request: Request,
+    job_id: str,
+    heartbeat_seconds: int = 10,
+    poll_interval_seconds: float = 0.8,
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_by_token(db, token)
+    user_id = int(user.id)
+    existing = db.execute(
+        select(ResearchJob).where(
+            ResearchJob.job_id == job_id,
+            ResearchJob.user_id == user_id,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research job không tồn tại.",
+        )
+
+    safe_poll_interval = min(max(float(poll_interval_seconds), 0.25), 5.0)
+    safe_heartbeat = 5 if heartbeat_seconds < 5 else heartbeat_seconds
+
+    def _load_job_snapshot() -> dict[str, Any] | None:
+        # Use a fresh session for each read to avoid stale identity-map cache
+        # during long-lived SSE connections.
+        with SessionLocal() as fresh_db:
+            current = fresh_db.execute(
+                select(ResearchJob).where(
+                    ResearchJob.job_id == job_id,
+                    ResearchJob.user_id == user_id,
+                )
+            ).scalar_one_or_none()
+            if current is None:
+                return None
+            return _serialize_research_job(current).model_dump(mode="json")
+
+    async def event_stream():
+        last_heartbeat_at = time.monotonic()
+        last_signature = ""
+        sequence = 0
+        yield ": connected\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            snapshot = _load_job_snapshot()
+            if snapshot is None:
+                sequence += 1
+                yield _sse_event(
+                    "error",
+                    {"message": "Research job không còn khả dụng."},
+                    event_id=str(sequence),
+                )
+                break
+
+            signature = json.dumps(
+                {
+                    "status": snapshot.get("status"),
+                    "updated_at": snapshot.get("updated_at"),
+                    "completed_at": snapshot.get("completed_at"),
+                    "error": snapshot.get("error"),
+                    "progress": snapshot.get("progress"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+
+            if signature != last_signature:
+                last_signature = signature
+                sequence += 1
+                yield _sse_event("progress", snapshot, event_id=str(sequence))
+                last_heartbeat_at = time.monotonic()
+
+            status_text = str(snapshot.get("status") or "").lower()
+            if status_text in {"completed", "failed"}:
+                sequence += 1
+                yield _sse_event("done", snapshot, event_id=str(sequence))
+                break
+
+            if time.monotonic() - last_heartbeat_at >= safe_heartbeat:
+                yield ": keepalive\n\n"
+                last_heartbeat_at = time.monotonic()
+
+            await asyncio.sleep(safe_poll_interval)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=_build_research_job_stream_headers(),
+    )
 
 
 @router.get("/source-hub/catalog")

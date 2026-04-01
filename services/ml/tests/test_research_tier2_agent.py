@@ -86,9 +86,16 @@ def test_run_research_tier2_falls_back_to_merged_context_when_ddi_filter_empty(
     assert len(citations) >= 1
     assert citations[0].get("source") != "system_fallback"
     assert result.get("fallback_used") is False
+    assert isinstance(result.get("source_attempts"), list)
+    assert isinstance(result.get("source_errors"), dict)
+    assert "fallback_reason" in result
+    assert isinstance(result.get("query_plan"), dict)
+    assert isinstance(result.get("telemetry", {}).get("query_plan"), dict)
+    assert isinstance(result.get("metadata", {}).get("source_attempts"), list)
+    assert isinstance(result.get("metadata", {}).get("source_errors"), dict)
 
 
-def test_build_planner_hints_enables_web_retrieval_for_fast_ddi_query():
+def test_build_planner_hints_applies_latency_guard_for_fast_ddi_query():
     hints = tier2._build_planner_hints(
         topic="Tương tác warfarin với ibuprofen ở người cao tuổi",
         source_mode=None,
@@ -98,8 +105,10 @@ def test_build_planner_hints_enables_web_retrieval_for_fast_ddi_query():
         rag_sources=[],
         research_mode="fast",
     )
-    assert hints["scientific_retrieval_enabled"] is True
-    assert hints["web_retrieval_enabled"] is True
+    assert hints["scientific_retrieval_enabled"] is False
+    assert hints["web_retrieval_enabled"] is False
+    assert "fast_mode_latency_guard" in hints["reason_codes"]
+    assert "fast_scientific_disabled_for_sla" in hints["reason_codes"]
 
 
 def test_filter_context_for_ddi_keeps_primary_alias_rows():
@@ -155,3 +164,20 @@ def test_normalize_retrieval_events_adds_sequence_and_elapsed():
     assert normalized[1]["event_sequence"] == 2
     assert normalized[1]["payload"]["event_sequence"] == 2
     assert normalized[1]["payload"]["elapsed_ms"] >= 30
+
+
+def test_build_source_aware_query_plan_handles_vi_en_ddi():
+    query_plan = tier2._build_source_aware_query_plan(
+        topic="Tương tác warfarin với ibuprofen nguy cơ chảy máu",
+        research_mode="fast",
+        keywords=["warfarin", "ibuprofen", "interaction", "bleeding"],
+    )
+
+    assert query_plan["is_ddi_query"] is True
+    assert isinstance(query_plan.get("canonical_query"), str)
+    assert "warfarin" in query_plan.get("canonical_query", "").lower()
+    assert isinstance(query_plan.get("source_queries"), dict)
+    assert len(query_plan["source_queries"].get("internal", [])) >= 1
+    assert len(query_plan["source_queries"].get("scientific", [])) >= 1
+    assert isinstance(query_plan.get("decomposition"), dict)
+    assert len(query_plan["decomposition"].get("fast_pass_queries", [])) >= 1

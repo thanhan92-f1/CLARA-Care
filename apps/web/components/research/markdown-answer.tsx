@@ -48,13 +48,24 @@ function sanitizeMermaidSvg(svg: string): string {
   }
 
   try {
+    // Repair common XML-invalid tags sometimes emitted inside Mermaid SVG labels.
+    const repaired = svg
+      .replace(/<br(\s+[^/>]*)?>/gi, (_full, attrs = "") => `<br${attrs} />`)
+      .replace(/<\/br>/gi, "")
+      .replace(/<hr(\s+[^/>]*)?>/gi, (_full, attrs = "") => `<hr${attrs} />`)
+      .replace(/<\/hr>/gi, "");
+
     const parser = new window.DOMParser();
-    const parsed = parser.parseFromString(svg, "image/svg+xml");
-    if (parsed.documentElement?.nodeName?.toLowerCase() === "parsererror") {
+    const parsed = parser.parseFromString(repaired, "image/svg+xml");
+    if (
+      parsed.documentElement?.nodeName?.toLowerCase() === "parsererror" ||
+      parsed.querySelector("parsererror")
+    ) {
       return "";
     }
 
-    parsed.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => {
+    // Keep foreignObject because Mermaid may put labels there; removing it can erase all text.
+    parsed.querySelectorAll("script, iframe, object, embed").forEach((node) => {
       node.remove();
     });
 
@@ -74,6 +85,21 @@ function sanitizeMermaidSvg(svg: string): string {
       }
     });
 
+    // Force readable text color for common Mermaid label nodes.
+    parsed.querySelectorAll("text, tspan").forEach((node) => {
+      const current = node.getAttribute("fill")?.trim().toLowerCase() ?? "";
+      if (!current || current === "none" || current === "transparent") {
+        node.setAttribute("fill", "#0f172a");
+      }
+    });
+
+    parsed.querySelectorAll("foreignObject *").forEach((node) => {
+      const currentStyle = node.getAttribute("style") ?? "";
+      if (!/color\s*:/i.test(currentStyle)) {
+        node.setAttribute("style", `${currentStyle}${currentStyle ? ";" : ""}color:#0f172a;`);
+      }
+    });
+
     return parsed.documentElement.outerHTML || "";
   } catch {
     return "";
@@ -86,6 +112,7 @@ function normalizeMermaidCode(code: string): string {
 
   normalized = normalized
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/&lt;br\s*\/?&gt;/gi, "\n")
     .replace(/<\/?p\b[^>]*>/gi, "")
     .replace(/<\/?div\b[^>]*>/gi, "")
     .replace(/&nbsp;/gi, " ");
@@ -163,7 +190,7 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   }
 
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/70">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-white">
       <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
         <span>Mermaid Diagram</span>
         <span className="rounded-full border border-cyan-300/60 bg-cyan-500/15 px-2 py-0.5 text-[10px] text-cyan-700 dark:text-cyan-200">
@@ -187,6 +214,19 @@ function getFenceLanguageLabel(language?: string): string {
   if (language === "ts" || language === "tsx") return "typescript";
   if (language === "js" || language === "jsx") return "javascript";
   return language;
+}
+
+function flattenMarkdownChildren(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => flattenMarkdownChildren(item)).join("");
+  }
+  if (value && typeof value === "object" && "props" in value) {
+    const props = (value as { props?: { children?: unknown } }).props;
+    return flattenMarkdownChildren(props?.children);
+  }
+  return "";
 }
 
 function CodeFence({ code, language, isChartSpec }: CodeFenceProps) {
@@ -257,6 +297,7 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
         remarkPlugins={[remarkGfm]}
         skipHtml
         components={{
+          pre: ({ children }) => <>{children}</>,
           a: ({ href, children, ...props }) => {
             const text =
               Array.isArray(children) && typeof children[0] === "string" ? children[0] : "";
@@ -277,7 +318,7 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
             );
           },
           code: ({ className, children, node, ...props }) => {
-            const rawCode = String(children);
+            const rawCode = flattenMarkdownChildren(children);
             const code = rawCode.replace(/\n$/, "");
             const language = className?.replace("language-", "").trim().toLowerCase();
             const startLine =
@@ -298,7 +339,7 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
                   {...props}
                   className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[0.82em] text-slate-100"
                 >
-                  {children}
+                  {rawCode}
                 </code>
               );
             }

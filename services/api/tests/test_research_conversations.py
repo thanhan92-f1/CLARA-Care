@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from clara_api.db.models import Query as QueryModel
-from clara_api.db.models import SessionModel
-from clara_api.db.models import User
+from clara_api.db.models import SessionModel, User
 from clara_api.db.session import SessionLocal
 from clara_api.main import app
 
@@ -64,6 +63,53 @@ def test_research_conversations_create_list_delete() -> None:
     )
     assert list_after_delete.status_code == 200
     assert list_after_delete.json()["items"] == []
+
+
+def test_research_conversation_append_and_list_messages() -> None:
+    token = _login("research-thread@example.com")
+
+    create_response = client.post(
+        "/api/v1/research/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "Câu hỏi mở đầu",
+            "result": {
+                "tier": "tier2",
+                "answer": "Trả lời mở đầu",
+                "citations": [{"title": "Paper A"}],
+            },
+        },
+    )
+    assert create_response.status_code == 200
+    conversation_id = create_response.json()["id"]
+
+    append_response = client.post(
+        f"/api/v1/research/conversations/{conversation_id}/messages",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "Câu hỏi follow-up",
+            "result": {
+                "tier": "tier2",
+                "answer": "Trả lời follow-up",
+                "citations": [{"title": "Paper B"}],
+            },
+        },
+    )
+    assert append_response.status_code == 200
+    payload = append_response.json()
+    assert payload["id"] == conversation_id
+    assert payload["query"] == "Câu hỏi follow-up"
+
+    messages_response = client.get(
+        f"/api/v1/research/conversations/{conversation_id}/messages",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert messages_response.status_code == 200
+    messages_payload = messages_response.json()
+    assert messages_payload["conversation_id"] == conversation_id
+    assert len(messages_payload["items"]) == 2
+    assert messages_payload["items"][0]["query"] == "Câu hỏi mở đầu"
+    assert messages_payload["items"][1]["query"] == "Câu hỏi follow-up"
 
 
 def test_research_conversations_list_isolated_by_user() -> None:
@@ -189,3 +235,49 @@ def test_research_conversations_list_handles_legacy_response_text() -> None:
     items = list_response.json()["items"]
     assert len(items) == 2
     assert any(item["result"]["tier"] == "tier2" for item in items)
+
+
+def test_research_conversations_infers_tier2_from_new_ml_metadata_keys() -> None:
+    token = _login("legacy-ml-metadata@example.com")
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "legacy-ml-metadata@example.com").first()
+        assert user is not None
+        session_obj = SessionModel(user_id=user.id, title="metadata session")
+        db.add(session_obj)
+        db.flush()
+        payload = json.dumps(
+            {
+                "result": {
+                    "answer": "metadata-only result",
+                    "query_plan": {"query": "warfarin ibuprofen", "query_terms": ["warfarin"]},
+                    "source_attempts": [{"source": "pubmed", "status": "completed"}],
+                    "source_errors": {"openfda": ["timeout"]},
+                    "fallback_reason": "upstream_timeout",
+                }
+            }
+        )
+        db.add(
+            QueryModel(
+                session_id=session_obj.id,
+                role="normal",
+                user_input="metadata query",
+                response_text=payload,
+            )
+        )
+        db.commit()
+
+    list_response = client.get(
+        "/api/v1/research/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200
+    items = list_response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["query"] == "metadata query"
+    assert items[0]["tier"] == "tier2"
+    assert items[0]["result"]["tier"] == "tier2"
+    assert items[0]["result"]["query_plan"]["query"] == "warfarin ibuprofen"
+    assert items[0]["result"]["source_attempts"][0]["source"] == "pubmed"
+    assert items[0]["result"]["source_errors"] == {"openfda": ["timeout"]}
+    assert items[0]["result"]["fallback_reason"] == "upstream_timeout"

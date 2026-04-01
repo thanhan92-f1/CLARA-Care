@@ -181,7 +181,10 @@ class AttributionEntry(BaseModel):
 class UnifiedContractMetadata(BaseModel):
     policy_action: PolicyAction | None = None
     fallback_used: bool = False
+    fallback_reason: str | None = None
+    source_attempts: list[dict[str, Any]] = Field(default_factory=list)
     source_errors: dict[str, list[str]] = Field(default_factory=dict)
+    query_plan: dict[str, Any] = Field(default_factory=dict)
     attributions: list[AttributionEntry] = Field(default_factory=list)
 
 
@@ -459,6 +462,19 @@ class ResearchConversationResponse(BaseModel):
 
 class ResearchConversationListResponse(BaseModel):
     items: list[ResearchConversationResponse] = Field(default_factory=list)
+
+
+class ResearchConversationMessageResponse(BaseModel):
+    query_id: int
+    query: str
+    tier: ResearchConversationTier
+    result: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ResearchConversationMessagesResponse(BaseModel):
+    conversation_id: int
+    items: list[ResearchConversationMessageResponse] = Field(default_factory=list)
 
 
 class ResearchTier2JobCreateRequest(BaseModel):

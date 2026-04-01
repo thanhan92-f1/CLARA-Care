@@ -1,8 +1,15 @@
+import json
+import threading
+import time
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from clara_api.db.models import ResearchJob, User
+from clara_api.db.session import SessionLocal
 from clara_api.main import app
 
 client = TestClient(app)
@@ -208,6 +215,8 @@ def test_research_attribution_respects_canonical_fallback_used(monkeypatch) -> N
     assert body["attribution"]["fallback_used"] is True
     assert body["attribution"]["source_used"] == ["pubmed", "openfda"]
     assert body["attribution"]["source_errors"] == {"openfda": ["timeout"]}
+    assert isinstance(body["attributions"], list)
+    assert body["attributions"][0] == body["attribution"]
 
 
 def test_research_upload_file_json_is_parsed_as_text() -> None:
@@ -428,6 +437,195 @@ def test_research_tier2_job_get_404_for_other_user(monkeypatch: pytest.MonkeyPat
     assert other_user_response.status_code == 404
 
 
+def test_research_tier2_job_stream_returns_progress_and_done() -> None:
+    token = _login("alice@research.clara")
+    now = datetime.now(tz=UTC)
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "alice@research.clara").first()
+        assert user is not None
+        job = ResearchJob(
+            job_id="stream-test-job-1",
+            user_id=user.id,
+            role="researcher",
+            status="completed",
+            query_text="stream test",
+            request_payload={"query": "stream test"},
+            progress_json={
+                "flow_events": [
+                    {
+                        "id": "evt-1",
+                        "stage": "collect_evidence",
+                        "status": "in_progress",
+                        "note": "Đang truy xuất nguồn.",
+                        "timestamp": now.isoformat(),
+                    }
+                ],
+                "flow_stages": [
+                    {
+                        "id": "collect_evidence",
+                        "label": "Collect Evidence",
+                        "status": "in_progress",
+                        "detail": "Đang truy xuất nguồn.",
+                        "source": "flow_events",
+                    }
+                ],
+                "active_stage": "collect_evidence",
+                "status_note": "Đang truy xuất nguồn.",
+                "reasoning_steps": [],
+            },
+            result_json={"answer": "ok", "metadata": {"research_mode": "fast"}},
+            error_text="",
+            created_at=now,
+            updated_at=now,
+            started_at=now,
+            completed_at=now,
+        )
+        db.add(job)
+        db.commit()
+
+    with client.stream(
+        "GET",
+        "/api/v1/research/tier2/jobs/stream-test-job-1/stream",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as response:
+        assert response.status_code == 200
+        body = ""
+        for chunk in response.iter_text():
+            body += chunk
+
+    assert "event: progress" in body
+    assert "event: done" in body
+    data_lines = [
+        line[len("data: ") :]
+        for line in body.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert data_lines
+    parsed_payloads = []
+    for raw in data_lines:
+        parsed_payloads.append(json.loads(raw))
+    assert any(payload.get("job_id") == "stream-test-job-1" for payload in parsed_payloads)
+
+
+def test_research_tier2_job_stream_reflects_external_job_updates() -> None:
+    token = _login("alice@research.clara")
+    now = datetime.now(tz=UTC)
+    job_id = "stream-test-job-live-update"
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "alice@research.clara").first()
+        assert user is not None
+        job = ResearchJob(
+            job_id=job_id,
+            user_id=user.id,
+            role="researcher",
+            status="running",
+            query_text="stream update test",
+            request_payload={"query": "stream update test"},
+            progress_json={
+                "flow_events": [
+                    {
+                        "id": "evt-init",
+                        "stage": "dispatch_ml",
+                        "status": "in_progress",
+                        "note": "Đã gửi yêu cầu lên ML service.",
+                        "timestamp": now.isoformat(),
+                    }
+                ],
+                "flow_stages": [
+                    {
+                        "id": "dispatch_ml",
+                        "label": "Dispatch Ml",
+                        "status": "in_progress",
+                        "detail": "Đã gửi yêu cầu lên ML service.",
+                        "source": "flow_events",
+                    }
+                ],
+                "active_stage": "dispatch_ml",
+                "status_note": "Đã gửi yêu cầu lên ML service.",
+                "reasoning_steps": [],
+            },
+            result_json=None,
+            error_text="",
+            created_at=now,
+            updated_at=now,
+            started_at=now,
+            completed_at=None,
+        )
+        db.add(job)
+        db.commit()
+
+    def _complete_job_later() -> None:
+        time.sleep(0.8)
+        with SessionLocal() as db:
+            row = db.query(ResearchJob).filter(ResearchJob.job_id == job_id).first()
+            assert row is not None
+            row.status = "completed"
+            row.completed_at = datetime.now(tz=UTC)
+            row.updated_at = datetime.now(tz=UTC)
+            row.result_json = {"answer": "done", "metadata": {"research_mode": "fast"}}
+            row.progress_json = {
+                "flow_events": [
+                    {
+                        "id": "evt-init",
+                        "stage": "dispatch_ml",
+                        "status": "in_progress",
+                        "note": "Đã gửi yêu cầu lên ML service.",
+                        "timestamp": now.isoformat(),
+                    },
+                    {
+                        "id": "evt-done",
+                        "stage": "final_response",
+                        "status": "completed",
+                        "note": "Đã hoàn tất trả lời.",
+                        "timestamp": datetime.now(tz=UTC).isoformat(),
+                    },
+                ],
+                "flow_stages": [
+                    {
+                        "id": "dispatch_ml",
+                        "label": "Dispatch Ml",
+                        "status": "completed",
+                        "detail": "Đã gửi yêu cầu lên ML service.",
+                        "source": "flow_events",
+                    },
+                    {
+                        "id": "final_response",
+                        "label": "Final Response",
+                        "status": "completed",
+                        "detail": "Đã hoàn tất trả lời.",
+                        "source": "flow_events",
+                    },
+                ],
+                "active_stage": "final_response",
+                "status_note": "Đã hoàn tất trả lời.",
+                "reasoning_steps": [],
+            }
+            db.add(row)
+            db.commit()
+
+    worker = threading.Thread(target=_complete_job_later, daemon=True)
+    worker.start()
+
+    with client.stream(
+        "GET",
+        f"/api/v1/research/tier2/jobs/{job_id}/stream?poll_interval_seconds=0.3&heartbeat_seconds=5",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as response:
+        assert response.status_code == 200
+        body = ""
+        for chunk in response.iter_text():
+            body += chunk
+            if "event: done" in body:
+                break
+
+    worker.join(timeout=3.0)
+    assert "event: progress" in body
+    assert "event: done" in body
+    assert '"status": "completed"' in body or '"status":"completed"' in body
+
+
 def test_research_tier2_returns_fail_soft_payload_with_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -596,16 +794,22 @@ def test_research_tier2_normalize_preserves_new_telemetry_fields(
     telemetry = payload["telemetry"]
     assert telemetry["research_mode"] == "deep"
     assert telemetry["search_plan"]["query_terms"] == ["normalize", "telemetry", "contract"]
+    assert telemetry["query_plan"]["query_terms"] == ["normalize", "telemetry", "contract"]
     assert telemetry["source_attempts"][1]["source"] == "openfda"
     assert telemetry["index_summary"]["indexed_docs"] == 14
     assert telemetry["index_summary"]["selected_docs"] == 5
     assert telemetry["crawl_summary"]["pages_crawled"] == 2
     assert telemetry["custom_field"] == {"keep": True}
+    assert payload["query_plan"]["query_terms"] == ["normalize", "telemetry", "contract"]
+    assert payload["search_plan"]["query_terms"] == ["normalize", "telemetry", "contract"]
+    assert payload["source_attempts"][1]["source"] == "openfda"
     assert payload["source_errors"] == {"openfda": ["timeout"]}
     assert payload["attribution"]["channel"] == "research"
     assert payload["attribution"]["mode"] == "deep"
     assert payload["attribution"]["source_errors"] == {"openfda": ["timeout"]}
     assert set(payload["attribution"]["source_used"]) >= {"pubmed", "openfda"}
+    assert isinstance(payload["attributions"], list)
+    assert payload["attributions"][0] == payload["attribution"]
     assert isinstance(payload.get("flow_events"), list)
     assert payload["flow_events"][0]["stage"] == "deep_retrieval_pass"
 
@@ -675,3 +879,68 @@ def test_research_tier2_exposes_telemetry_details_from_context_debug(
     assert telemetry["errors"] == {"openfda": ["timeout"]}
     assert payload["attribution"]["channel"] == "research"
     assert payload["attribution"]["source_errors"] == {"openfda": ["timeout"]}
+
+
+def test_research_tier2_promotes_new_metadata_contract_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+
+    upstream_payload = {
+        "answer": "ok",
+        "metadata": {
+            "research_mode": "deep",
+            "query_plan": {
+                "query": "warfarin ibuprofen",
+                "query_terms": ["warfarin", "ibuprofen"],
+                "top_k": 6,
+            },
+            "source_attempts": [
+                {"source": "pubmed", "status": "completed", "attempt": 1},
+                {"provider": "openfda", "status": "timeout", "attempt": 1},
+            ],
+            "source_errors": {"openfda": "timeout"},
+            "fallback_reason": "upstream_timeout",
+        },
+    }
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return upstream_payload
+
+    def _fake_post(_url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        _ = (json, timeout)
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "warfarin ibuprofen", "research_mode": "deep"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fallback_reason"] == "upstream_timeout"
+    assert payload["query_plan"]["query_terms"] == ["warfarin", "ibuprofen"]
+    assert payload["search_plan"]["query_terms"] == ["warfarin", "ibuprofen"]
+    assert payload["source_attempts"][1]["provider"] == "openfda"
+    assert payload["source_errors"] == {"openfda": ["timeout"]}
+    assert payload["fallback"] is True
+
+    telemetry = payload["telemetry"]
+    assert telemetry["query_plan"]["query_terms"] == ["warfarin", "ibuprofen"]
+    assert telemetry["search_plan"]["query_terms"] == ["warfarin", "ibuprofen"]
+    assert telemetry["source_attempts"][0]["source"] == "pubmed"
+
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["mode"] == "deep"
+    assert payload["attribution"]["fallback_used"] is True
+    assert payload["attribution"]["source_errors"] == {"openfda": ["timeout"]}
+    assert set(payload["attribution"]["source_used"]) >= {"pubmed", "openfda"}
+    assert isinstance(payload["attributions"], list)
+    assert payload["attributions"][0] == payload["attribution"]

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import re
 from time import perf_counter
 from typing import Any
+import unicodedata
 
 from clara_ml.config import settings
 from clara_ml.factcheck import run_fides_lite
@@ -64,6 +65,162 @@ def _normalize_research_mode(payload: dict[str, Any]) -> str:
     if raw_mode in {"deep", "deep_research", "long"}:
         return "deep"
     return "fast"
+
+
+def _ascii_fold(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", str(text or ""))
+    without_marks = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    return without_marks.lower()
+
+
+def _dedupe_query_list(queries: list[str], *, limit: int = 12) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in queries:
+        normalized = " ".join(str(item or "").split()).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+        if len(deduped) >= max(int(limit), 1):
+            break
+    return deduped
+
+
+def _is_ddi_critical_topic(topic: str) -> bool:
+    lowered = str(topic or "").lower()
+    folded = _ascii_fold(topic)
+    critical_markers = {
+        "critical",
+        "major",
+        "severe",
+        "life-threatening",
+        "black box",
+        "contraindication",
+        "bleeding risk",
+        "hemorrhage",
+        "nghiem trong",
+        "nguy hiem",
+        "chong chi dinh",
+        "xuat huyet",
+    }
+    return any(marker in lowered or marker in folded for marker in critical_markers)
+
+
+def _build_source_aware_query_plan(
+    *,
+    topic: str,
+    research_mode: str,
+    keywords: list[str],
+) -> dict[str, Any]:
+    original_query = " ".join(str(topic or "").split()).strip()
+    folded_query = _ascii_fold(original_query)
+    profile = analyze_query_profile(original_query)
+    keyword_terms = [
+        item.strip().lower()
+        for item in keywords
+        if isinstance(item, str) and item.strip()
+    ]
+    if not keyword_terms:
+        keyword_terms = query_terms(original_query)
+
+    has_vietnamese_marks = bool(
+        re.search(r"[àáạảãâầấậẩẫăằắặẳẵđèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹ]", original_query.lower())
+    )
+    has_english_markers = bool(
+        re.search(
+            r"\b(interaction|guideline|evidence|review|trial|safety|contraindication|bleeding)\b",
+            original_query.lower(),
+        )
+    )
+    language_hint = "vi" if has_vietnamese_marks else "en"
+    if has_vietnamese_marks and has_english_markers:
+        language_hint = "mixed"
+
+    primary_drug = str(profile.get("primary_drug") or "").strip().lower()
+    co_drugs_raw = profile.get("co_drugs")
+    co_drugs = (
+        [str(item).strip().lower() for item in co_drugs_raw if str(item).strip()]
+        if isinstance(co_drugs_raw, list)
+        else []
+    )
+    co_drug_phrase = ", ".join(co_drugs[:4]) if co_drugs else "common analgesics"
+    canonical_query = original_query
+    if profile.get("is_ddi_query"):
+        canonical_query = (
+            f"{primary_drug or 'index drug'} interaction with {co_drug_phrase} "
+            "bleeding risk contraindication guidance"
+        ).strip()
+    elif language_hint == "vi":
+        canonical_query = " ".join(keyword_terms[:8]).strip() or folded_query or original_query
+
+    internal_queries = _dedupe_query_list(
+        [
+            original_query,
+            canonical_query,
+            folded_query if folded_query != original_query.lower() else "",
+            " ".join(keyword_terms[:8]),
+        ],
+        limit=8,
+    )
+    scientific_queries = _dedupe_query_list(
+        [
+            canonical_query,
+            " ".join(keyword_terms[:8]),
+            (
+                f"{primary_drug or 'index drug'} drug-drug interaction with {co_drug_phrase} "
+                "clinical evidence"
+                if profile.get("is_ddi_query")
+                else ""
+            ),
+            original_query,
+        ],
+        limit=8,
+    )
+    web_queries = _dedupe_query_list(
+        [
+            original_query,
+            canonical_query,
+            f"{canonical_query} guideline",
+            f"{canonical_query} safety warning",
+        ],
+        limit=8,
+    )
+
+    deep_queries = _dedupe_query_list(
+        [
+            canonical_query,
+            f"{canonical_query} guideline recommendations and safety thresholds",
+            f"{canonical_query} systematic review meta-analysis outcomes",
+            f"{canonical_query} adverse events contraindications interaction risks",
+            f"{canonical_query} contradictory findings and subgroup caveats",
+            f"{canonical_query} clinical translation and monitoring checklist",
+        ],
+        limit=12,
+    )
+    fast_queries = _dedupe_query_list([canonical_query, original_query, " ".join(keyword_terms[:6])], limit=4)
+
+    return {
+        "original_query": original_query,
+        "canonical_query": canonical_query,
+        "language_hint": language_hint,
+        "is_ddi_query": bool(profile.get("is_ddi_query")),
+        "is_ddi_critical_query": bool(profile.get("is_ddi_query")) and _is_ddi_critical_topic(original_query),
+        "source_queries": {
+            "internal": internal_queries,
+            "scientific": scientific_queries,
+            "web": web_queries,
+        },
+        "decomposition": {
+            "fast_pass_queries": fast_queries,
+            "deep_pass_queries": deep_queries,
+        },
+        "research_mode": research_mode,
+        "query_terms": keyword_terms[:10],
+    }
 
 
 def _build_plan_steps(
@@ -150,6 +307,7 @@ def _build_planner_hints(
     normalized_topic = topic.lower()
     query_profile = analyze_query_profile(topic)
     is_ddi_query = bool(query_profile.get("is_ddi_query"))
+    is_ddi_critical_query = is_ddi_query and _is_ddi_critical_topic(topic)
     has_uploaded = bool(uploaded_documents)
     has_knowledge_sources = isinstance(rag_sources, list) and len(rag_sources) > 0
     evidence_query = any(
@@ -187,13 +345,19 @@ def _build_planner_hints(
         reason_codes.append("evidence_heavy_query")
     if is_ddi_query:
         reason_codes.append("ddi_query_detected")
+    if is_ddi_critical_query:
+        reason_codes.append("ddi_critical_query")
 
     internal_top_k = 4 if has_uploaded else 3
     if has_knowledge_sources:
         internal_top_k += 1
     if is_ddi_query:
         internal_top_k += 1
+    if is_ddi_critical_query:
+        internal_top_k += 1
     hybrid_top_k = max(internal_top_k + 1, 5 if evidence_query else 4)
+    if is_ddi_critical_query:
+        hybrid_top_k += 1
 
     deep_mode = research_mode == "deep"
     if deep_mode:
@@ -201,8 +365,18 @@ def _build_planner_hints(
         hybrid_top_k = min(12, hybrid_top_k + 3)
         target_pass_count = 9 if is_ddi_query else (8 if evidence_query else 7)
     else:
+        # Fast mode ưu tiên SLA: giới hạn fan-out retrieval để tránh timeout upstream.
+        internal_top_k = min(4, max(2, internal_top_k))
+        hybrid_top_k = min(5, max(3, hybrid_top_k))
         target_pass_count = 1
-    web_enabled = bool(deep_mode or evidence_query or is_ddi_query)
+    # Web crawl chỉ bật mặc định ở deep mode để giảm latency dao động ở fast mode.
+    web_enabled = bool(deep_mode)
+    if not deep_mode and (evidence_query or is_ddi_query):
+        reason_codes.append("fast_mode_latency_guard")
+
+    scientific_enabled = bool(deep_mode)
+    if not scientific_enabled and evidence_query:
+        reason_codes.append("fast_scientific_disabled_for_sla")
 
     return {
         "internal_top_k": max(1, min(12, internal_top_k)),
@@ -213,7 +387,7 @@ def _build_planner_hints(
         "role": route_role,
         "source_mode": source_mode or "default",
         "low_context_threshold": 0.12 if has_uploaded else 0.15,
-        "scientific_retrieval_enabled": True,
+        "scientific_retrieval_enabled": scientific_enabled,
         "web_retrieval_enabled": web_enabled,
         "file_retrieval_enabled": True,
         "research_mode": research_mode,
@@ -221,6 +395,7 @@ def _build_planner_hints(
         "reasoning_style": (
             "agentic_deep_research_v2" if deep_mode else "targeted_fast_research_v1"
         ),
+        "ddi_critical_query": is_ddi_critical_query,
     }
 
 
@@ -269,6 +444,66 @@ def _compact_snippet(text: Any, *, max_len: int = 120) -> str:
     if len(snippet) <= max_len:
         return snippet
     return f"{snippet[: max_len - 3]}..."
+
+
+def _compact_context_rows(
+    rows: list[dict[str, Any]],
+    *,
+    max_items: int = 10,
+    max_text_len: int = 260,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for row in rows[:max_items]:
+        if not isinstance(row, dict):
+            continue
+        compacted.append(
+            {
+                "id": row.get("id"),
+                "source": row.get("source"),
+                "title": _context_title(row, fallback="Retrieved evidence"),
+                "url": row.get("url"),
+                "score": row.get("score"),
+                "snippet": _compact_snippet(row.get("text"), max_len=max_text_len),
+            }
+        )
+    return compacted
+
+
+def _shrink_payload(value: Any, *, max_list: int = 12, max_str: int = 300) -> Any:
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in {"text", "content", "raw", "html"}:
+                output[key] = _compact_snippet(item, max_len=max_str)
+            else:
+                output[key] = _shrink_payload(item, max_list=max_list, max_str=max_str)
+        return output
+    if isinstance(value, list):
+        return [
+            _shrink_payload(item, max_list=max_list, max_str=max_str)
+            for item in value[:max_list]
+        ]
+    if isinstance(value, str):
+        return _compact_snippet(value, max_len=max_str)
+    return value
+
+
+def _compact_context_debug(value: Any) -> dict[str, Any]:
+    context = value if isinstance(value, dict) else {}
+    compact = _shrink_payload(context, max_list=12, max_str=300)
+    if not isinstance(compact, dict):
+        return {}
+    retrieval_trace = compact.get("retrieval_trace")
+    if isinstance(retrieval_trace, dict):
+        top_context = retrieval_trace.get("top_context")
+        if isinstance(top_context, list):
+            retrieval_trace["top_context"] = _compact_context_rows(
+                [item for item in top_context if isinstance(item, dict)],
+                max_items=8,
+                max_text_len=200,
+            )
+    return compact
 
 
 def _context_title(item: dict[str, Any], fallback: str) -> str:
@@ -399,6 +634,25 @@ def _build_retrieval_trace(
         if isinstance(context_debug.get("retrieval_trace"), dict)
         else {}
     )
+    source_errors = retrieval_debug.get("source_errors")
+    if not isinstance(source_errors, dict):
+        source_errors = {}
+    query_plan = retrieval_debug.get("query_plan")
+    if not isinstance(query_plan, dict):
+        query_plan = {}
+    generation_trace = (
+        rag_result.trace.get("generation")
+        if isinstance(getattr(rag_result, "trace", None), dict)
+        and isinstance(rag_result.trace.get("generation"), dict)
+        else {}
+    )
+    fallback_reason_raw = generation_trace.get("fallback_reason")
+    fallback_reason = str(fallback_reason_raw).strip() if fallback_reason_raw is not None else ""
+    compact_top_context = _compact_context_rows(
+        rag_result.retrieved_context if isinstance(rag_result.retrieved_context, list) else [],
+        max_items=8,
+        max_text_len=220,
+    )
     return {
         "stage": "retrieval-v2",
         "timestamp": _now_iso(),
@@ -410,20 +664,23 @@ def _build_retrieval_trace(
         "used_stages": context_debug.get("used_stages"),
         "retrieved_ids": list(rag_result.retrieved_ids),
         "retrieved_count": len(rag_result.retrieved_ids),
-        "retriever_debug": retrieval_debug,
+        "retriever_debug": _shrink_payload(retrieval_debug, max_list=12, max_str=300),
         "search_plan": retrieval_debug.get("search_plan")
         if isinstance(retrieval_debug.get("search_plan"), dict)
         else {},
         "source_attempts": retrieval_debug.get("source_attempts")
         if isinstance(retrieval_debug.get("source_attempts"), list)
         else [],
+        "source_errors": source_errors,
+        "fallback_reason": fallback_reason or None,
+        "query_plan": query_plan,
         "index_summary": retrieval_debug.get("index_summary")
         if isinstance(retrieval_debug.get("index_summary"), dict)
         else {},
         "crawl_summary": retrieval_debug.get("crawl_summary")
         if isinstance(retrieval_debug.get("crawl_summary"), dict)
         else {},
-        "top_context": rag_result.retrieved_context[:8],
+        "top_context": compact_top_context,
     }
 
 
@@ -502,11 +759,18 @@ def _normalize_retrieval_events(
     return normalized
 
 
-def _build_deep_subqueries(topic: str, keywords: list[str], pass_count: int) -> list[str]:
+def _build_deep_subqueries(
+    topic: str,
+    keywords: list[str],
+    pass_count: int,
+    *,
+    seed_queries: list[str] | None = None,
+) -> list[str]:
     cleaned_keywords = [item.strip() for item in keywords if isinstance(item, str) and item.strip()]
     keyword_hint = " ".join(cleaned_keywords[:4]).strip()
     query_profile = analyze_query_profile(topic)
     base = [
+        *(seed_queries or []),
         topic,
         f"{topic} guideline recommendations and first-line safety considerations",
         f"{topic} systematic review and meta-analysis clinical outcomes",
@@ -816,6 +1080,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         rag_sources=rag_sources,
         research_mode=research_mode,
     )
+    planner_hints["query_plan"] = _build_source_aware_query_plan(
+        topic=topic,
+        research_mode=research_mode,
+        keywords=planner_hints.get("keywords", []),
+    )
     planner_trace = _build_planner_trace(
         topic=topic,
         source_mode=source_mode,
@@ -894,10 +1163,24 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     deep_pass_flow_events: list[dict[str, Any]] = []
 
     if research_mode == "deep":
+        query_plan = (
+            planner_hints.get("query_plan")
+            if isinstance(planner_hints.get("query_plan"), dict)
+            else {}
+        )
+        decomposition = (
+            query_plan.get("decomposition") if isinstance(query_plan.get("decomposition"), dict) else {}
+        )
+        deep_seed_queries = (
+            decomposition.get("deep_pass_queries")
+            if isinstance(decomposition.get("deep_pass_queries"), list)
+            else []
+        )
         subqueries = _build_deep_subqueries(
-            topic,
+            str(query_plan.get("canonical_query") or topic),
             planner_hints.get("keywords", []),
             deep_pass_count,
+            seed_queries=[str(item) for item in deep_seed_queries if str(item).strip()],
         )
         deep_subqueries = subqueries
         deep_research_method = _deep_research_methodology(topic=topic, subqueries=subqueries)
@@ -1112,6 +1395,16 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         if trace_rows:
             citations = _build_citations(topic, trace_rows, uploaded_documents)
     fallback_used = _infer_fallback_used(rag_result)
+    generation_trace = (
+        rag_result.trace.get("generation")
+        if isinstance(getattr(rag_result, "trace", None), dict)
+        and isinstance(rag_result.trace.get("generation"), dict)
+        else {}
+    )
+    fallback_reason_raw = generation_trace.get("fallback_reason")
+    fallback_reason = str(fallback_reason_raw).strip() if fallback_reason_raw is not None else ""
+    if fallback_used and not fallback_reason:
+        fallback_reason = "llm_unavailable_or_failed"
     if not citations:
         citations = [
             Citation(
@@ -1266,6 +1559,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     aggregated_errors: dict[str, Any] = {}
     if isinstance(retriever_debug.get("source_errors"), dict):
         aggregated_errors.update(retriever_debug.get("source_errors", {}))
+    elif isinstance(retrieval_trace.get("source_errors"), dict):
+        aggregated_errors.update(retrieval_trace.get("source_errors", {}))
     for summary in deep_pass_summaries:
         source_errors = summary.get("source_errors")
         if not isinstance(source_errors, dict):
@@ -1286,6 +1581,25 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "scientific_retrieval_enabled": planner_hints.get("scientific_retrieval_enabled"),
             "web_retrieval_enabled": planner_hints.get("web_retrieval_enabled"),
             "file_retrieval_enabled": planner_hints.get("file_retrieval_enabled"),
+        }
+
+    query_plan = (
+        retrieval_trace.get("query_plan")
+        if isinstance(retrieval_trace.get("query_plan"), dict)
+        else {}
+    )
+    if not query_plan and isinstance(planner_hints.get("query_plan"), dict):
+        query_plan = dict(planner_hints.get("query_plan", {}))
+    if not query_plan:
+        query_plan = {
+            "original_query": topic,
+            "canonical_query": topic,
+            "source_queries": {"internal": [topic], "scientific": [topic], "web": [topic]},
+            "decomposition": {
+                "fast_pass_queries": [topic],
+                "deep_pass_queries": [topic],
+            },
+            "research_mode": research_mode,
         }
 
     source_attempts: list[dict[str, Any]] = []
@@ -1347,6 +1661,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
 
     telemetry = {
         "keywords": planner_hints.get("keywords", []),
+        "query_plan": query_plan,
         "search_plan": {
             **search_plan,
             "subqueries": deep_subqueries,
@@ -1354,9 +1669,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "profiles": deep_research_profiles,
         },
         "source_attempts": source_attempts,
+        "source_errors": aggregated_errors,
+        "fallback_reason": fallback_reason or None,
         "index_summary": index_summary,
         "crawl_summary": crawl_summary,
-        "docs": effective_context,
+        "docs": _compact_context_rows(effective_context, max_items=10, max_text_len=240),
         "scores": {
             "relevance": rag_result.context_debug.get("relevance")
             if isinstance(rag_result.context_debug, dict)
@@ -1376,6 +1693,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "deep_research_methodology": deep_research_method,
     }
     citations_payload = [asdict(item) for item in citations]
+    compact_context_debug = _compact_context_debug(rag_result.context_debug)
 
     return {
         "metadata": {
@@ -1398,10 +1716,14 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 {"name": "citation_selection", "status": "completed"},
             ],
             "fallback_used": effective_fallback_used,
+            "fallback_reason": fallback_reason or None,
             "source_mode": source_mode,
             "research_mode": research_mode,
             "deep_pass_count": len(deep_pass_summaries),
-            "context_debug": rag_result.context_debug,
+            "source_attempts": source_attempts,
+            "source_errors": aggregated_errors,
+            "query_plan": query_plan,
+            "context_debug": compact_context_debug,
             "policy_action": policy_action,
             "verification_status": verification_status,
             "planner_trace": planner_trace,
@@ -1431,7 +1753,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 ],
             },
         },
-        "context_debug": rag_result.context_debug,
+        "context_debug": compact_context_debug,
         "flow_events": flow_events,
         "planner_trace": planner_trace,
         "retrieval_trace": retrieval_trace,
@@ -1441,6 +1763,10 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "policy_action": policy_action,
         "verification_status": verification_status,
         "fallback_used": effective_fallback_used,
+        "fallback_reason": fallback_reason or None,
+        "source_attempts": source_attempts,
+        "source_errors": aggregated_errors,
+        "query_plan": query_plan,
         "research_mode": research_mode,
         "deep_pass_count": len(deep_pass_summaries),
         "plan_steps": [asdict(step) for step in plan_steps],

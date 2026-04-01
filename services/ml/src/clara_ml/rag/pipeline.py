@@ -5,11 +5,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, List, Protocol
+import unicodedata
 from uuid import uuid4
 
 from clara_ml.config import settings
 from clara_ml.llm.deepseek_client import DeepSeekClient, DeepSeekResponse
-from clara_ml.rag.retrieval.text_utils import analyze_query_profile
+from clara_ml.rag.retrieval.text_utils import analyze_query_profile, query_terms
 from clara_ml.rag.retriever import Document, InMemoryRetriever
 from clara_ml.rag.seed_documents import base_documents, load_seed_documents
 
@@ -138,6 +139,164 @@ class RagPipelineP1:
         return {token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]{2,}", text.lower()) if token}
 
     @staticmethod
+    def _ascii_fold(text: str) -> str:
+        normalized = unicodedata.normalize("NFD", str(text or ""))
+        without_marks = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+        return without_marks.lower()
+
+    @staticmethod
+    def _dedupe_queries(values: list[str], *, limit: int = 8) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            cleaned = " ".join(str(item or "").split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(cleaned)
+            if len(deduped) >= max(int(limit), 1):
+                break
+        return deduped
+
+    @classmethod
+    def _build_query_plan(
+        cls,
+        query: str,
+        *,
+        planner_query_plan: object = None,
+    ) -> dict[str, Any]:
+        if isinstance(planner_query_plan, dict):
+            source_queries = planner_query_plan.get("source_queries")
+            decomposition = planner_query_plan.get("decomposition")
+            if isinstance(source_queries, dict) and isinstance(decomposition, dict):
+                return {
+                    **planner_query_plan,
+                    "original_query": str(planner_query_plan.get("original_query") or query),
+                    "canonical_query": str(planner_query_plan.get("canonical_query") or query),
+                    "source_queries": {
+                        "internal": cls._dedupe_queries(
+                            [str(item) for item in source_queries.get("internal", [])],
+                            limit=8,
+                        )
+                        or [query],
+                        "scientific": cls._dedupe_queries(
+                            [str(item) for item in source_queries.get("scientific", [])],
+                            limit=8,
+                        )
+                        or [query],
+                        "web": cls._dedupe_queries(
+                            [str(item) for item in source_queries.get("web", [])],
+                            limit=8,
+                        )
+                        or [query],
+                    },
+                    "decomposition": {
+                        "fast_pass_queries": cls._dedupe_queries(
+                            [str(item) for item in decomposition.get("fast_pass_queries", [])],
+                            limit=6,
+                        )
+                        or [query],
+                        "deep_pass_queries": cls._dedupe_queries(
+                            [str(item) for item in decomposition.get("deep_pass_queries", [])],
+                            limit=12,
+                        )
+                        or [query],
+                    },
+                }
+
+        cleaned_query = " ".join(str(query or "").split()).strip()
+        folded_query = cls._ascii_fold(cleaned_query)
+        profile = analyze_query_profile(cleaned_query)
+        terms = query_terms(cleaned_query)
+        primary = str(profile.get("primary_drug") or "").strip().lower()
+        co_drugs_raw = profile.get("co_drugs")
+        co_drugs = (
+            [str(item).strip().lower() for item in co_drugs_raw if str(item).strip()]
+            if isinstance(co_drugs_raw, list)
+            else []
+        )
+        co_drug_phrase = ", ".join(co_drugs[:4]) if co_drugs else "common analgesics"
+        canonical_query = cleaned_query
+        if profile.get("is_ddi_query"):
+            canonical_query = (
+                f"{primary or 'index drug'} interaction with {co_drug_phrase} "
+                "bleeding risk contraindication guidance"
+            )
+        elif folded_query != cleaned_query.lower():
+            canonical_query = " ".join(terms[:8]).strip() or cleaned_query
+
+        internal = cls._dedupe_queries(
+            [
+                cleaned_query,
+                canonical_query,
+                folded_query if folded_query != cleaned_query.lower() else "",
+                " ".join(terms[:8]),
+            ],
+            limit=8,
+        )
+        scientific = cls._dedupe_queries(
+            [
+                canonical_query,
+                " ".join(terms[:8]),
+                f"{primary or 'index drug'} drug-drug interaction with {co_drug_phrase}"
+                if profile.get("is_ddi_query")
+                else "",
+                cleaned_query,
+            ],
+            limit=8,
+        )
+        web = cls._dedupe_queries(
+            [
+                cleaned_query,
+                canonical_query,
+                f"{canonical_query} guideline",
+                f"{canonical_query} safety warning",
+            ],
+            limit=8,
+        )
+        deep_pass_queries = cls._dedupe_queries(
+            [
+                canonical_query,
+                f"{canonical_query} guideline recommendations",
+                f"{canonical_query} systematic review meta-analysis",
+                f"{canonical_query} adverse events contraindications",
+                f"{canonical_query} contradictory findings subgroup caveats",
+            ],
+            limit=12,
+        )
+        return {
+            "original_query": cleaned_query,
+            "canonical_query": canonical_query,
+            "source_queries": {
+                "internal": internal or [cleaned_query],
+                "scientific": scientific or [cleaned_query],
+                "web": web or [cleaned_query],
+            },
+            "decomposition": {
+                "fast_pass_queries": internal[:2] if internal else [cleaned_query],
+                "deep_pass_queries": deep_pass_queries or [cleaned_query],
+            },
+            "query_terms": terms[:10],
+            "is_ddi_query": bool(profile.get("is_ddi_query")),
+        }
+
+    @staticmethod
+    def _source_query(query_plan: dict[str, Any], source_key: str, fallback: str) -> str:
+        source_queries = (
+            query_plan.get("source_queries") if isinstance(query_plan.get("source_queries"), dict) else {}
+        )
+        selected = source_queries.get(source_key)
+        if isinstance(selected, list):
+            for item in selected:
+                text = " ".join(str(item or "").split()).strip()
+                if text:
+                    return text
+        return fallback
+
+    @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
@@ -221,6 +380,7 @@ class RagPipelineP1:
                 "hybrid_top_k": 3,
                 "query_focus": "default",
                 "reason_codes": [],
+                "query_plan": {},
             }
 
         def _as_int(value: object, default: int, *, min_value: int = 1, max_value: int = 12) -> int:
@@ -243,6 +403,7 @@ class RagPipelineP1:
             "hybrid_top_k": _as_int(hints.get("hybrid_top_k"), 3),
             "query_focus": str(hints.get("query_focus") or "default"),
             "reason_codes": reason_codes,
+            "query_plan": hints.get("query_plan") if isinstance(hints.get("query_plan"), dict) else {},
         }
 
     @staticmethod
@@ -251,6 +412,40 @@ class RagPipelineP1:
         if isinstance(raw_trace, dict):
             return dict(raw_trace)
         return {}
+
+    @staticmethod
+    def _normalize_source_attempts(value: object) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or item.get("source") or "").strip()
+            status = str(item.get("status") or "unknown").strip().lower()
+            row = dict(item)
+            row["provider"] = provider or "unknown"
+            row["status"] = status or "unknown"
+            normalized.append(row)
+        return normalized
+
+    @staticmethod
+    def _normalize_source_errors(value: object) -> dict[str, list[str]]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, list[str]] = {}
+        for key, raw_errors in value.items():
+            source = str(key or "").strip() or "unknown"
+            if isinstance(raw_errors, list):
+                errors = [str(item).strip() for item in raw_errors if str(item).strip()]
+            elif raw_errors is None:
+                errors = []
+            else:
+                text = str(raw_errors).strip()
+                errors = [text] if text else []
+            if errors:
+                normalized[source] = errors
+        return normalized
 
     def _flow_event(
         self,
@@ -453,6 +648,10 @@ class RagPipelineP1:
             "external_attempted": external_attempted,
             "planner_hints": planner_hints,
             "retrieval_trace": retrieval_trace,
+            "source_attempts": retrieval_trace.get("source_attempts", []),
+            "source_errors": retrieval_trace.get("source_errors", {}),
+            "query_plan": retrieval_trace.get("query_plan", {}),
+            "fallback_reason": retrieval_trace.get("fallback_reason"),
             "trace_version": "rag-v2",
         }
         return context_debug
@@ -491,6 +690,12 @@ class RagPipelineP1:
         run_started = perf_counter()
         planner_active = isinstance(planner_hints, dict) and bool(planner_hints)
         normalized_hints = self._normalize_planner_hints(planner_hints)
+        query_plan = self._build_query_plan(
+            query,
+            planner_query_plan=normalized_hints.get("query_plan"),
+        )
+        internal_query = self._source_query(query_plan, "internal", query)
+        scientific_query = self._source_query(query_plan, "scientific", query)
         internal_top_k = int(normalized_hints["internal_top_k"])
         hybrid_top_k = int(normalized_hints["hybrid_top_k"])
         threshold = max(0.0, min(1.0, low_context_threshold))
@@ -507,6 +712,10 @@ class RagPipelineP1:
             "external_attempted": False,
             "relevance": 0.0,
             "documents": [],
+            "source_attempts": [],
+            "source_errors": {},
+            "fallback_reason": None,
+            "query_plan": query_plan,
         }
 
         if planner_active:
@@ -522,6 +731,7 @@ class RagPipelineP1:
                         "reason_codes": normalized_hints.get("reason_codes"),
                         "internal_top_k": internal_top_k,
                         "hybrid_top_k": hybrid_top_k,
+                        "query_plan": query_plan,
                     },
                 )
             )
@@ -533,7 +743,11 @@ class RagPipelineP1:
                 docs=[],
                 note="Internal retrieval started.",
                 component="retrieval",
-                payload={"top_k": internal_top_k},
+                payload={
+                    "top_k": internal_top_k,
+                    "resolved_query": internal_query,
+                    "original_query": query,
+                },
             )
         )
         flow_events.append(
@@ -543,13 +757,18 @@ class RagPipelineP1:
                 docs=[],
                 note="Evidence search phase started (internal corpus).",
                 component="retrieval",
-                payload={"phase": "internal", "top_k": internal_top_k},
+                payload={
+                    "phase": "internal",
+                    "top_k": internal_top_k,
+                    "resolved_query": internal_query,
+                    "original_query": query,
+                },
             )
         )
         docs: List[Document] = []
         try:
             docs = self.retriever.retrieve_internal(
-                query,
+                internal_query,
                 top_k=internal_top_k,
                 file_retrieval_enabled=file_retrieval_enabled,
                 rag_sources=rag_sources,
@@ -557,6 +776,7 @@ class RagPipelineP1:
             )
         except Exception as exc:
             retrieval_trace["internal_error"] = exc.__class__.__name__
+            retrieval_trace["source_errors"] = {"internal_retrieval": [exc.__class__.__name__]}
             flow_events.append(
                 self._flow_event(
                     stage="internal_retrieval",
@@ -604,14 +824,20 @@ class RagPipelineP1:
         retrieval_trace["search_phase"] = internal_search
         retrieval_trace["index_phase"] = internal_index
         retrieval_trace["search_plan"] = {
-            "query": query,
+            "query": internal_query,
+            "original_query": query,
             "query_terms": internal_search.get("query_terms", []),
             "top_k": internal_top_k,
             "phase": "internal",
             "total_candidates": internal_search.get("total_candidates", len(docs)),
             "duration_ms": internal_search.get("duration_ms"),
         }
-        retrieval_trace["source_attempts"] = internal_search.get("connectors_attempted", [])
+        retrieval_trace["source_attempts"] = self._normalize_source_attempts(
+            internal_search.get("connectors_attempted", [])
+        )
+        retrieval_trace["source_errors"] = self._normalize_source_errors(
+            internal_search.get("source_errors", {})
+        )
         retrieval_trace["index_summary"] = self._build_index_summary(
             docs,
             before_dedupe_count=internal_index.get("before_dedupe_count"),
@@ -701,6 +927,8 @@ class RagPipelineP1:
                         "web_retrieval_enabled": web_retrieval_enabled,
                         "low_context_before_external": low_context_before_external,
                         "should_force_external": should_force_external,
+                        "resolved_query": scientific_query,
+                        "original_query": query,
                     },
                 )
             )
@@ -716,12 +944,14 @@ class RagPipelineP1:
                         "top_k": hybrid_top_k,
                         "scientific_retrieval_enabled": True,
                         "web_retrieval_enabled": web_retrieval_enabled,
+                        "resolved_query": scientific_query,
+                        "original_query": query,
                     },
                 )
             )
             try:
                 docs = self.retriever.retrieve(
-                    query,
+                    scientific_query,
                     top_k=hybrid_top_k,
                     scientific_retrieval_enabled=True,
                     web_retrieval_enabled=web_retrieval_enabled,
@@ -746,14 +976,20 @@ class RagPipelineP1:
                 retrieval_trace["search_phase"] = hybrid_search
                 retrieval_trace["index_phase"] = hybrid_index
                 retrieval_trace["search_plan"] = {
-                    "query": query,
+                    "query": scientific_query,
+                    "original_query": query,
                     "query_terms": hybrid_search.get("query_terms", []),
                     "top_k": hybrid_top_k,
                     "phase": "hybrid_external",
                     "total_candidates": hybrid_search.get("total_candidates", len(docs)),
                     "duration_ms": hybrid_search.get("duration_ms"),
                 }
-                retrieval_trace["source_attempts"] = hybrid_search.get("connectors_attempted", [])
+                retrieval_trace["source_attempts"] = self._normalize_source_attempts(
+                    hybrid_search.get("connectors_attempted", [])
+                )
+                retrieval_trace["source_errors"] = self._normalize_source_errors(
+                    hybrid_search.get("source_errors", {})
+                )
                 retrieval_trace["index_summary"] = self._build_index_summary(
                     docs,
                     before_dedupe_count=hybrid_index.get("before_dedupe_count"),
@@ -836,13 +1072,15 @@ class RagPipelineP1:
                     else {}
                 )
                 retrieval_trace["search_plan"] = {
-                    "query": query,
+                    "query": scientific_query,
+                    "original_query": query,
                     "query_terms": [],
                     "top_k": hybrid_top_k,
                     "phase": "hybrid_external",
                     "total_candidates": len(docs),
                 }
                 retrieval_trace["source_attempts"] = []
+                retrieval_trace["source_errors"] = {"external_scientific": [exc.__class__.__name__]}
                 retrieval_trace["index_summary"] = self._build_index_summary(
                     docs,
                     before_dedupe_count=len(docs),
@@ -902,7 +1140,8 @@ class RagPipelineP1:
             active_trace.get("search_plan")
             if isinstance(active_trace.get("search_plan"), dict)
             else {
-                "query": query,
+                "query": scientific_query if external_attempted else internal_query,
+                "original_query": query,
                 "keywords": sorted(self._tokenize(query)),
                 "top_k": hybrid_top_k if external_attempted else internal_top_k,
                 "scientific_retrieval_enabled": bool(scientific_retrieval_enabled),
@@ -910,16 +1149,35 @@ class RagPipelineP1:
                 "file_retrieval_enabled": bool(file_retrieval_enabled),
             }
         )
+        if isinstance(retrieval_trace["search_plan"], dict):
+            retrieval_trace["search_plan"].setdefault("original_query", query)
         source_attempts = active_trace.get("source_attempts")
         if isinstance(source_attempts, list):
-            retrieval_trace["source_attempts"] = source_attempts
+            retrieval_trace["source_attempts"] = self._normalize_source_attempts(source_attempts)
         else:
             search_phase = (
                 active_trace.get("search_phase")
                 if isinstance(active_trace.get("search_phase"), dict)
                 else {}
             )
-            retrieval_trace["source_attempts"] = search_phase.get("connectors_attempted", [])
+            retrieval_trace["source_attempts"] = self._normalize_source_attempts(
+                search_phase.get("connectors_attempted", [])
+            )
+            retrieval_trace["source_errors"] = self._normalize_source_errors(
+                search_phase.get("source_errors", {})
+            )
+        if "source_errors" not in retrieval_trace:
+            retrieval_trace["source_errors"] = {}
+        retrieval_trace["source_errors"] = self._normalize_source_errors(
+            retrieval_trace.get("source_errors")
+            or active_trace.get("source_errors")
+            or (
+                active_trace.get("search_phase", {}).get("source_errors")
+                if isinstance(active_trace.get("search_phase"), dict)
+                else {}
+            )
+        )
+        retrieval_trace["query_plan"] = query_plan
 
         active_index_summary = (
             active_trace.get("index_summary")
@@ -951,6 +1209,19 @@ class RagPipelineP1:
             model_used: str,
             generation_trace: dict[str, Any],
         ) -> RagResult:
+            fallback_reason_raw = generation_trace.get("fallback_reason")
+            fallback_reason = (
+                str(fallback_reason_raw).strip() if fallback_reason_raw is not None else ""
+            )
+            retrieval_trace["fallback_reason"] = fallback_reason or None
+            generation_trace.setdefault("fallback_reason", fallback_reason or None)
+            retrieval_trace["source_attempts"] = self._normalize_source_attempts(
+                retrieval_trace.get("source_attempts", [])
+            )
+            retrieval_trace["source_errors"] = self._normalize_source_errors(
+                retrieval_trace.get("source_errors", {})
+            )
+            retrieval_trace["query_plan"] = query_plan
             context_debug = self._build_context_debug(
                 relevance=relevance_score,
                 threshold=threshold,
@@ -964,6 +1235,7 @@ class RagPipelineP1:
             context_debug["pipeline_duration_ms"] = round(
                 (perf_counter() - run_started) * 1000.0, 3
             )
+            context_debug["fallback_reason"] = fallback_reason or None
             trace = {
                 "planner": {
                     "query_focus": normalized_hints.get("query_focus"),

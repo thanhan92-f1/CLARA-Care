@@ -269,6 +269,7 @@ def _research_fail_soft_payload(
         "đối chiếu tương tác thuốc quan trọng, "
         "và trao đổi bác sĩ khi có bệnh nền hoặc dấu hiệu nặng."
     )
+    public_reason = _sanitize_upstream_reason(reason)
     fallback_markdown = (
         "## Kết luận nhanh\n"
         f"{fallback_text}\n\n"
@@ -301,7 +302,10 @@ def _research_fail_soft_payload(
                     stage="rag_generation",
                     status="failed",
                     source_count=0,
-                    note=f"Upstream generation failed: {reason}",
+                    note=(
+                        "Upstream generation temporarily unavailable; "
+                        f"fallback mode enabled ({public_reason})."
+                    ),
                 ),
                 _flow_event(
                     stage="fallback_response",
@@ -332,14 +336,40 @@ def _research_fail_soft_payload(
                 "query": query,
                 "policy_action": "warn",
                 "fallback_used": True,
-                "source_errors": {"upstream": [reason]},
-                "error_detail": reason,
+                "source_errors": {"upstream": [public_reason]},
+                "error_detail": public_reason,
                 "attributions": ["fallback-safe-1"],
                 "research_mode": "fast",
                 "deep_pass_count": 0,
             },
         },
         default_action="warn",
+    )
+
+
+def _sanitize_upstream_reason(reason: str) -> str:
+    normalized = reason.strip().lower()
+    if "deepseek_generation_failed" in normalized:
+        return "deepseek_generation_unavailable"
+    if "deepseek_request_failed" in normalized:
+        return "deepseek_request_unavailable"
+    if "timeout" in normalized:
+        return "upstream_timeout"
+    if "connection" in normalized or "connecterror" in normalized:
+        return "upstream_connectivity_error"
+    return "upstream_unavailable"
+
+
+def _is_retryable_research_error(exc: Exception) -> bool:
+    payload = f"{exc.__class__.__name__}:{exc}".strip().lower()
+    return any(
+        token in payload
+        for token in (
+            "deepseek_generation_failed",
+            "deepseek_request_failed",
+            "timeout",
+            "connecterror",
+        )
     )
 
 
@@ -705,6 +735,14 @@ def research_tier2(payload: dict) -> dict:
             return _ensure_policy_contract(result, default_action="allow")
         return _ensure_policy_contract({"answer": str(result)}, default_action="allow")
     except Exception as exc:  # pragma: no cover - defensive fail-soft guard
+        if _is_retryable_research_error(exc):
+            try:
+                retry_result = run_research_tier2(payload)
+                if isinstance(retry_result, dict):
+                    return _ensure_policy_contract(retry_result, default_action="allow")
+                return _ensure_policy_contract({"answer": str(retry_result)}, default_action="allow")
+            except Exception as retry_exc:  # pragma: no cover - defensive retry guard
+                exc = retry_exc
         detail = str(exc).strip()
         reason = exc.__class__.__name__
         if detail:

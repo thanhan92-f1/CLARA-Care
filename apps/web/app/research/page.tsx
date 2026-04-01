@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import FlowTimelinePanel from "@/components/research/flow-timeline-panel";
 import MarkdownAnswer from "@/components/research/markdown-answer";
 import TelemetryDetailsPanel from "@/components/research/telemetry-details-panel";
@@ -22,12 +22,15 @@ import {
   ResearchFlowEvent,
   ResearchFlowStage,
   ResearchTier,
+  appendResearchConversationMessage,
   createResearchTier2Job,
   createResearchConversation,
   getResearchTier2Job,
+  listResearchConversationMessages,
   listResearchConversations,
   normalizeResearchTier2JobProgress,
   normalizeResearchTier2,
+  streamResearchTier2Job,
 } from "@/lib/research";
 
 const QUICK_PROMPTS: string[] = [
@@ -56,13 +59,50 @@ const EMPTY_TELEMETRY = {
   errors: []
 };
 
+function isAttemptLikelyFailed(status?: string, hasError?: boolean): boolean {
+  if (hasError) return true;
+  const text = (status ?? "").toLowerCase();
+  if (!text) return false;
+  return ["fail", "error", "timeout", "warn", "degraded", "reject", "deny"].some((token) =>
+    text.includes(token)
+  );
+}
+
+function buildTier2MetaSummary(result: Extract<ResearchResult, { tier: "tier2" }>) {
+  const searchPlan = result.telemetry.searchPlan;
+  const attempts = result.telemetry.sourceAttempts;
+  const failedAttempts = attempts.filter((attempt) =>
+    isAttemptLikelyFailed(attempt.status, Boolean(attempt.error))
+  ).length;
+  const primaryQuery = searchPlan.query ?? searchPlan.subqueries[0];
+  const hasQueryPlan =
+    Boolean(primaryQuery) ||
+    searchPlan.subqueries.length > 0 ||
+    searchPlan.connectors.length > 0 ||
+    searchPlan.keywords.length > 0 ||
+    searchPlan.topK !== undefined ||
+    searchPlan.totalCandidates !== undefined;
+  const hasData = hasQueryPlan || attempts.length > 0 || result.telemetry.errors.length > 0;
+
+  return {
+    hasData,
+    primaryQuery,
+    subqueryCount: searchPlan.subqueries.length,
+    connectorCount: searchPlan.connectors.length,
+    attemptCount: attempts.length,
+    failedAttemptCount: failedAttempts,
+    errorCount: result.telemetry.errors.length,
+    topErrors: result.telemetry.errors.slice(0, 3)
+  };
+}
+
 export default function ResearchPage() {
   const [role, setRole] = useState<UserRole>("normal");
   const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier1");
   const [selectedResearchMode, setSelectedResearchMode] = useState<ResearchExecutionMode>("fast");
   const [query, setQuery] = useState("");
-  const [lastQuestion, setLastQuestion] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -73,8 +113,39 @@ export default function ResearchPage() {
   const [liveJobId, setLiveJobId] = useState<string | null>(null);
 
   const [history, setHistory] = useState<ConversationItem[]>([]);
+  const [conversationTurns, setConversationTurns] = useState<ConversationItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<ResearchResult | null>(null);
+
+  const loadConversationTurns = async (conversationId: string, fallbackItem?: ConversationItem) => {
+    setIsLoadingConversation(true);
+    try {
+      const rows = await listResearchConversationMessages(conversationId, 160);
+      if (!rows.length) {
+        setConversationTurns(fallbackItem ? [fallbackItem] : []);
+        return;
+      }
+
+      const turns = rows.map((row, index) => {
+        const parsed = createConversationItemFromPersisted({
+          id: String(conversationId),
+          queryId: row.queryId,
+          query: row.query,
+          result: row.result,
+          tier: row.tier,
+          createdAt: row.createdAt,
+        });
+        return {
+          ...parsed,
+          id: `${conversationId}-${row.queryId ?? index}`,
+        };
+      });
+      setConversationTurns(turns);
+    } catch {
+      setConversationTurns(fallbackItem ? [fallbackItem] : []);
+    } finally {
+      setIsLoadingConversation(false);
+    }
+  };
 
   useEffect(() => {
     setRole(getRole());
@@ -94,9 +165,9 @@ export default function ResearchPage() {
 
         const firstItem = items[0];
         setActiveConversationId(firstItem.id);
-        setLastQuestion(firstItem.query);
-        setLastResult(firstItem.result);
+        setConversationTurns([firstItem]);
         setSelectedTier(firstItem.result.tier);
+        void loadConversationTurns(firstItem.id, firstItem);
       } catch (cause) {
         if (cancelled) return;
         setError(cause instanceof Error ? cause.message : "Không thể tải lịch sử hội thoại.");
@@ -110,27 +181,33 @@ export default function ResearchPage() {
     };
   }, []);
 
-  const activeConversation = useMemo(
-    () => history.find((item) => item.id === activeConversationId) ?? null,
-    [history, activeConversationId]
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const latestTurn = useMemo(
+    () => (conversationTurns.length ? conversationTurns[conversationTurns.length - 1] : null),
+    [conversationTurns]
   );
+  const lastResult = latestTurn?.result ?? null;
 
   const flowMode = useMemo(
     () => (lastResult?.tier === "tier2" ? resolveFlowModeFromResult(lastResult) : "idle"),
     [lastResult]
   );
 
-  const displayedQuestion = activeConversation?.query ?? lastQuestion;
-  const answerText =
-    lastResult?.tier === "tier2"
-      ? lastResult.answer || "Chưa có nội dung trả lời."
-      : lastResult?.answer || "Chưa có nội dung trả lời.";
-  const answerCitations = lastResult?.tier === "tier2" ? lastResult.citations : [];
+  const latestAnswerText = useMemo(() => {
+    if (!lastResult) return "";
+    return lastResult.tier === "tier2" ? (lastResult.answer || "") : (lastResult.answer || "");
+  }, [lastResult]);
+
+  useEffect(() => {
+    const node = conversationScrollRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [conversationTurns, isLoadingConversation, isSubmitting]);
 
   const createNewConversation = () => {
     setActiveConversationId(null);
-    setLastQuestion("");
-    setLastResult(null);
+    setConversationTurns([]);
     setQuery("");
     setError("");
     setLiveFlowStages([]);
@@ -142,8 +219,7 @@ export default function ResearchPage() {
 
   const onSelectConversation = (item: ConversationItem) => {
     setActiveConversationId(item.id);
-    setLastQuestion(item.query);
-    setLastResult(item.result);
+    setConversationTurns([item]);
     setSelectedTier(item.result.tier);
     setError("");
     setLiveFlowStages([]);
@@ -151,6 +227,7 @@ export default function ResearchPage() {
     setLiveReasoningNotes([]);
     setLiveStatusNote("");
     setLiveJobId(null);
+    void loadConversationTurns(item.id, item);
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -182,34 +259,93 @@ export default function ResearchPage() {
 
         let currentJob = job;
         let finalPayload: Record<string, unknown> | null = null;
-        let pollingRounds = 0;
-        while (pollingRounds < 240) {
-          pollingRounds += 1;
-          const progress = normalizeResearchTier2JobProgress(currentJob.progress);
+        const applyLiveSnapshot = (snapshot: typeof currentJob) => {
+          const progress = normalizeResearchTier2JobProgress(snapshot.progress);
           setLiveFlowStages(progress.flowStages);
           setLiveFlowEvents(progress.flowEvents);
           setLiveReasoningNotes(progress.reasoningNotes);
           setLiveStatusNote(progress.statusNote ?? "");
+        };
 
-          if (currentJob.status === "completed") {
-            finalPayload =
-              currentJob.result && typeof currentJob.result === "object"
-                ? (currentJob.result as Record<string, unknown>)
-                : {};
-            break;
-          }
-          if (currentJob.status === "failed") {
-            throw new Error(currentJob.error ?? "Research job thất bại ở backend.");
-          }
+        applyLiveSnapshot(currentJob);
+        let streamError: string | null = null;
+        try {
+          await streamResearchTier2Job(job.job_id, {
+            onEvent: (eventPayload) => {
+              const payload = eventPayload.payload;
+              if (payload && typeof payload === "object" && "status" in payload) {
+                currentJob = payload as typeof currentJob;
+                applyLiveSnapshot(currentJob);
+              }
+              if (
+                eventPayload.event === "error" &&
+                payload &&
+                typeof payload === "object" &&
+                "message" in payload
+              ) {
+                const messageText =
+                  typeof (payload as { message?: unknown }).message === "string"
+                    ? (payload as { message: string }).message
+                    : "";
+                streamError = messageText || "Streaming research gặp lỗi.";
+              }
+            },
+          });
+        } catch (streamCause) {
+          streamError =
+            streamCause instanceof Error
+              ? streamCause.message
+              : "Streaming research tạm gián đoạn.";
+        }
 
+        if (
+          streamError &&
+          currentJob.status !== "completed" &&
+          currentJob.status !== "failed"
+        ) {
+          setLiveStatusNote(
+            `${streamError} Đang tự động chuyển sang chế độ polling để giữ tiến trình.`
+          );
+        }
+
+        let pollingRounds = 0;
+        while (
+          currentJob.status !== "completed" &&
+          currentJob.status !== "failed" &&
+          pollingRounds < 1200
+        ) {
+          pollingRounds += 1;
           await new Promise((resolve) => {
             window.setTimeout(resolve, RESEARCH_TIER2_JOB_POLL_MS);
           });
           currentJob = await getResearchTier2Job(job.job_id);
+          applyLiveSnapshot(currentJob);
+        }
+
+        if (currentJob.status === "completed") {
+          finalPayload =
+            currentJob.result && typeof currentJob.result === "object"
+              ? (currentJob.result as Record<string, unknown>)
+              : {};
+        } else if (currentJob.status === "failed") {
+          throw new Error(currentJob.error ?? "Research job thất bại ở backend.");
+        } else {
+          throw new Error("Research job quá thời gian chờ. Vui lòng thử lại.");
         }
 
         if (!finalPayload) {
-          throw new Error("Research job quá thời gian chờ. Vui lòng thử lại.");
+          currentJob = await getResearchTier2Job(job.job_id);
+          applyLiveSnapshot(currentJob);
+          const progress = normalizeResearchTier2JobProgress(currentJob.progress);
+          finalPayload =
+            currentJob.result && typeof currentJob.result === "object"
+              ? (currentJob.result as Record<string, unknown>)
+              : null;
+          if (!finalPayload) {
+            throw new Error(
+              progress.statusNote || "Không nhận được kết quả cuối từ research job."
+            );
+          }
         }
 
         const normalized = normalizeResearchTier2(finalPayload);
@@ -228,17 +364,38 @@ export default function ResearchPage() {
         };
       }
 
-      setLastQuestion(message);
-      setLastResult(nextResult);
+      const localTurnId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const localTurn = createConversationItem(message, nextResult, { id: localTurnId });
+      setConversationTurns((prev) => [...prev, localTurn]);
 
       let conversation = createConversationItem(message, nextResult);
+      let targetConversationId = activeConversationId;
+
       try {
-        const persisted = await createResearchConversation(
-          message,
-          nextResult as unknown as Record<string, unknown>
-        );
-        conversation = createConversationItemFromPersisted(persisted);
+        if (targetConversationId && Number.isFinite(Number(targetConversationId)) && Number(targetConversationId) > 0) {
+          const persisted = await appendResearchConversationMessage(
+            targetConversationId,
+            message,
+            nextResult as unknown as Record<string, unknown>
+          );
+          conversation = createConversationItemFromPersisted(persisted);
+          targetConversationId = conversation.id;
+        } else {
+          const persisted = await createResearchConversation(
+            message,
+            nextResult as unknown as Record<string, unknown>
+          );
+          conversation = createConversationItemFromPersisted(persisted);
+          targetConversationId = conversation.id;
+        }
       } catch (persistError) {
+        const fallbackConversationId = targetConversationId ?? `local-${Date.now()}`;
+        conversation = createConversationItem(
+          message,
+          nextResult,
+          { id: fallbackConversationId, createdAt: Date.now() }
+        );
+        targetConversationId = fallbackConversationId;
         setError(
           persistError instanceof Error
             ? `Đã trả lời nhưng lưu hội thoại thất bại: ${persistError.message}`
@@ -247,11 +404,17 @@ export default function ResearchPage() {
       }
 
       setHistory((prev) => [conversation, ...prev.filter((item) => item.id !== conversation.id)]);
-      setActiveConversationId(conversation.id);
+      setActiveConversationId(targetConversationId);
       setQuery("");
       setLiveJobId(null);
       setLiveStatusNote("");
       setLiveReasoningNotes([]);
+
+      if (targetConversationId && Number.isFinite(Number(targetConversationId)) && Number(targetConversationId) > 0) {
+        void loadConversationTurns(String(targetConversationId), conversation);
+      } else {
+        setConversationTurns((prev) => prev);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể xử lý câu hỏi.");
     } finally {
@@ -259,8 +422,8 @@ export default function ResearchPage() {
     }
   };
 
-  const copyAnswer = async () => {
-    const content = answerText.trim();
+  const copyAnswer = async (rawContent?: string) => {
+    const content = (rawContent ?? latestAnswerText).trim();
     if (!content) return;
     try {
       await navigator.clipboard.writeText(content);
@@ -466,67 +629,133 @@ export default function ResearchPage() {
             </div>
           </details>
 
-          <section className="chrome-panel flex min-h-[66vh] flex-col rounded-[1.35rem] p-4 sm:p-5 lg:p-6">
-            <div className="flex-1 space-y-4 overflow-y-auto pr-1">
-              {!lastResult ? (
+          <section className="chrome-panel flex min-h-[66vh] max-h-[80vh] flex-col overflow-hidden rounded-[1.35rem] p-4 sm:p-5 lg:p-6">
+            <div ref={conversationScrollRef} className="flex-1 space-y-4 overflow-y-auto pr-1 pb-4">
+              {isLoadingConversation && !conversationTurns.length ? (
+                <article className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-4 text-sm text-[var(--text-secondary)]">
+                  Đang tải hội thoại...
+                </article>
+              ) : null}
+              {!lastResult && !isLoadingConversation ? (
                 <article className="rounded-2xl border border-dashed border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-6 text-sm leading-7 text-[var(--text-secondary)]">
                   Bạn chưa có phiên trả lời nào trong lượt này. Nhập câu hỏi bên dưới để bắt đầu.
                 </article>
               ) : (
                 <>
-                  <div className="flex justify-end">
-                    <article className="max-w-[90%] rounded-2xl border border-cyan-300/60 bg-cyan-500/10 px-4 py-3 text-sm leading-7 text-[var(--text-primary)]">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-300">
-                        Bạn
-                      </p>
-                      <p className="mt-1.5 whitespace-pre-wrap">{displayedQuestion}</p>
+                  {isLoadingConversation && conversationTurns.length ? (
+                    <article className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-4 text-sm text-[var(--text-secondary)]">
+                      Đang tải hội thoại...
                     </article>
-                  </div>
+                  ) : null}
+                  {conversationTurns.map((turn) => {
+                    const result = turn.result;
+                    const answerText = result.answer || "";
+                    const answerCitations = result.tier === "tier2" ? result.citations : [];
+                    const runtimeMeta =
+                      result.tier === "tier2" ? buildTier2MetaSummary(result) : null;
+                    const tierLabel =
+                      result.tier === "tier2"
+                        ? `Research ${result.researchMode?.toUpperCase() ?? ""}`.trim()
+                        : "Quick";
 
-                  <div className="flex justify-start">
-                    <article className="w-full max-w-[96%] rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-4 sm:px-5">
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                          CLARA
-                        </span>
-                        <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                          {lastResult.tier === "tier2" ? `Research ${lastResult.researchMode?.toUpperCase() ?? ""}` : "Quick"}
-                        </span>
-                        {lastResult.tier === "tier2" && typeof lastResult.fallbackUsed === "boolean" ? (
-                          <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                            path: {lastResult.fallbackUsed ? "fallback" : "rag"}
-                          </span>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void copyAnswer()}
-                          className="ml-auto inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-                        >
-                          Copy
-                        </button>
-                      </div>
-
-                      <MarkdownAnswer answer={answerText} citations={answerCitations} />
-
-                      {lastResult.tier === "tier1" && lastResult.debug ? (
-                        <div className="mt-3 rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">
-                          role={lastResult.debug.role ?? "n/a"} · intent={lastResult.debug.intent ?? "n/a"} · confidence=
-                          {typeof lastResult.debug.confidence === "number"
-                            ? lastResult.debug.confidence.toFixed(2)
-                            : "n/a"}
+                    return (
+                      <div key={turn.id} className="space-y-3">
+                        <div className="flex justify-end">
+                          <article className="max-w-[90%] rounded-2xl border border-cyan-300/60 bg-cyan-500/10 px-4 py-3 text-sm leading-7 text-[var(--text-primary)]">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-300">
+                              Bạn
+                            </p>
+                            <p className="mt-1.5 whitespace-pre-wrap">{turn.query}</p>
+                          </article>
                         </div>
-                      ) : null}
 
-                      {copyMessage ? (
-                        <p className="mt-2 text-xs text-cyan-700 dark:text-cyan-300">{copyMessage}</p>
-                      ) : null}
-                    </article>
-                  </div>
+                        <div className="flex justify-start">
+                          <article className="w-full max-w-[96%] rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-4 sm:px-5">
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                              <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                                CLARA
+                              </span>
+                              <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                                {tierLabel}
+                              </span>
+                              {result.tier === "tier2" && typeof result.fallbackUsed === "boolean" ? (
+                                <span className="inline-flex min-h-[30px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                                  path: {result.fallbackUsed ? "fallback" : "rag"}
+                                </span>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void copyAnswer(answerText)}
+                                className="ml-auto inline-flex min-h-[34px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                              >
+                                Copy
+                              </button>
+                            </div>
+
+                            <MarkdownAnswer answer={answerText} citations={answerCitations} />
+
+                            {result.tier === "tier2" && runtimeMeta?.hasData ? (
+                              <section className="mt-3 rounded-xl border border-cyan-200/70 bg-cyan-50/60 px-3 py-2.5 text-xs text-cyan-900 dark:border-cyan-900/60 dark:bg-cyan-950/25 dark:text-cyan-200">
+                                <p className="font-semibold uppercase tracking-[0.1em]">
+                                  Runtime metadata
+                                </p>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5">
+                                    query_plan: {runtimeMeta.primaryQuery ? "yes" : "n/a"}
+                                  </span>
+                                  <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5">
+                                    subqueries: {runtimeMeta.subqueryCount}
+                                  </span>
+                                  <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5">
+                                    connectors: {runtimeMeta.connectorCount}
+                                  </span>
+                                  <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5">
+                                    source_attempts: {runtimeMeta.attemptCount}
+                                  </span>
+                                  <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5">
+                                    attempt_failed: {runtimeMeta.failedAttemptCount}
+                                  </span>
+                                  <span className="rounded-full border border-rose-300/70 bg-rose-50 px-2 py-0.5 text-rose-700 dark:border-rose-800/80 dark:bg-rose-950/35 dark:text-rose-300">
+                                    errors: {runtimeMeta.errorCount}
+                                  </span>
+                                </div>
+                                {runtimeMeta.primaryQuery ? (
+                                  <p className="mt-1.5 break-words">
+                                    query_plan: <span className="font-medium">{runtimeMeta.primaryQuery}</span>
+                                  </p>
+                                ) : null}
+                                {runtimeMeta.topErrors.length ? (
+                                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                                    {runtimeMeta.topErrors.map((entry, index) => (
+                                      <li key={`${turn.id}-meta-error-${index}`}>{entry}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </section>
+                            ) : null}
+
+                            {result.tier === "tier1" && result.debug ? (
+                              <div className="mt-3 rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                                role={result.debug.role ?? "n/a"} · intent={result.debug.intent ?? "n/a"} · confidence=
+                                {typeof result.debug.confidence === "number"
+                                  ? result.debug.confidence.toFixed(2)
+                                  : "n/a"}
+                              </div>
+                            ) : null}
+                          </article>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {copyMessage ? (
+                    <p className="text-xs text-cyan-700 dark:text-cyan-300">{copyMessage}</p>
+                  ) : null}
                 </>
               )}
             </div>
 
-            <div className="mt-4 border-t border-[color:var(--shell-border)] pt-4">
+            <div className="sticky bottom-0 z-10 mt-2 -mx-4 border-t border-[color:var(--shell-border)] bg-[var(--surface-panel)]/95 px-4 pt-4 backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
               <div className="mb-3 flex flex-wrap gap-2">
                 {QUICK_PROMPTS.map((prompt) => (
                   <button
@@ -552,7 +781,7 @@ export default function ResearchPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-[var(--text-muted)]">
                     {selectedTier === "tier2"
-                      ? `Research mode: ${selectedResearchMode.toUpperCase()} · trả lời kèm nguồn và timeline.`
+                      ? `Research mode: ${selectedResearchMode.toUpperCase()} · hiển thị query plan/source attempts/errors + timeline.`
                       : "Quick mode: phản hồi nhanh với guard an toàn."}
                   </p>
 
@@ -625,7 +854,7 @@ export default function ResearchPage() {
               </div>
             ) : (
               <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Flow timeline, telemetry và các route Deepdive/Analyze/Citations/Details được giữ lại ở chế độ mở rộng.
+                Flow timeline/telemetry theo các node mới (query canonicalizer, decomposition, retrieval orchestrator...) được giữ ở chế độ mở rộng.
               </p>
             )}
           </section>

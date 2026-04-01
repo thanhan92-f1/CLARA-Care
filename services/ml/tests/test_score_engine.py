@@ -62,3 +62,55 @@ def test_score_engine_recognizes_primary_alias_coumadin() -> None:
 
     assert "dailymed-coumadin-aspirin" in ranked_ids
     assert "pubmed-unrelated" not in ranked_ids
+
+
+def test_score_engine_applies_hard_filter_for_ddi_critical_query() -> None:
+    scorer = DocumentScorer(embedder=_StubEmbedder())
+    query = "Critical DDI warfarin with ibuprofen major bleeding risk"
+    docs = [
+        Document(
+            id="openfda-warfarin-label",
+            text="Warfarin sodium label with boxed warning and safety notes.",
+            metadata={"source": "openfda", "url": "https://open.fda.gov/apis/drug/label/"},
+        ),
+        Document(
+            id="pubmed-warfarin-ibuprofen-bleeding",
+            text=(
+                "Warfarin and ibuprofen interaction significantly increases bleeding risk. "
+                "Major hemorrhage events reported in observational data."
+            ),
+            metadata={"source": "pubmed", "url": "https://pubmed.ncbi.nlm.nih.gov/4/"},
+        ),
+    ]
+
+    ranked = scorer.score_documents(query, docs, top_k=3)
+    ranked_ids = [item.id for item in ranked]
+
+    assert "pubmed-warfarin-ibuprofen-bleeding" in ranked_ids
+    assert "openfda-warfarin-label" not in ranked_ids
+
+
+def test_score_engine_emits_rrf_breakdown_for_selected_documents() -> None:
+    scorer = DocumentScorer(embedder=_StubEmbedder())
+    query = "warfarin ibuprofen interaction bleeding risk"
+    docs = [
+        Document(
+            id="doc-a",
+            text="Warfarin ibuprofen interaction and bleeding risk evidence summary.",
+            metadata={"source": "pubmed"},
+        ),
+        Document(
+            id="doc-b",
+            text="Warfarin monitoring information with INR reminders.",
+            metadata={"source": "dailymed"},
+        ),
+    ]
+    score_trace: list[dict] = []
+
+    ranked = scorer.score_documents(query, docs, top_k=2, score_trace=score_trace)
+
+    assert ranked
+    assert all("rrf_score" in (item.metadata or {}) for item in ranked)
+    selected_rows = [row for row in score_trace if row.get("excluded") is False]
+    assert selected_rows
+    assert all("rrf_score" in row and "pre_rrf_score" in row for row in selected_rows)

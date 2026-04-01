@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Sequence
+import unicodedata
 
 from clara_ml.rag.embedder import HttpEmbeddingClient
 
@@ -17,8 +18,34 @@ from .text_utils import (
 
 
 class DocumentScorer:
+    _RRF_K = 60
+    _RRF_BLEND = 0.14
+
     def __init__(self, embedder: HttpEmbeddingClient | None = None) -> None:
         self.embedder = embedder or HttpEmbeddingClient()
+
+    @staticmethod
+    def _is_ddi_critical_query(query: str, query_profile: dict[str, Any]) -> bool:
+        if not bool(query_profile.get("is_ddi_query")):
+            return False
+        lowered = str(query or "").lower()
+        normalized = unicodedata.normalize("NFD", lowered)
+        folded = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+        critical_markers = {
+            "critical",
+            "major",
+            "severe",
+            "life-threatening",
+            "contraindication",
+            "black box",
+            "bleeding risk",
+            "hemorrhage",
+            "nghiem trong",
+            "nguy hiem",
+            "chong chi dinh",
+            "xuat huyet",
+        }
+        return any(marker in lowered or marker in folded for marker in critical_markers)
 
     @staticmethod
     def _normalize_document(doc: Document, *, default_source: str = "internal") -> Document:
@@ -64,6 +91,43 @@ class DocumentScorer:
         query_tokens = self._tokenize(expanded_query or query)
         scored: list[tuple[float, Document]] = []
         trace_rows: list[dict[str, Any]] = []
+        candidate_rows: list[dict[str, Any]] = []
+        is_ddi_query = bool(query_profile.get("is_ddi_query"))
+        is_ddi_critical_query = self._is_ddi_critical_query(query, query_profile)
+        primary_drug = str(query_profile.get("primary_drug") or "").strip().lower()
+        primary_aliases = {
+            str(item).strip().lower()
+            for item in query_profile.get("primary_aliases", [])
+            if str(item).strip()
+        }
+        if primary_drug:
+            primary_aliases.add(primary_drug)
+        co_drugs = {
+            str(item).strip().lower()
+            for item in query_profile.get("co_drugs", [])
+            if str(item).strip()
+        }
+        co_drug_aliases = set(co_drugs)
+        co_drug_aliases_raw = query_profile.get("co_drug_aliases")
+        if isinstance(co_drug_aliases_raw, dict):
+            for aliases in co_drug_aliases_raw.values():
+                if not isinstance(aliases, list):
+                    continue
+                for item in aliases:
+                    alias = str(item).strip().lower()
+                    if alias:
+                        co_drug_aliases.add(alias)
+        interaction_tokens = {
+            "interaction",
+            "ddi",
+            "bleeding",
+            "contraindication",
+            "adverse",
+            "risk",
+            "hemorrhage",
+            "pharmacokinetic",
+            "pharmacodynamic",
+        }
 
         for doc, doc_vector in zip(normalized_docs, doc_vectors):
             base_score = sum(a * b for a, b in zip(query_vector, doc_vector))
@@ -78,47 +142,9 @@ class DocumentScorer:
                 ]
             )
             doc_tokens = self._tokenize(doc_haystack)
-            primary_drug = str(query_profile.get("primary_drug") or "").strip().lower()
-            primary_aliases = {
-                str(item).strip().lower()
-                for item in query_profile.get("primary_aliases", [])
-                if str(item).strip()
-            }
-            if primary_drug:
-                primary_aliases.add(primary_drug)
-            co_drugs = {
-                str(item).strip().lower()
-                for item in query_profile.get("co_drugs", [])
-                if str(item).strip()
-            }
-            co_drug_aliases = set(co_drugs)
-            co_drug_aliases_raw = query_profile.get("co_drug_aliases")
-            if isinstance(co_drug_aliases_raw, dict):
-                for aliases in co_drug_aliases_raw.values():
-                    if not isinstance(aliases, list):
-                        continue
-                    for item in aliases:
-                        alias = str(item).strip().lower()
-                        if alias:
-                            co_drug_aliases.add(alias)
             has_primary_drug = bool(primary_aliases) and bool(primary_aliases.intersection(doc_tokens))
             has_codrug_signal = bool(co_drug_aliases.intersection(doc_tokens))
-            has_interaction_signal = bool(
-                doc_tokens.intersection(
-                    {
-                        "interaction",
-                        "ddi",
-                        "bleeding",
-                        "contraindication",
-                        "adverse",
-                        "risk",
-                        "hemorrhage",
-                        "pharmacokinetic",
-                        "pharmacodynamic",
-                    }
-                )
-            )
-            is_ddi_query = bool(query_profile.get("is_ddi_query"))
+            has_interaction_signal = bool(doc_tokens.intersection(interaction_tokens))
             source_key = str(doc.metadata.get("source") or "").strip().lower()
             trusted_label_source = source_key in {"openfda", "dailymed", "rxnorm", "rxnav"}
 
@@ -166,6 +192,28 @@ class DocumentScorer:
                     }
                 )
                 continue
+            if is_ddi_critical_query and (not has_codrug_signal or not has_interaction_signal):
+                trace_rows.append(
+                    {
+                        "doc_id": doc.id,
+                        "source": source_key or "unknown",
+                        "excluded": True,
+                        "reason": "ddi_critical_requires_codrug_and_interaction",
+                        "lexical_overlap": lexical_overlap,
+                    }
+                )
+                continue
+            if is_ddi_critical_query and lexical_overlap < 0.12:
+                trace_rows.append(
+                    {
+                        "doc_id": doc.id,
+                        "source": source_key or "unknown",
+                        "excluded": True,
+                        "reason": "ddi_critical_low_lexical_overlap",
+                        "lexical_overlap": lexical_overlap,
+                    }
+                )
+                continue
             policy = source_policies.get(source_key, {"enabled": True, "weight": 1.0})
             if not bool(policy.get("enabled", True)):
                 trace_rows.append(
@@ -209,43 +257,115 @@ class DocumentScorer:
                 elif trusted_label_source and has_primary_drug:
                     ddi_boost = 1.1
             score *= ddi_boost
+            candidate_rows.append(
+                {
+                    "doc": doc,
+                    "source_key": source_key or "unknown",
+                    "base_score": float(base_score),
+                    "semantic_component": float(semantic_component),
+                    "lexical_overlap": float(lexical_overlap),
+                    "policy_weight": float(policy_weight),
+                    "doc_weight": float(doc_weight),
+                    "source_bias": float(source_bias),
+                    "trust_factor": float(trust_factor),
+                    "tag_factor": float(tag_factor),
+                    "pdf_factor": float(pdf_factor),
+                    "ddi_boost": float(ddi_boost),
+                    "pre_rrf_score": float(score),
+                    "ddi_query": is_ddi_query,
+                    "ddi_critical_query": is_ddi_critical_query,
+                    "has_primary_drug": has_primary_drug,
+                    "has_codrug_signal": has_codrug_signal,
+                    "has_interaction_signal": has_interaction_signal,
+                    "trusted_label_source": trusted_label_source,
+                }
+            )
 
+        semantic_rank: dict[str, int] = {}
+        lexical_rank: dict[str, int] = {}
+        for index, item in enumerate(
+            sorted(
+                candidate_rows,
+                key=lambda row: (
+                    float(row["semantic_component"]),
+                    float(row["lexical_overlap"]),
+                    float(row["pre_rrf_score"]),
+                ),
+                reverse=True,
+            ),
+            start=1,
+        ):
+            semantic_rank[str(item["doc"].id)] = index
+        for index, item in enumerate(
+            sorted(
+                candidate_rows,
+                key=lambda row: (
+                    float(row["lexical_overlap"]),
+                    float(row["semantic_component"]),
+                    float(row["pre_rrf_score"]),
+                ),
+                reverse=True,
+            ),
+            start=1,
+        ):
+            lexical_rank[str(item["doc"].id)] = index
+
+        for item in candidate_rows:
+            doc = item["doc"]
+            doc_id = str(doc.id)
+            semantic_pos = int(semantic_rank.get(doc_id, len(candidate_rows) + 1))
+            lexical_pos = int(lexical_rank.get(doc_id, len(candidate_rows) + 1))
+            rrf_score = (1.0 / float(self._RRF_K + semantic_pos)) + (
+                1.0 / float(self._RRF_K + lexical_pos)
+            )
+            rrf_scaled = rrf_score * float(self._RRF_K)
+            final_score = (float(item["pre_rrf_score"]) * (1.0 - self._RRF_BLEND)) + (
+                rrf_scaled * self._RRF_BLEND
+            )
             score_breakdown = {
-                "base_score": float(base_score),
-                "semantic_component": float(semantic_component),
-                "lexical_overlap": float(lexical_overlap),
-                "policy_weight": float(policy_weight),
-                "doc_weight": float(doc_weight),
-                "source_bias": float(source_bias),
-                "trust_factor": float(trust_factor),
-                "tag_factor": float(tag_factor),
-                "pdf_factor": float(pdf_factor),
-                "ddi_boost": float(ddi_boost),
-                "final_score": float(score),
-                "ddi_query": is_ddi_query,
-                "has_primary_drug": has_primary_drug,
-                "has_codrug_signal": has_codrug_signal,
-                "has_interaction_signal": has_interaction_signal,
-                "trusted_label_source": trusted_label_source,
+                "base_score": float(item["base_score"]),
+                "semantic_component": float(item["semantic_component"]),
+                "lexical_overlap": float(item["lexical_overlap"]),
+                "policy_weight": float(item["policy_weight"]),
+                "doc_weight": float(item["doc_weight"]),
+                "source_bias": float(item["source_bias"]),
+                "trust_factor": float(item["trust_factor"]),
+                "tag_factor": float(item["tag_factor"]),
+                "pdf_factor": float(item["pdf_factor"]),
+                "ddi_boost": float(item["ddi_boost"]),
+                "pre_rrf_score": float(item["pre_rrf_score"]),
+                "rrf_score": float(rrf_score),
+                "rrf_scaled": float(rrf_scaled),
+                "rrf_semantic_rank": semantic_pos,
+                "rrf_lexical_rank": lexical_pos,
+                "final_score": float(final_score),
+                "ddi_query": bool(item["ddi_query"]),
+                "ddi_critical_query": bool(item["ddi_critical_query"]),
+                "has_primary_drug": bool(item["has_primary_drug"]),
+                "has_codrug_signal": bool(item["has_codrug_signal"]),
+                "has_interaction_signal": bool(item["has_interaction_signal"]),
+                "trusted_label_source": bool(item["trusted_label_source"]),
             }
-            doc.metadata["weight"] = doc_weight
-            doc.metadata["policy_weight"] = policy_weight
-            doc.metadata["source_bias"] = source_bias
-            doc.metadata["trust_factor"] = trust_factor
-            doc.metadata["tag_factor"] = tag_factor
-            doc.metadata["pdf_factor"] = pdf_factor
-            doc.metadata["ddi_boost"] = ddi_boost
-            doc.metadata["score"] = float(score)
+            doc.metadata["weight"] = float(item["doc_weight"])
+            doc.metadata["policy_weight"] = float(item["policy_weight"])
+            doc.metadata["source_bias"] = float(item["source_bias"])
+            doc.metadata["trust_factor"] = float(item["trust_factor"])
+            doc.metadata["tag_factor"] = float(item["tag_factor"])
+            doc.metadata["pdf_factor"] = float(item["pdf_factor"])
+            doc.metadata["ddi_boost"] = float(item["ddi_boost"])
+            doc.metadata["rrf_score"] = float(rrf_score)
+            doc.metadata["rrf_scaled"] = float(rrf_scaled)
+            doc.metadata["score"] = float(final_score)
             doc.metadata["score_breakdown"] = score_breakdown
             trace_rows.append(
                 {
                     "doc_id": doc.id,
-                    "source": source_key or "unknown",
+                    "source": str(item["source_key"] or "unknown"),
                     "excluded": False,
                     **score_breakdown,
                 }
             )
-            scored.append((score, doc))
+            scored.append((float(final_score), doc))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         selected_docs = self._select_with_source_diversity(scored, top_k=top_k)

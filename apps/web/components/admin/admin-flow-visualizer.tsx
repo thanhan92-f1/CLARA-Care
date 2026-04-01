@@ -12,20 +12,25 @@ export type FlowNodeId =
   | "legal_guard"
   | "role_router"
   | "intent_router"
+  | "query_canonicalizer"
   | "planner"
+  | "query_decomposition"
+  | "retrieval_orchestrator"
   | "deep_research"
   | "retrieval_internal"
   | "retrieval_scientific"
   | "retrieval_web"
   | "retrieval_file"
   | "evidence_index"
+  | "contradiction_miner"
   | "synthesis"
   | "verification"
   | "verification_matrix"
   | "citation_selection"
   | "policy_gate"
   | "deepseek_fallback"
-  | "responder";
+  | "responder"
+  | "evaluation_feedback";
 
 type FlowNodeStatus = "required" | "on" | "off";
 
@@ -61,40 +66,40 @@ type AdminFlowVisualizerProps = {
   selectedNodeId?: FlowNodeId | null;
 };
 
-const SCENE_WIDTH = 2860;
-const SCENE_HEIGHT = 1540;
-const NODE_CARD_WIDTH = 212;
+const SCENE_WIDTH = 3380;
+const SCENE_HEIGHT = 1760;
+const NODE_CARD_WIDTH = 224;
 const EXPORT_SCALE = 3;
 
 const NODES: FlowNodeDef[] = [
   {
     id: "input_gateway",
     title: "Input Gateway",
-    subtitle: "Web, mobile, admin trigger",
-    description: "Nhận truy vấn đầu vào, gắn trace id, chuẩn hóa payload và phân loại loại phiên.",
-    riskNote: "Payload lỏng ngay từ đầu sẽ làm hỏng telemetry và kéo lệch toàn bộ pipeline sau đó.",
-    x: 200,
-    y: 360,
+    subtitle: "Web / Mobile / API trigger",
+    description: "Nhận query, gắn trace id, correlation id và request budget cho toàn bộ deep research run.",
+    riskNote: "Nếu thiếu trace/budget từ đầu thì không tối ưu được timeout, không debug được degraded path.",
+    x: 220,
+    y: 260,
     tone: "sky",
   },
   {
     id: "session_guard",
     title: "Session Guard",
     subtitle: "Auth, consent, session validity",
-    description: "Chặn request chưa đăng nhập, session stale, hoặc chưa qua disclaimer/consent.",
-    riskNote: "Thiếu chốt này sẽ làm hở access control và phá vỡ câu chuyện pháp lý của sản phẩm.",
-    x: 200,
-    y: 660,
+    description: "Chặn request chưa đăng nhập, token hết hạn, chưa qua consent/disclaimer và session stale.",
+    riskNote: "Bỏ guard này là hở access control và phá vỡ legal chain-of-custody của dữ liệu y tế.",
+    x: 220,
+    y: 520,
     tone: "rose",
   },
   {
     id: "safety_ingress",
     title: "Safety Ingress",
     subtitle: "PII/PHI, triage, payload hygiene",
-    description: "Giảm thiểu dữ liệu nhạy cảm, chuẩn hóa ngôn ngữ truy vấn và áp safety prep trước routing.",
-    riskNote: "Nếu bỏ qua bước này, câu trả lời có thể chứa dữ liệu nhạy cảm hoặc ngữ cảnh bẩn.",
-    x: 200,
-    y: 960,
+    description: "Giảm thiểu PII/PHI, chuẩn hóa query và tiền xử lý safety trước khi vào planner/retrieval.",
+    riskNote: "Ngữ cảnh bẩn hoặc chứa PII đi sâu vào pipeline sẽ làm lệch ranking và tăng rủi ro pháp lý.",
+    x: 220,
+    y: 780,
     tone: "teal",
   },
   {
@@ -103,7 +108,7 @@ const NODES: FlowNodeDef[] = [
     subtitle: "Dosage, kê đơn, chẩn đoán",
     description: "Từ chối tuyệt đối các câu hỏi vượt ranh giới pháp lý như kê đơn, định liều, chẩn đoán.",
     riskNote: "Đây là lớp sống còn để chatbot không tự biến thành AI bác sĩ ngoài phạm vi cho phép.",
-    x: 540,
+    x: 560,
     y: 240,
     tone: "rose",
   },
@@ -111,41 +116,71 @@ const NODES: FlowNodeDef[] = [
     id: "role_router",
     title: "Role Router",
     subtitle: "normal / researcher / doctor / admin",
-    description: "Chọn nhánh kiểm soát, policy và depth mặc định dựa trên role hiện hành.",
+    description: "Ánh xạ role vào policy, mức explainability và ngân sách suy luận phù hợp.",
     riskNote: "Router sai role sẽ khiến cùng một truy vấn bị trả lời sai depth hoặc sai policy.",
-    x: 540,
-    y: 560,
+    x: 560,
+    y: 500,
     tone: "indigo",
     toggleKey: "role_router_enabled",
   },
   {
     id: "intent_router",
     title: "Intent Router",
-    subtitle: "quick, evidence, deep research",
-    description: "Nhận diện ý định để route sang quick guidance, evidence review hoặc deep research.",
+    subtitle: "quick / evidence / deep",
+    description: "Nhận diện intent và chọn profile retrieval (fast/deep, strict/lenient, branch ưu tiên).",
     riskNote: "Intent lệch là nguyên nhân phổ biến nhất của retrieval sai nguồn.",
-    x: 540,
-    y: 900,
+    x: 560,
+    y: 760,
     tone: "indigo",
     toggleKey: "intent_router_enabled",
   },
   {
+    id: "query_canonicalizer",
+    title: "Query Canonicalizer",
+    subtitle: "normalize + synonym expansion",
+    description: "Chuẩn hóa thuật ngữ (VI/EN), map biệt dược-hoạt chất và mở rộng alias trước khi truy xuất.",
+    riskNote: "Canonicalization yếu sẽ làm recall thấp dù connector/source tốt.",
+    x: 560,
+    y: 1020,
+    tone: "teal",
+  },
+  {
     id: "planner",
     title: "Research Planner",
-    subtitle: "Plan steps, source budget, search policy",
-    description: "Lập kế hoạch retrieval, search budget, ngưỡng low-context và chiến lược kiểm chứng.",
-    riskNote: "Planner yếu làm tăng độ trễ nhưng vẫn không tăng độ chính xác tương ứng.",
-    x: 900,
-    y: 700,
+    subtitle: "budget + source policy + pass plan",
+    description: "Lập kế hoạch pass, fan-out nguồn, top-k, fallback policy và ngưỡng low-context cho phiên.",
+    riskNote: "Planner không kiểm soát budget sẽ gây timeout hoặc chi phí cao nhưng hiệu quả thấp.",
+    x: 920,
+    y: 520,
+    tone: "amber",
+  },
+  {
+    id: "query_decomposition",
+    title: "Query Decomposition",
+    subtitle: "sub-questions + counter hypotheses",
+    description: "Tách câu hỏi thành sub-query, giả thuyết và phản giả thuyết để tránh bias một chiều.",
+    riskNote: "Thiếu decomposition dễ bỏ sót bằng chứng phản biện hoặc subgroup rủi ro cao.",
+    x: 920,
+    y: 780,
+    tone: "amber",
+  },
+  {
+    id: "retrieval_orchestrator",
+    title: "Retrieval Orchestrator",
+    subtitle: "fan-out / retry / timeout / merge",
+    description: "Điều phối đa nguồn theo pass, retry có kiểm soát và hợp nhất kết quả theo ưu tiên.",
+    riskNote: "Orchestrator kém sẽ làm pipeline thất thường, nguồn tốt vẫn cho output nhiễu.",
+    x: 920,
+    y: 1040,
     tone: "amber",
   },
   {
     id: "deep_research",
     title: "Deep Research Loop",
-    subtitle: "Subqueries, multi-pass retrieval",
-    description: "Tách subquery, breadth scan, counter-evidence scan và cross-source consistency trong deep mode.",
+    subtitle: "multi-pass + reasoning loop",
+    description: "Vòng lặp deep mode: breadth scan, contradiction scan, cross-source consistency và refine query.",
     riskNote: "Nếu chỉ giả lập bước này bằng client animation, UX sẽ đẹp nhưng pipeline sẽ giả.",
-    x: 1260,
+    x: 1280,
     y: 220,
     tone: "amber",
   },
@@ -153,9 +188,9 @@ const NODES: FlowNodeDef[] = [
     id: "retrieval_internal",
     title: "Internal Corpus",
     subtitle: "Seed docs, source hub, uploaded files",
-    description: "Lấy context từ knowledge source, uploaded documents và internal corpus đang có trong hệ thống.",
-    riskNote: "Corpus bẩn hoặc trùng lặp sẽ khiến rerank khó cứu được chất lượng cuối.",
-    x: 1260,
+    description: "Lấy context từ kho nội bộ, curated registry và dữ liệu người dùng đã upload.",
+    riskNote: "Nếu corpus không versioned/curated, quality drift sẽ tăng nhanh theo thời gian.",
+    x: 1280,
     y: 500,
     tone: "sky",
   },
@@ -165,8 +200,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "PubMed, Europe PMC, FDA, DailyMed",
     description: "Kéo bằng chứng chuyên môn từ nguồn khoa học và drug-safety connector.",
     riskNote: "Đây là node nhạy với timeout, query rewrite và chất lượng connector nhất.",
-    x: 1260,
-    y: 780,
+    x: 1280,
+    y: 760,
     tone: "sky",
     toggleKey: "scientific_retrieval_enabled",
   },
@@ -176,8 +211,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "SearXNG + controlled crawl",
     description: "Mở rộng recall bằng web retrieval và crawling có allowlist, chỉ dùng khi thật sự cần.",
     riskNote: "Web retrieval mạnh nhưng dễ kéo nhiễu nếu trust/crawl policy không đủ chặt.",
-    x: 1260,
-    y: 1060,
+    x: 1280,
+    y: 1020,
     tone: "sky",
     toggleKey: "web_retrieval_enabled",
   },
@@ -187,20 +222,30 @@ const NODES: FlowNodeDef[] = [
     subtitle: "User context grounding",
     description: "Inject ngữ cảnh từ file người dùng tải lên để câu trả lời grounded vào case thực tế.",
     riskNote: "Tắt node này sẽ làm research mất context cá nhân hóa quan trọng.",
-    x: 1260,
-    y: 1340,
+    x: 1280,
+    y: 1280,
     tone: "sky",
     toggleKey: "file_retrieval_enabled",
   },
   {
     id: "evidence_index",
-    title: "Evidence Index",
-    subtitle: "Dedupe, rerank, lexical gate",
-    description: "Dedupe, score blend semantic-lexical, source weighting và loại tài liệu lệch chủ đề.",
-    riskNote: "Đây là nơi phải chặn các paper lệch kiểu diet/PCOS trôi vào câu hỏi DDI.",
-    x: 1600,
-    y: 780,
+    title: "Evidence Index + Rerank",
+    subtitle: "dedupe / hybrid score / trust weighting",
+    description: "Dedupe, hybrid dense+sparse score, trust-tier weighting và chọn evidence có chất lượng cao.",
+    riskNote: "Nếu rerank không có trust/claim signals thì tài liệu nhiễu vẫn lọt vào synthesis.",
+    x: 1640,
+    y: 700,
     tone: "teal",
+  },
+  {
+    id: "contradiction_miner",
+    title: "Contradiction Miner",
+    subtitle: "counter-evidence & disagreement map",
+    description: "Tìm bằng chứng trái chiều, subgroup conflict và tạo matrix đồng thuận/bất đồng.",
+    riskNote: "Không có bước này dễ dẫn đến câu trả lời quá tự tin dù evidence đang mâu thuẫn.",
+    x: 1640,
+    y: 980,
+    tone: "indigo",
   },
   {
     id: "synthesis",
@@ -208,8 +253,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "DeepSeek generation, Markdown contract",
     description: "Tổng hợp câu trả lời theo contract Markdown, bảng so sánh, mermaid và citation inline.",
     riskNote: "Nếu synthesis không bị ép contract, output sẽ rất khó render nhất quán trên UI.",
-    x: 1940,
-    y: 780,
+    x: 2000,
+    y: 760,
     tone: "amber",
   },
   {
@@ -218,19 +263,19 @@ const NODES: FlowNodeDef[] = [
     subtitle: "Claim support and contradiction check",
     description: "Đối chiếu claim với retrieved evidence, đo coverage và phát hiện mâu thuẫn.",
     riskNote: "Không có verification thì không biết câu trả lời grounded đến mức nào.",
-    x: 1940,
-    y: 460,
+    x: 2000,
+    y: 500,
     tone: "indigo",
     toggleKey: "verification_enabled",
   },
   {
     id: "verification_matrix",
-    title: "Verification Matrix",
-    subtitle: "Severity, confidence, supported claims",
-    description: "Tạo ma trận quyết định hiển thị verdict, severity, confidence và unsupported claims.",
-    riskNote: "Matrix yếu sẽ làm warning hiển thị đẹp nhưng không nói đúng vấn đề thật.",
-    x: 1940,
-    y: 1100,
+    title: "Claim Matrix",
+    subtitle: "supported / unsupported / confidence",
+    description: "Chuẩn hóa verdict, severity và unsupported claims trước khi policy gate ra quyết định.",
+    riskNote: "Claim matrix lệch sẽ tạo warning sai, làm giảm niềm tin vào hệ thống.",
+    x: 2000,
+    y: 1020,
     tone: "indigo",
   },
   {
@@ -239,8 +284,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "Top evidence, attribution payload",
     description: "Chọn nguồn được giữ lại cho UI, source attribution và telemetry chi tiết.",
     riskNote: "Citation bị chọn sai sẽ làm người dùng tin vào nguồn không liên quan.",
-    x: 2280,
-    y: 320,
+    x: 2360,
+    y: 500,
     tone: "teal",
   },
   {
@@ -249,8 +294,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "allow, warn, block, fallback",
     description: "Áp runtime policy để quyết định cho qua, cảnh báo, chặn hay degrade an toàn.",
     riskNote: "Policy gate phải phản ánh đúng trạng thái strict-mode, không được mềm hóa ngầm.",
-    x: 2280,
-    y: 780,
+    x: 2360,
+    y: 760,
     tone: "rose",
   },
   {
@@ -259,8 +304,8 @@ const NODES: FlowNodeDef[] = [
     subtitle: "Low-context or upstream degraded path",
     description: "Nhánh dự phòng khi low-context hoặc upstream lỗi, chỉ được phép khi runtime cho phép.",
     riskNote: "Lạm dụng fallback sẽ phá toàn bộ lời hứa research grounded của sản phẩm.",
-    x: 2280,
-    y: 1160,
+    x: 2360,
+    y: 1080,
     tone: "rose",
     toggleKey: "deepseek_fallback_enabled",
   },
@@ -270,9 +315,19 @@ const NODES: FlowNodeDef[] = [
     subtitle: "UI payload, logs, telemetry, DB",
     description: "Trả payload cuối về web/admin, ghi telemetry, attribution, flow events và lưu conversation.",
     riskNote: "Nếu responder thiếu metadata, research trông như đang chạy nhưng không kiểm toán được.",
-    x: 2620,
-    y: 780,
+    x: 2720,
+    y: 760,
     tone: "sky",
+  },
+  {
+    id: "evaluation_feedback",
+    title: "Eval + Feedback Loop",
+    subtitle: "online KPIs + hard-negative mining",
+    description: "Ghi KPI retrieval/verification, sinh hard negatives và feed ngược về planner/reranker.",
+    riskNote: "Không có vòng lặp này thì quality không cải thiện bền vững sau mỗi lần deploy.",
+    x: 2720,
+    y: 1080,
+    tone: "teal",
   },
 ];
 
@@ -299,33 +354,43 @@ const NODE_BY_ID = NODES.reduce<Record<FlowNodeId, FlowNodeDef>>((acc, node) => 
 const EDGES: FlowEdgeDef[] = [
   { from: "input_gateway", to: "session_guard" },
   { from: "session_guard", to: "safety_ingress" },
-  { from: "safety_ingress", to: "legal_guard", bend: -210 },
-  { from: "safety_ingress", to: "role_router", bend: -34 },
-  { from: "safety_ingress", to: "intent_router", bend: 20 },
-  { from: "legal_guard", to: "policy_gate", bend: -140, label: "hard refusal" },
-  { from: "role_router", to: "planner", bend: 40 },
+  { from: "safety_ingress", to: "legal_guard", bend: -180 },
+  { from: "safety_ingress", to: "role_router", bend: -36 },
+  { from: "safety_ingress", to: "intent_router", bend: 14 },
+  { from: "safety_ingress", to: "query_canonicalizer", bend: 72 },
+  { from: "legal_guard", to: "policy_gate", bend: -160, label: "hard refusal" },
+  { from: "role_router", to: "planner", bend: 22 },
   { from: "intent_router", to: "planner", bend: -40 },
+  { from: "query_canonicalizer", to: "planner", bend: -64 },
+  { from: "planner", to: "query_decomposition", bend: 46, label: "decompose" },
   { from: "planner", to: "deep_research", bend: -170, label: "deep mode" },
-  { from: "planner", to: "retrieval_internal", bend: -90 },
-  { from: "planner", to: "retrieval_scientific" },
-  { from: "planner", to: "retrieval_web", bend: 70 },
-  { from: "planner", to: "retrieval_file", bend: 130 },
-  { from: "deep_research", to: "retrieval_scientific", bend: 90 },
-  { from: "retrieval_internal", to: "evidence_index", bend: -40 },
+  { from: "planner", to: "retrieval_orchestrator", bend: 150 },
+  { from: "query_decomposition", to: "deep_research", bend: -88 },
+  { from: "query_decomposition", to: "retrieval_orchestrator", bend: 48 },
+  { from: "retrieval_orchestrator", to: "retrieval_internal", bend: -120 },
+  { from: "retrieval_orchestrator", to: "retrieval_scientific", bend: -40 },
+  { from: "retrieval_orchestrator", to: "retrieval_web", bend: 30 },
+  { from: "retrieval_orchestrator", to: "retrieval_file", bend: 80 },
+  { from: "deep_research", to: "retrieval_scientific", bend: 82 },
+  { from: "retrieval_internal", to: "evidence_index", bend: -54 },
   { from: "retrieval_scientific", to: "evidence_index" },
-  { from: "retrieval_web", to: "evidence_index", bend: 42 },
-  { from: "retrieval_file", to: "evidence_index", bend: 118 },
-  { from: "evidence_index", to: "synthesis" },
+  { from: "retrieval_web", to: "evidence_index", bend: 28 },
+  { from: "retrieval_file", to: "evidence_index", bend: 84 },
+  { from: "evidence_index", to: "contradiction_miner", bend: 64, label: "counter evidence" },
+  { from: "evidence_index", to: "synthesis", bend: -12 },
+  { from: "contradiction_miner", to: "verification_matrix", bend: 42 },
   { from: "synthesis", to: "verification", bend: -100 },
   { from: "synthesis", to: "verification_matrix", bend: 100 },
-  { from: "verification", to: "citation_selection", bend: -52 },
+  { from: "verification", to: "citation_selection", bend: -42 },
   { from: "verification", to: "policy_gate", bend: 20 },
-  { from: "verification_matrix", to: "policy_gate", bend: -16 },
-  { from: "citation_selection", to: "responder", bend: 84 },
+  { from: "verification_matrix", to: "policy_gate", bend: -6 },
+  { from: "citation_selection", to: "responder", bend: 66 },
   { from: "policy_gate", to: "responder", bend: 10 },
-  { from: "planner", to: "deepseek_fallback", fallback: true, bend: 180, label: "degraded path" },
-  { from: "evidence_index", to: "deepseek_fallback", fallback: true, bend: 130 },
-  { from: "policy_gate", to: "deepseek_fallback", fallback: true, bend: 56 },
+  { from: "responder", to: "evaluation_feedback", bend: 76, label: "online eval" },
+  { from: "evaluation_feedback", to: "planner", bend: -280, label: "offline tuning" },
+  { from: "planner", to: "deepseek_fallback", fallback: true, bend: 176, label: "degraded path" },
+  { from: "evidence_index", to: "deepseek_fallback", fallback: true, bend: 108 },
+  { from: "policy_gate", to: "deepseek_fallback", fallback: true, bend: 52 },
   { from: "deepseek_fallback", to: "responder", fallback: true, bend: -22, label: "fallback response" },
 ];
 
@@ -472,9 +537,8 @@ export default function AdminFlowVisualizer({
             CLARA Research Flow Visualizer
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Canvas này bám sát flow thực tế của Research pipeline: session guard, legal hard guard,
-            planner, deep research, retrieval, evidence index, FIDES verification, citation
-            selection, policy gate và responder.
+            Canvas mới mô tả pipeline deep research nâng cấp: safety/legal ingress, query canonicalization,
+            decomposition, retrieval orchestration, contradiction mining, verification và feedback loop.
           </p>
         </div>
 
@@ -534,6 +598,9 @@ export default function AdminFlowVisualizer({
         </span>
         <span className="rounded-full border border-orange-300 bg-orange-100 px-2.5 py-1 font-semibold text-orange-700">
           degraded branch
+        </span>
+        <span className="rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-1 font-semibold text-indigo-700">
+          tuning feedback
         </span>
       </div>
 

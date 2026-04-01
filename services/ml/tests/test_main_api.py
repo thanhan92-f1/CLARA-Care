@@ -313,6 +313,11 @@ def test_research_tier2_recovers_with_safe_fallback(monkeypatch: pytest.MonkeyPa
     assert len(body["sources"]) >= 1
     assert isinstance(body.get("flow_events"), list)
     assert any(event.get("stage") == "fallback_response" for event in body["flow_events"])
+    generation_events = [
+        event for event in body["flow_events"] if event.get("stage") == "rag_generation"
+    ]
+    assert generation_events
+    assert "deepseek_generation_failed" not in str(generation_events[0].get("note", "")).lower()
 
 
 def test_research_tier2_flow_search_index_events_precede_synthesis():
