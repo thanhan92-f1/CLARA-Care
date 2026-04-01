@@ -259,6 +259,30 @@ def test_research_tier2_blocks_guideline_wording_when_requesting_diagnosis_or_do
     assert body["guard_reason"] in {"diagnosis_request", "dosage_request"}
 
 
+def test_research_tier2_blocks_vietnamese_diacritic_prescription_only():
+    response = client.post(
+        "/v1/research/tier2",
+        json={"query": "Bạn kê đơn kháng sinh cho tôi luôn nhé."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "medical_policy_refusal"
+    assert body["model_used"] == "legal-hard-guard-v1"
+    assert body["guard_reason"] == "prescription_request"
+
+
+def test_research_tier2_blocks_vietnamese_diacritic_diagnosis_only():
+    response = client.post(
+        "/v1/research/tier2",
+        json={"query": "Tôi có phải bị suy tim không? Hãy chẩn đoán."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "medical_policy_refusal"
+    assert body["model_used"] == "legal-hard-guard-v1"
+    assert body["guard_reason"] == "diagnosis_request"
+
+
 def test_chat_legal_guard_blocks_vietnamese_non_accent_phrasing():
     response = client.post(
         "/v1/chat/routed",

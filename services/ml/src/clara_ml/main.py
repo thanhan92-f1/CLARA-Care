@@ -136,6 +136,7 @@ def _query_token_count(query: str) -> int:
 
 
 def _strip_diacritics(value: str) -> str:
+    value = value.replace("đ", "d").replace("Đ", "D")
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
