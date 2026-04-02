@@ -70,9 +70,9 @@ type AdminFlowVisualizerProps = {
   selectedNodeId?: FlowNodeId | null;
 };
 
-const SCENE_WIDTH = 3380;
-const SCENE_HEIGHT = 1760;
-const NODE_CARD_WIDTH = 224;
+const SCENE_WIDTH = 3920;
+const SCENE_HEIGHT = 2280;
+const NODE_CARD_WIDTH = 248;
 const EXPORT_SCALE = 3;
 
 const NODES: FlowNodeDef[] = [
@@ -375,6 +375,49 @@ const NODES: FlowNodeDef[] = [
   },
 ];
 
+const NODE_LAYOUT_OVERRIDES: Record<FlowNodeId, { x: number; y: number }> = {
+  input_gateway: { x: 260, y: 220 },
+  session_guard: { x: 260, y: 520 },
+  safety_ingress: { x: 260, y: 820 },
+
+  legal_guard: { x: 760, y: 220 },
+  role_router: { x: 760, y: 520 },
+  intent_router: { x: 760, y: 820 },
+  query_canonicalizer: { x: 760, y: 1120 },
+
+  planner: { x: 1260, y: 520 },
+  query_decomposition: { x: 1260, y: 820 },
+  retrieval_orchestrator: { x: 1260, y: 1120 },
+
+  deep_research: { x: 1760, y: 220 },
+  retrieval_internal: { x: 1760, y: 760 },
+  retrieval_scientific: { x: 1760, y: 1040 },
+  retrieval_web: { x: 1760, y: 1320 },
+  retrieval_file: { x: 1760, y: 1600 },
+
+  deep_beta_router: { x: 2260, y: 220 },
+  deep_beta_hypothesis: { x: 2260, y: 520 },
+  deep_beta_critic: { x: 2260, y: 820 },
+  deep_beta_consensus: { x: 2260, y: 1120 },
+  evidence_index: { x: 2260, y: 1420 },
+  contradiction_miner: { x: 2260, y: 1700 },
+
+  citation_selection: { x: 2760, y: 980 },
+  verification: { x: 2760, y: 1220 },
+  synthesis: { x: 2760, y: 1480 },
+  verification_matrix: { x: 2760, y: 1740 },
+
+  responder: { x: 3260, y: 1180 },
+  policy_gate: { x: 3260, y: 1460 },
+  deepseek_fallback: { x: 3260, y: 1760 },
+  evaluation_feedback: { x: 3260, y: 2040 },
+};
+
+const FLOW_NODES = NODES.map((node) => ({
+  ...node,
+  ...(NODE_LAYOUT_OVERRIDES[node.id] ?? {}),
+}));
+
 export const FLOW_NODE_INFOS: Record<FlowNodeId, FlowNodeInfo> = NODES.reduce(
   (acc, node) => {
     acc[node.id] = {
@@ -390,7 +433,7 @@ export const FLOW_NODE_INFOS: Record<FlowNodeId, FlowNodeInfo> = NODES.reduce(
   {} as Record<FlowNodeId, FlowNodeInfo>,
 );
 
-const NODE_BY_ID = NODES.reduce<Record<FlowNodeId, FlowNodeDef>>((acc, node) => {
+const NODE_BY_ID = FLOW_NODES.reduce<Record<FlowNodeId, FlowNodeDef>>((acc, node) => {
   acc[node.id] = node;
   return acc;
 }, {} as Record<FlowNodeId, FlowNodeDef>);
@@ -542,7 +585,7 @@ export default function AdminFlowVisualizer({
   const [isExporting, setIsExporting] = useState(false);
   const statusByNode = useMemo(
     () =>
-      NODES.reduce<Record<FlowNodeId, FlowNodeStatus>>((acc, node) => {
+      FLOW_NODES.reduce<Record<FlowNodeId, FlowNodeStatus>>((acc, node) => {
         acc[node.id] = resolveNodeStatus(node, ragFlow);
         return acc;
       }, {} as Record<FlowNodeId, FlowNodeStatus>),
@@ -581,13 +624,14 @@ export default function AdminFlowVisualizer({
     }
   }, [isExporting]);
 
-  const liveNodeCount = NODES.filter((node) => isActive(statusByNode[node.id])).length;
-  const optionalNodeCount = NODES.filter((node) => Boolean(node.toggleKey)).length;
+  const liveNodeCount = FLOW_NODES.filter((node) => isActive(statusByNode[node.id])).length;
+  const optionalNodeCount = FLOW_NODES.filter((node) => Boolean(node.toggleKey)).length;
   const lowContextThreshold = typeof ragFlow?.low_context_threshold === "number" ? ragFlow.low_context_threshold : 0;
 
   return (
-    <section className="relative overflow-hidden rounded-[28px] border border-slate-200/70 bg-[radial-gradient(circle_at_6%_8%,rgba(34,211,238,0.24),transparent_28%),radial-gradient(circle_at_96%_88%,rgba(59,130,246,0.18),transparent_30%),linear-gradient(165deg,rgba(255,255,255,0.96),rgba(239,246,255,0.9))] p-5 shadow-[0_28px_80px_rgba(15,23,42,0.12)] dark:border-slate-700/70 dark:bg-[radial-gradient(circle_at_6%_8%,rgba(34,211,238,0.16),transparent_30%),radial-gradient(circle_at_96%_88%,rgba(59,130,246,0.14),transparent_32%),linear-gradient(165deg,rgba(2,6,23,0.94),rgba(15,23,42,0.9))] dark:shadow-[0_34px_88px_rgba(2,6,23,0.8)]">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)] bg-[size:28px_28px] dark:bg-[linear-gradient(to_right,rgba(71,85,105,0.34)_1px,transparent_1px),linear-gradient(to_bottom,rgba(71,85,105,0.34)_1px,transparent_1px)]" />
+    <section className="relative overflow-hidden rounded-[32px] border border-cyan-200/45 bg-[radial-gradient(circle_at_12%_6%,rgba(34,211,238,0.26),transparent_30%),radial-gradient(circle_at_88%_90%,rgba(14,165,233,0.2),transparent_36%),linear-gradient(158deg,rgba(255,255,255,0.94),rgba(236,254,255,0.88)_44%,rgba(224,242,254,0.9))] p-5 shadow-[0_34px_96px_rgba(8,47,73,0.2)] dark:border-cyan-500/30 dark:bg-[radial-gradient(circle_at_12%_6%,rgba(34,211,238,0.2),transparent_34%),radial-gradient(circle_at_88%_90%,rgba(59,130,246,0.18),transparent_42%),linear-gradient(160deg,rgba(2,6,23,0.95),rgba(8,47,73,0.84)_48%,rgba(15,23,42,0.92))] dark:shadow-[0_40px_110px_rgba(2,6,23,0.84)]">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(8,145,178,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.14)_1px,transparent_1px)] bg-[size:26px_26px] dark:bg-[linear-gradient(to_right,rgba(8,145,178,0.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.22)_1px,transparent_1px)]" />
+      <div className="pointer-events-none absolute inset-x-8 top-0 h-36 rounded-b-[40px] bg-gradient-to-b from-cyan-300/30 to-transparent blur-2xl dark:from-cyan-400/25" />
 
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -604,17 +648,17 @@ export default function AdminFlowVisualizer({
         </div>
 
         <div className="grid gap-2 sm:grid-cols-3">
-          <div className="rounded-2xl border border-white/70 bg-white/78 px-4 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-600/55 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
+          <div className="rounded-2xl border border-cyan-200/60 bg-white/72 px-4 py-3 shadow-[0_16px_36px_rgba(8,145,178,0.16)] backdrop-blur-xl dark:border-cyan-500/35 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Active Nodes</p>
             <p className="mt-1 text-2xl font-semibold text-slate-950 dark:text-slate-100">{liveNodeCount}</p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">trong tổng {NODES.length} node</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">trong tổng {FLOW_NODES.length} node</p>
           </div>
-          <div className="rounded-2xl border border-white/70 bg-white/78 px-4 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-600/55 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
+          <div className="rounded-2xl border border-cyan-200/60 bg-white/72 px-4 py-3 shadow-[0_16px_36px_rgba(8,145,178,0.16)] backdrop-blur-xl dark:border-cyan-500/35 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Toggle Nodes</p>
             <p className="mt-1 text-2xl font-semibold text-slate-950 dark:text-slate-100">{optionalNodeCount}</p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">có thể bật/tắt từ runtime</p>
           </div>
-          <div className="rounded-2xl border border-white/70 bg-white/78 px-4 py-3 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-600/55 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
+          <div className="rounded-2xl border border-cyan-200/60 bg-white/72 px-4 py-3 shadow-[0_16px_36px_rgba(8,145,178,0.16)] backdrop-blur-xl dark:border-cyan-500/35 dark:bg-slate-900/62 dark:shadow-[0_16px_34px_rgba(2,6,23,0.7)]">
             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Low Context Threshold</p>
             <p className="mt-1 text-2xl font-semibold text-slate-950 dark:text-slate-100">{lowContextThreshold.toFixed(2)}</p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">điều khiển degraded path</p>
@@ -622,7 +666,7 @@ export default function AdminFlowVisualizer({
         </div>
       </div>
 
-      <div className="relative mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/74 px-4 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-600/55 dark:bg-slate-900/58 dark:shadow-[0_16px_38px_rgba(2,6,23,0.72)]">
+      <div className="relative mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200/60 bg-white/70 px-4 py-3 shadow-[0_10px_30px_rgba(8,145,178,0.14)] backdrop-blur-xl dark:border-cyan-500/30 dark:bg-slate-900/58 dark:shadow-[0_16px_38px_rgba(2,6,23,0.72)]">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
             Export
@@ -665,10 +709,10 @@ export default function AdminFlowVisualizer({
         </span>
       </div>
 
-      <div className="relative mt-5 overflow-x-auto rounded-[24px] border border-white/80 bg-slate-950/[0.04] p-3 dark:border-slate-700/60 dark:bg-slate-950/30">
+      <div className="relative mt-5 overflow-x-auto rounded-[24px] border border-cyan-200/50 bg-slate-950/[0.04] p-3 dark:border-cyan-700/30 dark:bg-slate-950/30">
         <div
           ref={sceneRef}
-          className="relative overflow-hidden rounded-[22px] border border-white/60 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.45),_transparent_26%),linear-gradient(180deg,_rgba(248,250,252,0.72),_rgba(241,245,249,0.86))] dark:border-slate-700/75 dark:bg-[radial-gradient(circle_at_top,_rgba(14,116,144,0.18),_transparent_34%),linear-gradient(180deg,_rgba(2,6,23,0.72),_rgba(15,23,42,0.88))] [--flow-edge-live:#0f766e] [--flow-edge-muted:#94a3b8] [--flow-edge-fallback:#ea580c] [--flow-label-color:#475569] dark:[--flow-edge-live:#2dd4bf] dark:[--flow-edge-muted:#64748b] dark:[--flow-edge-fallback:#fb923c] dark:[--flow-label-color:#94a3b8]"
+          className="relative overflow-hidden rounded-[22px] border border-cyan-200/50 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_34%),linear-gradient(180deg,_rgba(248,250,252,0.78),_rgba(241,245,249,0.88))] dark:border-cyan-700/30 dark:bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.16),_transparent_42%),linear-gradient(180deg,_rgba(2,6,23,0.74),_rgba(15,23,42,0.9))] [--flow-edge-live:#0891b2] [--flow-edge-muted:#94a3b8] [--flow-edge-fallback:#f97316] [--flow-label-color:#334155] dark:[--flow-edge-live:#22d3ee] dark:[--flow-edge-muted:#64748b] dark:[--flow-edge-fallback:#fb923c] dark:[--flow-label-color:#a5b4fc]"
           style={{ width: SCENE_WIDTH, height: SCENE_HEIGHT }}
         >
           <svg
@@ -749,7 +793,7 @@ export default function AdminFlowVisualizer({
             })}
           </svg>
 
-          {NODES.map((node) => {
+          {FLOW_NODES.map((node) => {
             const status = statusByNode[node.id];
             const meta = STATUS_META[status];
             const tone = TONE_META[node.tone];
@@ -775,7 +819,7 @@ export default function AdminFlowVisualizer({
                   className={cx(
                     "group relative cursor-pointer overflow-hidden rounded-[22px] border p-3 text-left transition duration-200",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
-                    "backdrop-blur-md",
+                    "backdrop-blur-xl",
                     meta.nodeClass,
                     tone.glow,
                     isSelected && "border-slate-900/80 ring-2 ring-cyan-500/35 dark:border-cyan-300/65 dark:ring-cyan-400/35",
@@ -801,7 +845,9 @@ export default function AdminFlowVisualizer({
                     </span>
                   </div>
 
-                  <p className="mt-3 text-[12px] leading-5 text-slate-600 dark:text-slate-300">{node.description}</p>
+                  <p className="mt-3 h-[78px] overflow-hidden text-[12px] leading-5 text-slate-600 dark:text-slate-300">
+                    {node.description}
+                  </p>
 
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className={cx("rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]", tone.chip)}>

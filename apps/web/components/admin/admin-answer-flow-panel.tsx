@@ -80,7 +80,8 @@ export default function AdminAnswerFlowPanel() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+      <section className="relative overflow-hidden rounded-[30px] border border-cyan-200/60 bg-[radial-gradient(circle_at_10%_8%,rgba(34,211,238,0.2),transparent_34%),radial-gradient(circle_at_90%_92%,rgba(59,130,246,0.14),transparent_38%),linear-gradient(162deg,rgba(255,255,255,0.95),rgba(236,254,255,0.9))] p-4 shadow-[0_24px_72px_rgba(14,116,144,0.18)] dark:border-cyan-600/35 dark:bg-[radial-gradient(circle_at_10%_8%,rgba(34,211,238,0.14),transparent_34%),radial-gradient(circle_at_90%_92%,rgba(59,130,246,0.12),transparent_38%),linear-gradient(162deg,rgba(2,6,23,0.94),rgba(15,23,42,0.9))] dark:shadow-[0_30px_84px_rgba(2,6,23,0.82)]">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(14,165,233,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(14,165,233,0.08)_1px,transparent_1px)] bg-[size:24px_24px] dark:bg-[linear-gradient(to_right,rgba(14,165,233,0.16)_1px,transparent_1px),linear-gradient(to_bottom,rgba(14,165,233,0.16)_1px,transparent_1px)]" />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Answer Flow Block</p>
@@ -109,21 +110,21 @@ export default function AdminAnswerFlowPanel() {
         </div>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          <div className="rounded-xl border border-cyan-200/70 bg-white/70 px-3 py-2 backdrop-blur dark:border-cyan-700/40 dark:bg-slate-900/70">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Flow Flags</p>
             <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
               {enabledFlowCount}/{flowToggleKeys.length}
             </p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          <div className="rounded-xl border border-cyan-200/70 bg-white/70 px-3 py-2 backdrop-blur dark:border-cyan-700/40 dark:bg-slate-900/70">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Flow Health</p>
             <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{flowHealthLabel}</p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          <div className="rounded-xl border border-cyan-200/70 bg-white/70 px-3 py-2 backdrop-blur dark:border-cyan-700/40 dark:bg-slate-900/70">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">low_context_threshold</p>
             <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{config?.rag_flow.low_context_threshold.toFixed(2) ?? "0.00"}</p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          <div className="rounded-xl border border-cyan-200/70 bg-white/70 px-3 py-2 backdrop-blur dark:border-cyan-700/40 dark:bg-slate-900/70">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Fallback</p>
             <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
               {config?.rag_flow.deepseek_fallback_enabled ? "enabled" : "disabled"}
@@ -154,7 +155,7 @@ export default function AdminAnswerFlowPanel() {
                 selectedNodeId={selectedNode}
               />
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+              <section className="rounded-2xl border border-cyan-200/60 bg-white/78 p-4 shadow-[0_16px_42px_rgba(14,116,144,0.14)] backdrop-blur dark:border-cyan-700/35 dark:bg-slate-900/80 dark:shadow-[0_20px_48px_rgba(2,6,23,0.74)]">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Node Inspector</p>
                 <h4 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedNodeInfo.title}</h4>
                 <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{selectedNodeInfo.subtitle}</p>
@@ -253,7 +254,7 @@ export default function AdminAnswerFlowPanel() {
 
       <AdminFlowRuntimePanel />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+      <section className="rounded-2xl border border-cyan-200/60 bg-white/78 p-4 shadow-[0_16px_42px_rgba(14,116,144,0.14)] backdrop-blur dark:border-cyan-700/35 dark:bg-slate-900/80 dark:shadow-[0_20px_48px_rgba(2,6,23,0.74)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Council Flow</p>
         <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Sơ đồ hội chẩn ở phần quản trị</h3>
         <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
@@ -269,7 +270,7 @@ export default function AdminAnswerFlowPanel() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+      <section className="rounded-2xl border border-cyan-200/60 bg-white/78 p-4 shadow-[0_16px_42px_rgba(14,116,144,0.14)] backdrop-blur dark:border-cyan-700/35 dark:bg-slate-900/80 dark:shadow-[0_20px_48px_rgba(2,6,23,0.74)]">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Flow Signal Blocks</h3>
           <span className="text-xs text-slate-500 dark:text-slate-400">{flowToggleKeys.length} flags + threshold</span>
