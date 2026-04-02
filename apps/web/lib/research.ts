@@ -115,6 +115,17 @@ export type ResearchTier2ContradictionSummary = {
 export type ResearchTier2TraceMetadataValue = string | number | boolean;
 export type ResearchTier2TraceMetadata = Record<string, ResearchTier2TraceMetadataValue>;
 
+export type ResearchTier2StageSpan = {
+  stage: string;
+  status?: ResearchFlowStageStatus | string;
+  start?: string;
+  end?: string;
+  durationMs?: number;
+  eventCount?: number;
+  sourceCount?: number;
+  componentCount?: number;
+};
+
 export type ResearchTier2SearchPlan = {
   query?: string;
   researchMode?: string;
@@ -165,6 +176,7 @@ export type ResearchTier2Telemetry = {
   sourceReasoning: ResearchTier2SourceReasoning[];
   verificationMatrix: ResearchTier2VerificationMatrixEntry[];
   contradictionSummary?: ResearchTier2ContradictionSummary;
+  stageSpans?: ResearchTier2StageSpan[];
   traceMetadata: ResearchTier2TraceMetadata;
   errors: string[];
   fallbackInfo: string[];
@@ -220,6 +232,9 @@ export type ResearchTier2RawResponse = {
   events?: unknown;
   context_debug?: unknown;
   telemetry?: unknown;
+  stage_spans?: unknown;
+  stageSpans?: unknown;
+  trace?: unknown;
   visual_assets?: unknown;
   visualAssets?: unknown;
   images?: unknown;
@@ -1220,6 +1235,9 @@ const TRACE_METADATA_CONTAINER_KEYS = [
 
 const TRACE_METADATA_SCALAR_KEYS = [
   "trace_id",
+  "run_id",
+  "runId",
+  "execution_run_id",
   "span_id",
   "parent_span_id",
   "trace_flags",
@@ -1235,6 +1253,8 @@ const TRACE_METADATA_SCALAR_KEYS = [
 function isTraceMetadataKey(key: string): boolean {
   const normalized = key.trim().toLowerCase();
   if (!normalized) return false;
+  const tail = normalized.split(".").pop() ?? normalized;
+  if (tail === "run_id" || tail === "runid" || tail === "execution_run_id") return true;
   return (
     normalized.includes("trace") ||
     normalized.includes("span") ||
@@ -1733,6 +1753,205 @@ function dedupeSourceAttempts(items: ResearchTier2SourceAttempt[]): ResearchTier
     results.push(item);
   });
   return results;
+}
+
+function toIsoTimestamp(value: unknown): string | undefined {
+  const text = asText(value);
+  if (text) return text;
+  const timestampMs = asTimestampMs(value);
+  if (timestampMs === undefined) return undefined;
+  return new Date(timestampMs).toISOString();
+}
+
+function parseCountMetric(value: unknown): number | undefined {
+  const numeric = asNumber(value);
+  if (numeric !== undefined) return numeric;
+  if (Array.isArray(value)) return value.length;
+  const record = asRecord(value);
+  if (record) return Object.keys(record).length;
+  const text = asText(value);
+  if (!text) return undefined;
+  const pieces = text
+    .split(/[,\n;|]/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return pieces.length > 1 ? pieces.length : undefined;
+}
+
+function parseStageSpan(value: unknown, fallbackStage?: string): ResearchTier2StageSpan | null {
+  const record = asRecord(value);
+  if (!record) {
+    const status = asText(value);
+    const durationMs = asNumber(value);
+    if (!fallbackStage || (status === undefined && durationMs === undefined)) return null;
+    return {
+      stage: fallbackStage,
+      status,
+      durationMs
+    };
+  }
+
+  const stage =
+    asText(record.stage) ??
+    asText(record.stage_name) ??
+    asText(record.stageName) ??
+    asText(record.name) ??
+    asText(record.label) ??
+    asText(record.step) ??
+    asText(record.phase) ??
+    fallbackStage;
+  if (!stage) return null;
+
+  const startRaw =
+    record.start ??
+    record.started_at ??
+    record.startedAt ??
+    record.start_time ??
+    record.startTime ??
+    record.start_timestamp ??
+    record.startTimestamp ??
+    record.begin ??
+    record.begin_at;
+  const endRaw =
+    record.end ??
+    record.ended_at ??
+    record.endedAt ??
+    record.end_time ??
+    record.endTime ??
+    record.end_timestamp ??
+    record.endTimestamp ??
+    record.completed_at ??
+    record.completedAt ??
+    record.finish ??
+    record.finished_at;
+  const startMs = asTimestampMs(startRaw);
+  const endMs = asTimestampMs(endRaw);
+
+  const durationMs =
+    asNumber(record.duration_ms) ??
+    asNumber(record.durationMs) ??
+    asNumber(record.elapsed_ms) ??
+    asNumber(record.elapsedMs) ??
+    asNumber(record.latency_ms) ??
+    asNumber(record.latencyMs) ??
+    (startMs !== undefined && endMs !== undefined && endMs >= startMs ? endMs - startMs : undefined);
+
+  return {
+    stage,
+    status:
+      asText(record.status) ??
+      asText(record.state) ??
+      asText(record.result) ??
+      asText(record.outcome),
+    start: toIsoTimestamp(startRaw),
+    end: toIsoTimestamp(endRaw),
+    durationMs,
+    eventCount:
+      parseCountMetric(record.event_count ?? record.events_count ?? record.eventCount) ??
+      parseCountMetric(record.events ?? record.event_list ?? record.eventList),
+    sourceCount:
+      parseCountMetric(record.source_count ?? record.sources_count ?? record.sourceCount) ??
+      parseCountMetric(record.sources ?? record.source_list ?? record.sourceList),
+    componentCount:
+      parseCountMetric(record.component_count ?? record.components_count ?? record.componentCount) ??
+      parseCountMetric(record.components ?? record.component_list ?? record.componentList)
+  };
+}
+
+function parseStageSpans(value: unknown): ResearchTier2StageSpan[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => parseStageSpan(item))
+      .filter((item): item is ResearchTier2StageSpan => Boolean(item));
+  }
+
+  const direct = parseStageSpan(value);
+  if (direct) return [direct];
+
+  const record = asRecord(value);
+  if (!record) return [];
+
+  const nested =
+    record.stage_spans ??
+    record.stageSpans ??
+    record.items ??
+    record.spans ??
+    record.stages;
+  if (nested !== undefined && nested !== value) {
+    return parseStageSpans(nested);
+  }
+
+  return Object.entries(record).flatMap(([stage, raw]) => {
+    const normalizedKey = stage.trim().toLowerCase();
+    if (
+      !normalizedKey ||
+      normalizedKey === "total" ||
+      normalizedKey === "count" ||
+      normalizedKey === "summary" ||
+      normalizedKey === "metadata" ||
+      normalizedKey === "meta" ||
+      normalizedKey.endsWith("_count") ||
+      normalizedKey.endsWith("_ms")
+    ) {
+      return [];
+    }
+    const parsed = parseStageSpan(raw, stage);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function dedupeStageSpans(items: ResearchTier2StageSpan[]): ResearchTier2StageSpan[] {
+  const seen = new Set<string>();
+  const results: ResearchTier2StageSpan[] = [];
+
+  items.forEach((item) => {
+    const key = [
+      item.stage,
+      item.status ?? "",
+      item.start ?? "",
+      item.end ?? "",
+      String(item.durationMs ?? ""),
+      String(item.eventCount ?? ""),
+      String(item.sourceCount ?? ""),
+      String(item.componentCount ?? "")
+    ].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(item);
+  });
+
+  return results;
+}
+
+function pickStageSpansPayload(
+  data: ResearchTier2RawResponse,
+  metadata: Record<string, unknown>,
+  telemetryRecord: Record<string, unknown> | null
+): unknown {
+  const dataRecord = asRecord(data);
+  const dataTrace = asRecord(dataRecord?.trace);
+  const metadataTrace = asRecord(metadata.trace);
+  const telemetryTrace = asRecord(telemetryRecord?.trace);
+
+  const candidates = [
+    dataRecord?.stage_spans,
+    dataRecord?.stageSpans,
+    telemetryRecord?.stage_spans,
+    telemetryRecord?.stageSpans,
+    metadata.stage_spans,
+    metadata.stageSpans,
+    dataTrace?.stage_spans,
+    dataTrace?.stageSpans,
+    telemetryTrace?.stage_spans,
+    telemetryTrace?.stageSpans,
+    metadataTrace?.stage_spans,
+    metadataTrace?.stageSpans
+  ];
+
+  const preferred = candidates.find((item) => item !== undefined && item !== null);
+  if (preferred !== undefined) return preferred;
+
+  return pickFromRecords([telemetryRecord, metadata, dataRecord], ["stage_spans", "stageSpans"]);
 }
 
 function parseIndexSummary(value: unknown): ResearchTier2IndexSummary {
@@ -2284,6 +2503,9 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
       "contradictionSummary"
     ])
   );
+  const stageSpans = dedupeStageSpans(
+    parseStageSpans(pickStageSpansPayload(data, metadata, telemetryRecord))
+  );
   const traceMetadata = parseTraceMetadataFromRecords(telemetryRecords);
   const errors = uniqueText([
     ...parseTelemetryErrors(
@@ -2322,6 +2544,7 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
     sourceReasoning,
     verificationMatrix,
     contradictionSummary,
+    stageSpans,
     traceMetadata,
     errors,
     fallbackInfo

@@ -18,11 +18,75 @@ function formatTraceValue(value: string | number | boolean): string {
   return value.length > 56 ? `${value.slice(0, 56)}...` : value;
 }
 
+function getTraceMetadataValue(
+  metadata: ResearchTier2Telemetry["traceMetadata"],
+  candidates: string[]
+): string | number | boolean | undefined {
+  if (!metadata) return undefined;
+  const entries = Object.entries(metadata);
+  const normalizedCandidates = candidates.map((item) => item.toLowerCase());
+
+  for (const [key, value] of entries) {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedCandidates.some(
+        (candidate) => normalizedKey === candidate || normalizedKey.endsWith(`.${candidate}`)
+      )
+    ) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function parseTimestampForSort(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export default function TelemetryDetailsPanel({
   telemetry,
   isProcessing
 }: TelemetryDetailsPanelProps) {
   const traceEntries = Object.entries(telemetry.traceMetadata ?? {});
+  const traceRuntime = {
+    traceId: getTraceMetadataValue(telemetry.traceMetadata, [
+      "trace_id",
+      "traceid",
+      "trace-id",
+      "traceparent"
+    ]),
+    runId: getTraceMetadataValue(telemetry.traceMetadata, [
+      "run_id",
+      "runid",
+      "execution_run_id"
+    ]),
+    service: getTraceMetadataValue(telemetry.traceMetadata, [
+      "service_name",
+      "service",
+      "service.name"
+    ]),
+    component: getTraceMetadataValue(telemetry.traceMetadata, [
+      "component",
+      "component_name",
+      "component.name"
+    ])
+  };
+  const hasTraceRuntime =
+    traceRuntime.traceId !== undefined ||
+    traceRuntime.runId !== undefined ||
+    traceRuntime.service !== undefined ||
+    traceRuntime.component !== undefined;
+  const stageSpans = [...(telemetry.stageSpans ?? [])].sort((left, right) => {
+    const leftStart = parseTimestampForSort(left.start);
+    const rightStart = parseTimestampForSort(right.start);
+    if (leftStart !== undefined && rightStart !== undefined) return leftStart - rightStart;
+    if (leftStart !== undefined) return -1;
+    if (rightStart !== undefined) return 1;
+    return 0;
+  });
   const contradictionSummary = telemetry.contradictionSummary;
   const hasContradictionSummary =
     contradictionSummary?.hasContradiction !== undefined ||
@@ -39,6 +103,7 @@ export default function TelemetryDetailsPanel({
     telemetry.sourceReasoning.length > 0 ||
     telemetry.verificationMatrix.length > 0 ||
     hasContradictionSummary ||
+    stageSpans.length > 0 ||
     traceEntries.length > 0 ||
     telemetry.errors.length > 0;
 
@@ -351,6 +416,76 @@ export default function TelemetryDetailsPanel({
                 {item.score !== undefined ? ` · score ${formatScore(item.score)}` : ""}
                 {item.reasoning ? ` · ${item.reasoning}` : ""}
                 {item.error ? ` · error ${item.error}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {hasTraceRuntime ? (
+        <div className="mt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+            Trace Runtime
+          </p>
+          <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800/75 dark:text-slate-200">
+            {traceRuntime.traceId !== undefined ? (
+              <p>
+                trace_id: <span className="font-medium">{formatTraceValue(traceRuntime.traceId)}</span>
+              </p>
+            ) : null}
+            {traceRuntime.runId !== undefined ? (
+              <p>
+                run_id: <span className="font-medium">{formatTraceValue(traceRuntime.runId)}</span>
+              </p>
+            ) : null}
+            {traceRuntime.service !== undefined ? (
+              <p>
+                service: <span className="font-medium">{formatTraceValue(traceRuntime.service)}</span>
+              </p>
+            ) : null}
+            {traceRuntime.component !== undefined ? (
+              <p>
+                component: <span className="font-medium">{formatTraceValue(traceRuntime.component)}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {stageSpans.length ? (
+        <div className="mt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+            Stage Spans
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {stageSpans.slice(0, 20).map((span, index) => (
+              <li
+                key={`${span.stage}-${span.start ?? "na"}-${span.end ?? "na"}-${index}`}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800/75 dark:text-slate-200"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-semibold">{span.stage}</span>
+                  {span.status ? (
+                    <span className="rounded-full border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                      {span.status}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+                  duration_ms:{" "}
+                  <span className="font-medium">
+                    {span.durationMs !== undefined ? formatScore(span.durationMs) : "n/a"}
+                  </span>
+                  {span.eventCount !== undefined
+                    ? ` · event_count ${formatScore(span.eventCount)}`
+                    : ""}
+                  {span.sourceCount !== undefined
+                    ? ` · source_count ${formatScore(span.sourceCount)}`
+                    : ""}
+                  {span.componentCount !== undefined
+                    ? ` · component_count ${formatScore(span.componentCount)}`
+                    : ""}
+                </p>
               </li>
             ))}
           </ul>
