@@ -5,6 +5,7 @@ import {
   KnowledgeSource,
   ResearchFlowEvent,
   ResearchFlowStage,
+  ResearchTier2PolicyAction,
   ResearchTier2Telemetry,
   Tier2Citation,
   UploadedResearchFile
@@ -61,7 +62,7 @@ type ResearchRightRailProps = {
     selectedSourceCount: number;
     uploadedFileCount: number;
     flowMode: FlowTimelineMode;
-    policyAction?: "allow" | "warn";
+    policyAction?: ResearchTier2PolicyAction;
     fallbackUsed?: boolean;
     verificationVerdict?: string;
     verificationConfidence?: number;

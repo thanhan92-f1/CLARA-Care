@@ -1,3 +1,5 @@
+import { ResearchTier2PolicyAction } from "@/lib/research";
+
 type DebugHintsPanelProps = {
   enabled: boolean;
   roleLabel: string;
@@ -6,7 +8,7 @@ type DebugHintsPanelProps = {
   selectedSourceCount: number;
   uploadedFileCount: number;
   flowMode: "idle" | "flow-events" | "metadata-stages" | "local-fallback" | "server-await";
-  policyAction?: "allow" | "warn";
+  policyAction?: ResearchTier2PolicyAction;
   fallbackUsed?: boolean;
   verificationVerdict?: string;
   verificationConfidence?: number;

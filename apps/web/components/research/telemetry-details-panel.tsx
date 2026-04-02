@@ -46,6 +46,20 @@ function parseTimestampForSort(value?: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function supportStatusBadgeClass(status?: string): string {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (normalized === "supported") {
+    return "border-emerald-300 bg-emerald-100 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
+  }
+  if (normalized === "contradicted") {
+    return "border-rose-300 bg-rose-100 text-rose-700 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-300";
+  }
+  if (normalized === "insufficient" || normalized === "unsupported") {
+    return "border-amber-300 bg-amber-100 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
+  }
+  return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300";
+}
+
 export default function TelemetryDetailsPanel({
   telemetry,
   isProcessing
@@ -94,6 +108,8 @@ export default function TelemetryDetailsPanel({
     Boolean(contradictionSummary?.severity) ||
     Boolean(contradictionSummary?.status) ||
     Boolean(contradictionSummary?.summary);
+  const safetyOverride = telemetry.safetyOverride;
+  const hasSafetyOverride = Boolean(safetyOverride?.applied || safetyOverride?.reason || safetyOverride?.note);
   const hasData =
     telemetry.keywords.length > 0 ||
     telemetry.searchPlan.subqueries.length > 0 ||
@@ -102,6 +118,7 @@ export default function TelemetryDetailsPanel({
     telemetry.scores.length > 0 ||
     telemetry.sourceReasoning.length > 0 ||
     telemetry.verificationMatrix.length > 0 ||
+    hasSafetyOverride ||
     hasContradictionSummary ||
     stageSpans.length > 0 ||
     traceEntries.length > 0 ||
@@ -219,23 +236,65 @@ export default function TelemetryDetailsPanel({
         </div>
       ) : null}
 
-      {(telemetry.verificationMatrix.length || hasContradictionSummary) ? (
+      {(telemetry.verificationMatrix.length || hasContradictionSummary || hasSafetyOverride) ? (
         <div className="mt-3 space-y-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
             Verification
           </p>
+          {hasSafetyOverride && safetyOverride ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50/80 px-2 py-2 text-xs text-rose-800 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200">
+              <p className="font-semibold">Safety Override</p>
+              <p className="mt-1">
+                applied: {String(Boolean(safetyOverride.applied))}
+                {safetyOverride.policyAction ? ` · policy_action ${safetyOverride.policyAction}` : ""}
+                {safetyOverride.verificationState ? ` · state ${safetyOverride.verificationState}` : ""}
+                {safetyOverride.affectedClaimCount !== undefined
+                  ? ` · affected_claims ${formatScore(safetyOverride.affectedClaimCount)}`
+                  : ""}
+              </p>
+              {safetyOverride.reason ? <p className="mt-1 text-[11px]">reason: {safetyOverride.reason}</p> : null}
+              {safetyOverride.note ? <p className="mt-1 text-[11px]">{safetyOverride.note}</p> : null}
+              {safetyOverride.claims.length ? (
+                <p className="mt-1 text-[11px]">claims: {safetyOverride.claims.slice(0, 5).join(" | ")}</p>
+              ) : null}
+            </div>
+          ) : null}
           {telemetry.verificationMatrix.length ? (
             <ul className="space-y-1.5">
               {telemetry.verificationMatrix.slice(0, 8).map((item, index) => (
                 <li
-                  key={`${item.claim}-${item.verdict ?? "na"}-${index}`}
+                  key={`${item.claim}-${item.supportStatus ?? item.verdict ?? "na"}-${index}`}
                   className="rounded-xl border border-amber-200 bg-amber-50/70 px-2 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
                 >
-                  <p className="font-semibold">{item.claim}</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="font-semibold">{item.claim}</p>
+                    {(item.supportStatus || item.verdict) ? (
+                      <span
+                        className={[
+                          "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold",
+                          supportStatusBadgeClass(item.supportStatus ?? item.verdict)
+                        ].join(" ")}
+                      >
+                        {item.supportStatus ?? item.verdict}
+                      </span>
+                    ) : null}
+                    {item.claimType ? (
+                      <span className="rounded-full border border-indigo-300 bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+                        {item.claimType}
+                      </span>
+                    ) : null}
+                    {item.severity ? (
+                      <span className="rounded-full border border-rose-300 bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                        {item.severity}
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="mt-1">
                     {item.verdict ? `verdict: ${item.verdict}` : "verdict: n/a"}
                     {item.confidence !== undefined ? ` · conf ${formatScore(item.confidence)}` : ""}
+                    {item.overlapScore !== undefined ? ` · overlap ${formatScore(item.overlapScore)}` : ""}
                     {item.evidence.length ? ` · evidence ${item.evidence.length}` : ""}
+                    {item.evidenceRef ? ` · ref ${item.evidenceRef}` : ""}
                     {item.source ? ` · source ${item.source}` : ""}
                   </p>
                   {item.note ? <p className="mt-1 text-[11px]">{item.note}</p> : null}
@@ -314,6 +373,15 @@ export default function TelemetryDetailsPanel({
             ) : null}
             {telemetry.indexSummary.durationMs !== undefined ? (
               <p>duration_ms: {formatScore(telemetry.indexSummary.durationMs)}</p>
+            ) : null}
+            {telemetry.indexSummary.rerankLatencyMs !== undefined ? (
+              <p>rerank_latency_ms: {formatScore(telemetry.indexSummary.rerankLatencyMs)}</p>
+            ) : null}
+            {telemetry.indexSummary.rerankTopN !== undefined ? (
+              <p>rerank_topn: {formatScore(telemetry.indexSummary.rerankTopN)}</p>
+            ) : null}
+            {telemetry.indexSummary.rerankModel ? (
+              <p>rerank_model: {telemetry.indexSummary.rerankModel}</p>
             ) : null}
             {telemetry.indexSummary.sourceCounts &&
             Object.keys(telemetry.indexSummary.sourceCounts).length ? (

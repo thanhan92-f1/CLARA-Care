@@ -50,6 +50,8 @@ export type ResearchFlowEvent = {
   payload?: Record<string, unknown>;
 };
 
+export type ResearchTier2PolicyAction = "allow" | "warn" | "block" | "escalate";
+
 export type ResearchTier2RoutingHint = {
   role?: string;
   intent?: string;
@@ -100,7 +102,12 @@ export type ResearchTier2SourceReasoning = {
 export type ResearchTier2VerificationMatrixEntry = {
   claim: string;
   verdict?: string;
+  supportStatus?: string;
+  claimType?: string;
+  severity?: string;
   confidence?: number;
+  overlapScore?: number;
+  evidenceRef?: string;
   note?: string;
   source?: string;
   evidence: string[];
@@ -126,6 +133,16 @@ export type ResearchTier2StageSpan = {
   eventCount?: number;
   sourceCount?: number;
   componentCount?: number;
+};
+
+export type ResearchTier2SafetyOverride = {
+  applied: boolean;
+  policyAction?: ResearchTier2PolicyAction;
+  verificationState?: string;
+  reason?: string;
+  note?: string;
+  affectedClaimCount?: number;
+  claims: string[];
 };
 
 export type ResearchTier2SearchPlan = {
@@ -157,6 +174,9 @@ export type ResearchTier2IndexSummary = {
   afterDedupe?: number;
   selectedCount?: number;
   durationMs?: number;
+  rerankLatencyMs?: number;
+  rerankTopN?: number;
+  rerankModel?: string;
 };
 
 export type ResearchTier2CrawlSummary = {
@@ -177,6 +197,7 @@ export type ResearchTier2Telemetry = {
   scores: ResearchTier2TelemetryScore[];
   sourceReasoning: ResearchTier2SourceReasoning[];
   verificationMatrix: ResearchTier2VerificationMatrixEntry[];
+  safetyOverride?: ResearchTier2SafetyOverride;
   contradictionSummary?: ResearchTier2ContradictionSummary;
   stageSpans?: ResearchTier2StageSpan[];
   traceMetadata: ResearchTier2TraceMetadata;
@@ -268,7 +289,7 @@ export type ResearchTier2Result = {
     note?: string;
     evidenceCount?: number;
   };
-  policyAction?: "allow" | "warn";
+  policyAction?: ResearchTier2PolicyAction;
   fallbackUsed?: boolean;
   researchMode?: string;
   retrievalStackMode?: ResearchRetrievalStackMode;
@@ -1399,14 +1420,38 @@ function parseVerificationMatrixEntry(value: unknown): ResearchTier2Verification
     asText(row.title);
   const verdict =
     asText(row.verdict) ??
+    asText(row.support_status) ??
+    asText(row.supportStatus) ??
     asText(row.status) ??
     asText(row.result) ??
     asText(row.label);
+  let supportStatus =
+    asText(row.support_status) ??
+    asText(row.supportStatus);
+  if (
+    !supportStatus &&
+    verdict &&
+    ["supported", "unsupported", "insufficient", "contradicted"].includes(
+      verdict.toLowerCase()
+    )
+  ) {
+    supportStatus = verdict;
+  }
+  const claimType =
+    asText(row.claim_type) ??
+    asText(row.claimType);
+  const severity = asText(row.severity);
   const confidence =
     asNumber(row.confidence) ??
     asNumber(row.score) ??
     asNumber(row.support_score) ??
     asNumber(row.probability);
+  const overlapScore =
+    asNumber(row.overlap_score) ??
+    asNumber(row.overlapScore);
+  const evidenceRef =
+    asText(row.evidence_ref) ??
+    asText(row.evidenceRef);
   const note =
     asText(row.note) ??
     asText(row.reasoning) ??
@@ -1434,7 +1479,12 @@ function parseVerificationMatrixEntry(value: unknown): ResearchTier2Verification
   return {
     claim: resolvedClaim ?? "Claim",
     verdict,
+    supportStatus,
+    claimType,
+    severity,
     confidence,
+    overlapScore,
+    evidenceRef,
     note,
     source,
     evidence
@@ -1477,13 +1527,61 @@ function dedupeVerificationMatrix(
   const results: ResearchTier2VerificationMatrixEntry[] = [];
 
   items.forEach((item) => {
-    const key = `${item.claim}|${item.verdict ?? ""}|${item.confidence ?? ""}`;
+    const key = [
+      item.claim,
+      item.verdict ?? "",
+      item.supportStatus ?? "",
+      item.claimType ?? "",
+      String(item.confidence ?? "")
+    ].join("|");
     if (seen.has(key)) return;
     seen.add(key);
     results.push(item);
   });
 
   return results;
+}
+
+function parseSafetyOverride(value: unknown): ResearchTier2SafetyOverride | undefined {
+  const row = asRecord(value);
+  if (!row) return undefined;
+
+  const applied = asBoolean(row.applied);
+  const policyActionRaw = (
+    asText(row.policy_action) ??
+    asText(row.policyAction)
+  )?.toLowerCase();
+  const policyAction =
+    policyActionRaw === "allow" ||
+    policyActionRaw === "warn" ||
+    policyActionRaw === "block" ||
+    policyActionRaw === "escalate"
+      ? policyActionRaw
+      : undefined;
+
+  const claims = parseKeywordList(row.claims ?? row.claim_list ?? row.claimList);
+  const hasSignal =
+    applied !== undefined ||
+    Boolean(policyAction) ||
+    Boolean(asText(row.reason)) ||
+    Boolean(asText(row.note)) ||
+    asNumber(row.affected_claim_count ?? row.affectedClaimCount) !== undefined ||
+    claims.length > 0;
+  if (!hasSignal) return undefined;
+
+  return {
+    applied: applied ?? false,
+    policyAction,
+    verificationState:
+      asText(row.verification_state) ??
+      asText(row.verificationState),
+    reason: asText(row.reason),
+    note: asText(row.note),
+    affectedClaimCount:
+      asNumber(row.affected_claim_count) ??
+      asNumber(row.affectedClaimCount),
+    claims
+  };
 }
 
 function parseContradictionSummary(value: unknown): ResearchTier2ContradictionSummary | undefined {
@@ -1991,7 +2089,15 @@ function parseIndexSummary(value: unknown): ResearchTier2IndexSummary {
       asNumber(item.selected_count) ??
       asNumber(item.selected_documents_count) ??
       asNumber(item.selectedCount),
-    durationMs: asNumber(item.duration_ms) ?? asNumber(item.durationMs)
+    durationMs: asNumber(item.duration_ms) ?? asNumber(item.durationMs),
+    rerankLatencyMs:
+      asNumber(item.rerank_latency_ms) ??
+      asNumber(item.rerankLatencyMs),
+    rerankTopN:
+      asNumber(item.rerank_topn) ??
+      asNumber(item.rerank_top_n) ??
+      asNumber(item.rerankTopN),
+    rerankModel: asText(item.rerank_model) ?? asText(item.rerankModel)
   };
 }
 
@@ -2498,16 +2604,21 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
   const sourceReasoningErrors = sourceReasoning
     .map((item) => item.error)
     .filter((item): item is string => Boolean(item));
+  const verificationPayload = pickFromRecords(telemetryRecords, [
+    "verification_matrix",
+    "claim_verification_matrix",
+    "claim_matrix",
+    "claims_matrix",
+    "verificationMatrix",
+    "claimMatrix"
+  ]);
   const verificationMatrix = dedupeVerificationMatrix(
-    parseVerificationMatrix(
-      pickFromRecords(telemetryRecords, [
-        "verification_matrix",
-        "claim_verification_matrix",
-        "claim_matrix",
-        "claims_matrix",
-        "verificationMatrix",
-        "claimMatrix"
-      ])
+    parseVerificationMatrix(verificationPayload)
+  );
+  const safetyOverride = parseSafetyOverride(
+    pickFromRecords(
+      [asRecord(verificationPayload), ...telemetryRecords],
+      ["safety_override", "safetyOverride"]
     )
   );
   const contradictionSummary = parseContradictionSummary(
@@ -2559,6 +2670,7 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
     scores,
     sourceReasoning,
     verificationMatrix,
+    safetyOverride,
     contradictionSummary,
     stageSpans,
     traceMetadata,
@@ -2601,8 +2713,17 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
         detail: stage.detail
       }));
   const verification = asRecord(metadata.verification_status);
-  const rawPolicy = (asText(metadata.policy_action) ?? asText(data.policy_action))?.toLowerCase();
-  const policyAction = rawPolicy === "warn" ? "warn" : rawPolicy === "allow" ? "allow" : undefined;
+  const rawPolicy = (
+    asText(metadata.policy_action) ??
+    asText((data as Record<string, unknown>).policy_action)
+  )?.toLowerCase();
+  const policyAction =
+    rawPolicy === "allow" ||
+    rawPolicy === "warn" ||
+    rawPolicy === "block" ||
+    rawPolicy === "escalate"
+      ? rawPolicy
+      : undefined;
   const fallbackUsed =
     typeof metadata.fallback_used === "boolean"
       ? metadata.fallback_used

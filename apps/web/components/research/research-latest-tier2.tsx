@@ -20,7 +20,10 @@ function resolveResearchMode(result: ResearchTier2Result): string {
   return mode || "unknown";
 }
 
-function policyBadge(action?: "allow" | "warn"): { label: string; className: string } {
+function policyBadge(action?: "allow" | "warn" | "block" | "escalate"): {
+  label: string;
+  className: string;
+} {
   if (action === "warn") {
     return {
       label: "Policy: warn",
@@ -33,6 +36,20 @@ function policyBadge(action?: "allow" | "warn"): { label: string; className: str
       label: "Policy: allow",
       className:
         "border-emerald-300/55 bg-emerald-100/80 text-emerald-800 dark:border-emerald-700/45 dark:bg-emerald-950/45 dark:text-emerald-200"
+    };
+  }
+  if (action === "block") {
+    return {
+      label: "Policy: block",
+      className:
+        "border-rose-300/55 bg-rose-100/80 text-rose-800 dark:border-rose-700/45 dark:bg-rose-950/45 dark:text-rose-200"
+    };
+  }
+  if (action === "escalate") {
+    return {
+      label: "Policy: escalate",
+      className:
+        "border-indigo-300/55 bg-indigo-100/80 text-indigo-800 dark:border-indigo-700/45 dark:bg-indigo-950/45 dark:text-indigo-200"
     };
   }
   return {
