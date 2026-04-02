@@ -8,6 +8,7 @@ import AdminFlowVisualizer, {
   FLOW_NODE_INFOS,
   type FlowNodeId
 } from "@/components/admin/admin-flow-visualizer";
+import CouncilFlowCanvas from "@/components/council/council-flow-canvas";
 import useControlTowerConfig from "@/components/admin/use-control-tower-config";
 
 function toNumber(value: string): number {
@@ -65,6 +66,17 @@ export default function AdminAnswerFlowPanel() {
     const next = Math.max(0, Math.min(1, lowContextThreshold + 0.15));
     setDebugLowContextScore(next);
   }, [lowContextThreshold]);
+
+  const councilNeedsMoreInfo =
+    typeof lowContextThreshold === "number" ? debugLowContextScore >= lowContextThreshold : false;
+  const councilHasCitations =
+    Boolean(config?.rag_flow.verification_enabled) &&
+    Boolean(
+      config?.rag_flow.scientific_retrieval_enabled ||
+      config?.rag_flow.web_retrieval_enabled ||
+      config?.rag_flow.file_retrieval_enabled
+    );
+  const councilConfidenceScore = Number(Math.max(0.12, Math.min(0.98, 1 - debugLowContextScore * 0.7)).toFixed(2));
 
   return (
     <div className="space-y-4">
@@ -240,6 +252,22 @@ export default function AdminAnswerFlowPanel() {
       </section>
 
       <AdminFlowRuntimePanel />
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Council Flow</p>
+        <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Sơ đồ hội chẩn ở phần quản trị</h3>
+        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+          Flow canvas được chuyển vào Admin. Trạng thái `needs_more_info` dùng debug score hiện tại để mô phỏng nhanh.
+        </p>
+        <div className="mt-3">
+          <CouncilFlowCanvas
+            isEmergency={false}
+            needsMoreInfo={councilNeedsMoreInfo}
+            hasCitations={councilHasCitations}
+            confidenceScore={councilConfidenceScore}
+          />
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85">
         <div className="flex items-center justify-between">
