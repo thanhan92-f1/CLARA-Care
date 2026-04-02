@@ -1200,6 +1200,66 @@ def _build_contradiction_summary(
     }
 
 
+_SAFETY_CRITICAL_CLAIM_TYPES = {"dosage", "contraindication"}
+_SAFETY_CRITICAL_RISK_STATUSES = {"insufficient", "unsupported", "contradicted"}
+
+
+def _evaluate_safety_critical_override(
+    *,
+    rows: list[dict[str, Any]],
+    nli_enabled: bool,
+) -> dict[str, Any]:
+    if not nli_enabled:
+        return {"applied": False, "reason": "nli_disabled"}
+
+    critical_rows: list[dict[str, Any]] = []
+    contradicted_rows: list[dict[str, Any]] = []
+    insufficient_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        claim_type = str(row.get("claim_type") or "").strip().lower()
+        support_status = str(row.get("support_status") or "").strip().lower()
+        if claim_type not in _SAFETY_CRITICAL_CLAIM_TYPES:
+            continue
+        if support_status not in _SAFETY_CRITICAL_RISK_STATUSES:
+            continue
+        critical_rows.append(row)
+        if support_status == "contradicted":
+            contradicted_rows.append(row)
+        else:
+            insufficient_rows.append(row)
+
+    if not critical_rows:
+        return {"applied": False, "reason": "no_safety_critical_risk"}
+
+    top_claims = [str(item.get("claim") or "") for item in critical_rows[:5]]
+    base_payload = {
+        "applied": True,
+        "affected_claim_count": len(critical_rows),
+        "claims": top_claims,
+    }
+    if contradicted_rows:
+        return {
+            **base_payload,
+            "policy_action": "block",
+            "verification_state": "warning",
+            "severity_override": "high",
+            "reason": "safety_critical_contradicted",
+            "note": "Safety override: claim safety-critical bị contradicted, policy chuyển block.",
+            "status": "blocked",
+        }
+    return {
+        **base_payload,
+        "policy_action": "warn",
+        "verification_state": "warning",
+        "severity_override": "high",
+        "reason": "safety_critical_insufficient",
+        "note": "Safety override: claim safety-critical ở trạng thái insufficient, policy chuyển warn.",
+        "status": "warning",
+    }
+
+
 def _context_title(item: dict[str, Any], fallback: str) -> str:
     explicit = _first_nonempty_text(
         item.get("title"),
@@ -3279,6 +3339,36 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "summary": verification_matrix_summary,
         "contradiction_summary": contradiction_summary,
     }
+    safety_override = _evaluate_safety_critical_override(
+        rows=verification_matrix_rows,
+        nli_enabled=bool(settings.rag_nli_enabled),
+    )
+    if bool(safety_override.get("applied")):
+        policy_action = str(safety_override.get("policy_action") or policy_action)
+        verification_state = str(safety_override.get("verification_state") or verification_state)
+        severity_override = str(safety_override.get("severity_override") or "").strip().lower()
+        if severity_override:
+            factcheck_result.severity = severity_override
+        flow_events.append(
+            _event(
+                stage="safety_override",
+                status=str(safety_override.get("status") or "warning"),
+                source_count=_safe_int(safety_override.get("affected_claim_count"), 0),
+                note=str(safety_override.get("note") or "Safety override applied."),
+                component="policy",
+                payload={
+                    "reason": safety_override.get("reason"),
+                    "policy_action": policy_action,
+                    "verification_state": verification_state,
+                    "claims": safety_override.get("claims", []),
+                    "affected_claim_count": _safe_int(
+                        safety_override.get("affected_claim_count"),
+                        0,
+                    ),
+                },
+            )
+        )
+    verification_matrix_payload["safety_override"] = safety_override
     verifier_trace = _build_verifier_trace(
         factcheck_result=factcheck_result,
         policy_action=policy_action,
@@ -3298,6 +3388,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "verification_matrix": {
             "summary": verification_matrix_summary,
             "contradiction_summary": contradiction_summary,
+            "safety_override": safety_override,
         },
     }
     if research_mode == "deep_beta":

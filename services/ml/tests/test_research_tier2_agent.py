@@ -1108,6 +1108,152 @@ def test_run_research_tier2_emits_contradiction_miner_and_verification_matrix(mo
     assert "summary" in matrix_event["payload"]
 
 
+def test_run_research_tier2_applies_safety_override_warn_for_insufficient(monkeypatch):
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        return RagResult(
+            query=query,
+            retrieved_ids=["doc-safe-1"],
+            answer="Khuyen nghi an toan.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "doc-safe-1",
+                    "source": "pubmed",
+                    "title": "Safety note",
+                    "text": "Can can nhac can than trong mot so tinh huong.",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/10000009/",
+                    "score": 0.8,
+                }
+            ],
+            context_debug={"relevance": 0.6, "retrieval_trace": {"index_summary": {"selected_count": 1}}},
+            flow_events=[],
+            trace={"retrieval": {"source_attempts": [{"provider": "pubmed"}]}},
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]):  # noqa: ARG001
+        return SimpleNamespace(
+            enabled=True,
+            stage="fides-lite-v1.2",
+            verdict="pass",
+            confidence=0.83,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            severity="low",
+            note="OK",
+            verification_matrix=[
+                {
+                    "claim": "Nen dung 2 vien moi lan.",
+                    "claim_type": "dosage",
+                    "support_status": "insufficient",
+                    "confidence": 0.22,
+                    "overlap_score": 0.11,
+                    "evidence_ref": None,
+                    "evidence_snippet": "",
+                    "rationale": "Thieu evidence cho dosage claim",
+                }
+            ],
+            contradiction_summary={"version": "claim-v2-nli", "has_contradiction": False, "contradiction_count": 0},
+        )
+
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": "Huong dan lieu dung warfarin",
+            "research_mode": "fast",
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert result.get("policy_action") == "warn"
+    matrix = result.get("verification_matrix", {})
+    assert isinstance(matrix, dict)
+    override = matrix.get("safety_override", {})
+    assert isinstance(override, dict)
+    assert override.get("applied") is True
+    assert override.get("reason") == "safety_critical_insufficient"
+    assert any(
+        event.get("stage") == "safety_override" and event.get("status") == "warning"
+        for event in result.get("flow_events", [])
+    )
+
+
+def test_run_research_tier2_applies_safety_override_block_for_contradicted(monkeypatch):
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        return RagResult(
+            query=query,
+            retrieved_ids=["doc-safe-2"],
+            answer="Khuyen nghi an toan.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "doc-safe-2",
+                    "source": "pubmed",
+                    "title": "Contraindication note",
+                    "text": "Chong chi dinh su dung chung trong truong hop nay.",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/10000010/",
+                    "score": 0.82,
+                }
+            ],
+            context_debug={"relevance": 0.66, "retrieval_trace": {"index_summary": {"selected_count": 1}}},
+            flow_events=[],
+            trace={"retrieval": {"source_attempts": [{"provider": "pubmed"}]}},
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]):  # noqa: ARG001
+        return SimpleNamespace(
+            enabled=True,
+            stage="fides-lite-v1.2",
+            verdict="pass",
+            confidence=0.84,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            severity="low",
+            note="OK",
+            verification_matrix=[
+                {
+                    "claim": "Khong co chong chi dinh voi benh nen nay.",
+                    "claim_type": "contraindication",
+                    "support_status": "contradicted",
+                    "confidence": 0.72,
+                    "overlap_score": 0.41,
+                    "evidence_ref": "doc-safe-2",
+                    "evidence_snippet": "Chong chi dinh su dung chung",
+                    "rationale": "Claim mâu thuẫn với evidence",
+                }
+            ],
+            contradiction_summary={"version": "claim-v2-nli", "has_contradiction": True, "contradiction_count": 1},
+        )
+
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": "Chong chi dinh warfarin voi benh nen",
+            "research_mode": "fast",
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert result.get("policy_action") == "block"
+    matrix = result.get("verification_matrix", {})
+    assert isinstance(matrix, dict)
+    override = matrix.get("safety_override", {})
+    assert isinstance(override, dict)
+    assert override.get("applied") is True
+    assert override.get("reason") == "safety_critical_contradicted"
+    assert any(
+        event.get("stage") == "safety_override" and event.get("status") == "blocked"
+        for event in result.get("flow_events", [])
+    )
+
+
 def test_normalize_research_mode_supports_deep_beta_aliases():
     assert tier2._normalize_research_mode({"research_mode": "deep_beta"}) == "deep_beta"
     assert tier2._normalize_research_mode({"research_mode": "deep-beta"}) == "deep_beta"
