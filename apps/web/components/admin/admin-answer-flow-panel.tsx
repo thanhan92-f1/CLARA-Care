@@ -8,6 +8,7 @@ import AdminFlowVisualizer, {
   FLOW_NODE_INFOS,
   type FlowNodeId
 } from "@/components/admin/admin-flow-visualizer";
+import AdminNeuralNetworkVisualizer from "@/components/admin/admin-neural-network-visualizer";
 import CouncilFlowCanvas from "@/components/council/council-flow-canvas";
 import useControlTowerConfig from "@/components/admin/use-control-tower-config";
 
@@ -253,6 +254,8 @@ export default function AdminAnswerFlowPanel() {
       </section>
 
       <AdminFlowRuntimePanel />
+
+      <AdminNeuralNetworkVisualizer ragFlow={config?.rag_flow} />
 
       <section className="rounded-2xl border border-cyan-200/60 bg-white/78 p-4 shadow-[0_16px_42px_rgba(14,116,144,0.14)] backdrop-blur dark:border-cyan-700/35 dark:bg-slate-900/80 dark:shadow-[0_20px_48px_rgba(2,6,23,0.74)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Council Flow</p>

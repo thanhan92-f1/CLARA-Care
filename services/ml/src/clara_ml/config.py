@@ -257,6 +257,22 @@ class Settings(BaseSettings):
         ge=50,
         le=30000,
     )
+    rag_nli_enabled: bool = Field(
+        default=True,
+        validation_alias="RAG_NLI_ENABLED",
+    )
+    rag_nli_timeout_ms: int = Field(
+        default=180,
+        validation_alias="RAG_NLI_TIMEOUT_MS",
+        ge=50,
+        le=30000,
+    )
+    rag_nli_min_confidence: float = Field(
+        default=0.35,
+        validation_alias="RAG_NLI_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
     rag_biomedical_rerank_alpha: float = Field(
         default=0.28,
         validation_alias="RAG_BIOMEDICAL_RERANK_ALPHA",

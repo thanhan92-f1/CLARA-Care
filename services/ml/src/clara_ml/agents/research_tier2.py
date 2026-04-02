@@ -1077,11 +1077,13 @@ def _compact_verification_matrix_rows(
     for row in rows[:max_items]:
         if not isinstance(row, dict):
             continue
-        support_status = str(row.get("support_status") or "unsupported").strip().lower()
+        raw_status = str(row.get("support_status") or "insufficient").strip().lower()
+        support_status = "insufficient" if raw_status == "unsupported" else raw_status
         compact_rows.append(
             {
                 "claim": _first_nonempty_text(row.get("claim")),
-                "support_status": support_status or "unsupported",
+                "claim_type": _first_nonempty_text(row.get("claim_type")) or "general",
+                "support_status": support_status or "insufficient",
                 "overlap_score": round(
                     max(0.0, min(1.0, _safe_float(row.get("overlap_score")))),
                     4,
@@ -1095,6 +1097,7 @@ def _compact_verification_matrix_rows(
                     row.get("evidence_snippet") or row.get("evidence"),
                     max_len=max_snippet_len,
                 ),
+                "rationale": _compact_snippet(row.get("rationale"), max_len=max_snippet_len),
             }
         )
     return compact_rows
@@ -1107,7 +1110,7 @@ def _summarize_verification_matrix(
     supported_claims: int,
 ) -> dict[str, Any]:
     supported_count = 0
-    unsupported_count = 0
+    insufficient_count = 0
     contradicted_count = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -1118,7 +1121,7 @@ def _summarize_verification_matrix(
         elif status == "contradicted":
             contradicted_count += 1
         else:
-            unsupported_count += 1
+            insufficient_count += 1
 
     inferred_total = max(_safe_int(total_claims, 0), len(rows))
     inferred_supported = _safe_int(supported_claims, 0)
@@ -1127,10 +1130,11 @@ def _summarize_verification_matrix(
     inferred_supported = max(0, min(inferred_supported, inferred_total))
     support_ratio = inferred_supported / max(inferred_total, 1) if inferred_total > 0 else 0.0
     return {
-        "version": "claim-v1",
+        "version": "claim-v2-nli",
         "total_claims": inferred_total,
         "supported_claims": inferred_supported,
-        "unsupported_claims": unsupported_count,
+        "insufficient_claims": insufficient_count,
+        "unsupported_claims": insufficient_count,
         "contradicted_claims": contradicted_count,
         "support_ratio": round(float(support_ratio), 4),
     }
@@ -1153,17 +1157,19 @@ def _build_contradiction_summary(
         else "Không phát hiện claim mâu thuẫn."
     )
     defaults = {
-        "version": "claim-v1",
+        "version": "claim-v2-nli",
         "has_contradiction": bool(contradicted_rows),
         "contradiction_count": len(contradicted_rows),
         "claims": [str(item.get("claim") or "") for item in contradicted_rows[:5]],
         "details": [
             {
                 "claim": item.get("claim", ""),
+                "claim_type": item.get("claim_type", "general"),
                 "evidence_ref": item.get("evidence_ref"),
                 "evidence_snippet": item.get("evidence_snippet", ""),
                 "overlap_score": item.get("overlap_score", 0.0),
                 "confidence": item.get("confidence", 0.0),
+                "rationale": item.get("rationale", ""),
             }
             for item in contradicted_rows[:5]
         ],
@@ -3268,7 +3274,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         fallback_note=factcheck_result.note if factcheck_result.verdict == "fail" else "",
     )
     verification_matrix_payload = {
-        "version": "claim-v1",
+        "version": str(verification_matrix_summary.get("version") or "claim-v2-nli"),
         "rows": verification_matrix_rows,
         "summary": verification_matrix_summary,
         "contradiction_summary": contradiction_summary,

@@ -11,9 +11,11 @@ def test_fides_lite_warns_when_no_evidence() -> None:
     assert result.evidence_count == 0
     assert len(result.verification_matrix) >= 1
     first_row = result.verification_matrix[0]
-    assert first_row["support_status"] == "unsupported"
+    assert first_row["support_status"] == "insufficient"
+    assert first_row["claim_type"] in {"interaction", "general", "dosage", "contraindication"}
     assert first_row["evidence_ref"] is None
     assert result.contradiction_summary["has_contradiction"] is False
+    assert result.fide_report["verification_matrix"]["summary"]["version"] == "claim-v2-nli"
 
 
 def test_fides_lite_passes_when_claim_matches_evidence() -> None:
@@ -34,10 +36,12 @@ def test_fides_lite_passes_when_claim_matches_evidence() -> None:
     first_row = result.verification_matrix[0]
     assert first_row["claim"]
     assert first_row["support_status"] == "supported"
+    assert first_row["claim_type"] in {"interaction", "general", "dosage", "contraindication"}
     assert first_row["overlap_score"] > 0
     assert first_row["confidence"] > 0
     assert first_row["evidence_ref"] == "doc-1"
     assert first_row["evidence_snippet"]
+    assert first_row["rationale"]
     assert result.contradiction_summary["has_contradiction"] is False
 
 
@@ -62,3 +66,4 @@ def test_fides_lite_detects_contradiction_and_exports_details() -> None:
     matrix_row = result.verification_matrix[0]
     assert matrix_row["support_status"] == "contradicted"
     assert matrix_row["evidence_ref"] == "doc-2"
+    assert matrix_row["rationale"]

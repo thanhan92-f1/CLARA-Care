@@ -4,6 +4,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from clara_ml.config import settings
+
+from .nli_verifier import (
+    build_contradiction_summary as build_nli_contradiction_summary,
+    summarize_verification_matrix as summarize_nli_matrix,
+    verify_claims,
+)
 
 @dataclass
 class FactCheckResult:
@@ -306,12 +313,26 @@ def _build_fide_report(
             "confidence": round(float(confidence), 4),
         },
         "verification_matrix": {
-            "version": "claim-v1",
+            "version": "claim-v2-nli",
             "summary": verification_matrix_summary,
             "rows": verification_matrix,
         },
         "contradiction_summary": contradiction_summary,
     }
+
+
+def _apply_nli_confidence_gate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    min_conf = max(0.0, min(1.0, float(settings.rag_nli_min_confidence)))
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row or {})
+        status = str(item.get("support_status") or "").strip().lower()
+        confidence = max(0.0, min(1.0, float(item.get("confidence") or 0.0)))
+        if status == "supported" and confidence < min_conf:
+            item["support_status"] = "insufficient"
+            item["rationale"] = "Confidence thấp hơn ngưỡng NLI, hạ xuống insufficient evidence."
+        normalized.append(item)
+    return normalized
 
 
 def run_fides_lite(
@@ -330,15 +351,11 @@ def run_fides_lite(
 
     if not claims:
         verification_matrix: list[dict[str, Any]] = []
-        verification_matrix_summary = _build_matrix_summary(
-            verification_matrix,
-            claims_count=0,
-            supported_claims=0,
-        )
-        contradiction_summary = _build_contradiction_summary(verification_matrix)
+        verification_matrix_summary = summarize_nli_matrix(rows=verification_matrix, total_claims=0)
+        contradiction_summary = build_nli_contradiction_summary(verification_matrix)
         return FactCheckResult(
             enabled=True,
-            stage="fides-lite-v1.1",
+            stage="fides-lite-v1.2",
             verdict="pass",
             confidence=0.55,
             supported_claims=0,
@@ -367,26 +384,16 @@ def run_fides_lite(
         )
 
     if not evidence_rows:
-        verification_matrix = [
-            {
-                "claim": claim,
-                "support_status": "unsupported",
-                "overlap_score": 0.0,
-                "confidence": _claim_confidence(overlap_ratio=0.0, support_status="unsupported"),
-                "evidence_ref": None,
-                "evidence_snippet": "",
-            }
-            for claim in claims
-        ]
-        verification_matrix_summary = _build_matrix_summary(
-            verification_matrix,
-            claims_count=len(claims),
-            supported_claims=0,
+        verdict_rows = verify_claims(claims=claims, evidence_rows=evidence_rows)
+        verification_matrix = _apply_nli_confidence_gate([item.as_dict() for item in verdict_rows])
+        verification_matrix_summary = summarize_nli_matrix(
+            rows=verification_matrix,
+            total_claims=len(claims),
         )
-        contradiction_summary = _build_contradiction_summary(verification_matrix)
+        contradiction_summary = build_nli_contradiction_summary(verification_matrix)
         return FactCheckResult(
             enabled=True,
-            stage="fides-lite-v1.1",
+            stage="fides-lite-v1.2",
             verdict="warn",
             confidence=0.35,
             supported_claims=0,
@@ -394,7 +401,7 @@ def run_fides_lite(
             unsupported_claims=claims[:3],
             evidence_count=0,
             severity="high",
-            note="Không có bằng chứng truy xuất để fact-check.",
+            note="Không có bằng chứng truy xuất để fact-check (insufficient evidence).",
             verification_matrix=verification_matrix,
             contradiction_summary=contradiction_summary,
             fide_report=_build_fide_report(
@@ -404,7 +411,7 @@ def run_fides_lite(
                 verdict="warn",
                 severity="high",
                 confidence=0.35,
-                note="Không có bằng chứng truy xuất để fact-check.",
+                note="Không có bằng chứng truy xuất để fact-check (insufficient evidence).",
                 unsupported_claims=claims[:3],
                 verification_matrix=verification_matrix,
                 verification_matrix_summary=verification_matrix_summary,
@@ -414,44 +421,25 @@ def run_fides_lite(
             ),
         )
 
-    supported_claims = 0
-    unsupported_claims: list[str] = []
-    contradicted_claims: list[str] = []
-    verification_matrix: list[dict[str, Any]] = []
-
-    for claim in claims:
-        ratio, matched_evidence = _best_overlap_match(claim, evidence_rows)
-        evidence_text = matched_evidence.get("text", "") if matched_evidence else ""
-        contradiction = _has_contradiction(claim, evidence_text, ratio)
-        if contradiction:
-            support_status = "contradicted"
-        elif ratio >= 0.2:
-            support_status = "supported"
-        else:
-            support_status = "unsupported"
-
-        if contradiction:
-            contradicted_claims.append(claim)
-        elif ratio >= 0.2:
-            supported_claims += 1
-        else:
-            unsupported_claims.append(claim)
-        verification_matrix.append(
-            {
-                "claim": claim,
-                "support_status": support_status,
-                "overlap_score": round(float(ratio), 4),
-                "confidence": _claim_confidence(overlap_ratio=ratio, support_status=support_status),
-                "evidence_ref": matched_evidence.get("ref") if matched_evidence and ratio > 0 else None,
-                "evidence_snippet": (
-                    _compact_snippet(evidence_text, max_len=180)
-                    if matched_evidence and ratio > 0
-                    else ""
-                ),
-            }
-        )
-
-    support_ratio = supported_claims / max(len(claims), 1)
+    verdict_rows = verify_claims(claims=claims, evidence_rows=evidence_rows)
+    verification_matrix = _apply_nli_confidence_gate([item.as_dict() for item in verdict_rows])
+    verification_matrix_summary = summarize_nli_matrix(
+        rows=verification_matrix,
+        total_claims=len(claims),
+    )
+    contradiction_summary = build_nli_contradiction_summary(verification_matrix)
+    supported_claims = int(verification_matrix_summary.get("supported_claims") or 0)
+    support_ratio = float(verification_matrix_summary.get("support_ratio") or 0.0)
+    insufficient_claims = [
+        str(item.get("claim") or "")
+        for item in verification_matrix
+        if str(item.get("support_status") or "").strip().lower() in {"insufficient", "unsupported"}
+    ]
+    contradicted_claims = [
+        str(item.get("claim") or "")
+        for item in verification_matrix
+        if str(item.get("support_status") or "").strip().lower() == "contradicted"
+    ]
     citation_present = _has_citations(answer, context_ids)
 
     confidence = 0.45 + (0.45 * support_ratio)
@@ -478,25 +466,19 @@ def run_fides_lite(
     elif support_ratio >= warn_threshold:
         verdict = "warn"
         severity = "medium"
-        note = "Một phần claim chưa đủ bằng chứng, cần hiển thị cảnh báo."
+        note = "Một phần claim ở trạng thái insufficient evidence, cần hiển thị cảnh báo."
     else:
         verdict = "warn"
         severity = "high"
-        note = "Đa số claim không được hỗ trợ bởi evidence retrieval."
+        note = "Đa số claim ở trạng thái insufficient evidence."
 
-    unsupported_bundle = unsupported_claims + [
+    unsupported_bundle = insufficient_claims + [
         f"[contradiction] {claim}" for claim in contradicted_claims
     ]
-    verification_matrix_summary = _build_matrix_summary(
-        verification_matrix,
-        claims_count=len(claims),
-        supported_claims=supported_claims,
-    )
-    contradiction_summary = _build_contradiction_summary(verification_matrix)
 
     return FactCheckResult(
         enabled=True,
-        stage="fides-lite-v1.1",
+        stage="fides-lite-v1.2",
         verdict=verdict,
         confidence=confidence,
         supported_claims=supported_claims,

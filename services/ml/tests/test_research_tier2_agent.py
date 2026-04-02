@@ -1078,9 +1078,14 @@ def test_run_research_tier2_emits_contradiction_miner_and_verification_matrix(mo
 
     verification_matrix = result.get("verification_matrix", {})
     assert isinstance(verification_matrix, dict)
+    assert verification_matrix.get("version") == "claim-v2-nli"
     assert isinstance(verification_matrix.get("rows"), list)
     assert isinstance(verification_matrix.get("summary"), dict)
     assert isinstance(verification_matrix.get("contradiction_summary"), dict)
+    if verification_matrix.get("rows"):
+        first_row = verification_matrix["rows"][0]
+        assert "claim_type" in first_row
+        assert first_row.get("support_status") in {"supported", "contradicted", "insufficient"}
     assert isinstance(result.get("metadata", {}).get("verification_matrix"), dict)
     assert isinstance(result.get("telemetry", {}).get("verification_matrix"), dict)
 
