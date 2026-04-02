@@ -53,6 +53,32 @@ def test_scientific_gateway_rewrites_semantic_query_for_ddi(monkeypatch) -> None
     assert any(token in query_used for token in ["interaction", "bleeding", "inr"])
 
 
+def test_scientific_gateway_respects_provider_query_overrides(monkeypatch) -> None:
+    gateway = ExternalSourceGateway()
+    captured: dict[str, str] = {}
+
+    def _fake_pubmed(self, query: str, *, top_k: int, timeout_seconds: float):  # type: ignore[no-untyped-def]
+        captured["pubmed_query"] = query
+        return []
+
+    monkeypatch.setattr(ExternalSourceGateway, "retrieve_pubmed", _fake_pubmed)
+
+    telemetry: dict[str, object] = {}
+    gateway.retrieve_scientific_with_telemetry(
+        "Tương tác Warfarin với thuốc giảm đau phổ biến",
+        top_k=3,
+        timeout_seconds=1.0,
+        telemetry=telemetry,
+        allowed_providers={"pubmed"},
+        provider_query_overrides={"pubmed": "warfarin ibuprofen randomized trial bleeding"},
+    )
+
+    assert captured.get("pubmed_query") == "warfarin ibuprofen randomized trial bleeding"
+    assert telemetry.get("provider_query_overrides") == {
+        "pubmed": "warfarin ibuprofen randomized trial bleeding"
+    }
+
+
 def test_retrieve_rxnorm_parses_candidate_rows(monkeypatch) -> None:
     gateway = ExternalSourceGateway()
 

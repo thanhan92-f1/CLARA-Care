@@ -198,6 +198,99 @@ def _is_ddi_critical_topic(topic: str) -> bool:
     return any(marker in lowered or marker in folded for marker in critical_markers)
 
 
+def _build_provider_query_overrides(
+    *,
+    original_query: str,
+    canonical_query: str,
+    language_hint: str,
+    keywords: list[str],
+) -> dict[str, dict[str, str]]:
+    cleaned_original = " ".join(str(original_query or "").split()).strip()
+    cleaned_canonical = " ".join(str(canonical_query or "").split()).strip()
+    keyword_phrase = " ".join(
+        item.strip() for item in keywords if isinstance(item, str) and item.strip()
+    )
+    folded_original = _ascii_fold(cleaned_original)
+    vi_focus = cleaned_original or folded_original or cleaned_canonical
+    en_focus = cleaned_canonical or folded_original or cleaned_original
+    if not en_focus:
+        en_focus = keyword_phrase
+    if not vi_focus:
+        vi_focus = keyword_phrase
+
+    scientific_query = en_focus
+    if keyword_phrase:
+        scientific_query = " ".join([en_focus, keyword_phrase]).strip()
+    scientific_query = scientific_query[:360]
+
+    web_query = vi_focus if language_hint in {"vi", "mixed"} else en_focus
+    web_query = web_query[:320]
+
+    regulatory_query = vi_focus if language_hint in {"vi", "mixed"} else cleaned_original or web_query
+    regulatory_query = regulatory_query[:320]
+
+    return {
+        "scientific": {
+            "pubmed": scientific_query,
+            "europepmc": scientific_query,
+            "semantic_scholar": scientific_query,
+            "openalex": scientific_query,
+            "crossref": scientific_query,
+            "clinicaltrials": scientific_query,
+            "openfda": scientific_query,
+            "dailymed": scientific_query,
+            "rxnorm": scientific_query,
+        },
+        "web": {
+            "searxng": web_query,
+        },
+        "regulatory": {
+            "davidrug": regulatory_query,
+            "vn_moh": regulatory_query,
+            "vn_kcb": regulatory_query,
+            "vn_canhgiacduoc": regulatory_query,
+            "vn_vbpl_byt": regulatory_query,
+            "vn_dav": regulatory_query,
+        },
+    }
+
+
+def _sanitize_provider_query_overrides(
+    value: Any,
+    *,
+    fallback: dict[str, dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return fallback
+
+    normalized: dict[str, dict[str, str]] = {}
+    for category_raw, provider_map in value.items():
+        category = str(category_raw or "").strip().lower()
+        if category not in {"scientific", "web", "regulatory"}:
+            continue
+        if not isinstance(provider_map, dict):
+            continue
+        row: dict[str, str] = {}
+        for provider_raw, query_raw in provider_map.items():
+            provider = str(provider_raw or "").strip().lower()
+            query_text = " ".join(str(query_raw or "").split()).strip()
+            if not provider or not query_text:
+                continue
+            row[provider] = query_text[:360]
+        if row:
+            normalized[category] = row
+
+    merged: dict[str, dict[str, str]] = {}
+    for category in ("scientific", "web", "regulatory"):
+        fallback_row = fallback.get(category, {})
+        merged_row = dict(fallback_row)
+        if category in normalized:
+            merged_row.update(normalized[category])
+        if merged_row:
+            merged[category] = merged_row
+    return merged or fallback
+
+
 def _build_source_aware_query_plan(
     *,
     topic: str,
@@ -302,6 +395,12 @@ def _build_source_aware_query_plan(
         limit=14,
     )
     fast_queries = _dedupe_query_list([canonical_query, original_query, " ".join(keyword_terms[:6])], limit=4)
+    provider_queries = _build_provider_query_overrides(
+        original_query=original_query,
+        canonical_query=canonical_query,
+        language_hint=language_hint,
+        keywords=keyword_terms[:10],
+    )
 
     return {
         "original_query": original_query,
@@ -319,6 +418,7 @@ def _build_source_aware_query_plan(
             "deep_pass_queries": deep_queries,
             "deep_beta_pass_queries": deep_beta_queries,
         },
+        "provider_queries": provider_queries,
         "research_mode": research_mode,
         "query_terms": keyword_terms[:10],
     }
@@ -425,6 +525,16 @@ def _sanitize_llm_query_plan_payload(
         [canonical_query, base_query_plan.get("original_query"), " ".join(keywords[:6])],
         limit=4,
     )
+    fallback_provider_queries = _build_provider_query_overrides(
+        original_query=str(base_query_plan.get("original_query") or canonical_query),
+        canonical_query=canonical_query,
+        language_hint=language_hint,
+        keywords=keywords[:10],
+    )
+    provider_queries = _sanitize_provider_query_overrides(
+        payload.get("provider_queries"),
+        fallback=fallback_provider_queries,
+    )
 
     return {
         "original_query": str(base_query_plan.get("original_query") or canonical_query),
@@ -442,6 +552,7 @@ def _sanitize_llm_query_plan_payload(
             "deep_pass_queries": deep_pass_queries,
             "deep_beta_pass_queries": deep_beta_pass_queries,
         },
+        "provider_queries": provider_queries,
         "research_mode": research_mode,
         "query_terms": keywords[:10],
     }
@@ -492,6 +603,10 @@ def _refine_query_plan_with_llm(
         '    "scientific": ["..."],\n'
         '    "web": ["..."]\n'
         "  },\n"
+        '  "provider_queries": {\n'
+        '    "scientific": {"pubmed": "...", "europepmc": "...", "openfda": "..."},\n'
+        '    "web": {"searxng": "..."}\n'
+        "  },\n"
         '  "decomposition": {\n'
         '    "deep_pass_queries": ["..."],\n'
         '    "deep_beta_pass_queries": ["..."]\n'
@@ -501,6 +616,7 @@ def _refine_query_plan_with_llm(
         "- keywords length <= 12\n"
         "- keep clinical safety terms when query is medication-related\n"
         "- return at least one query per source and decomposition list\n"
+        "- provider_queries is optional; if provided, map each provider to concise query\n"
         "- return valid JSON only\n\n"
         f"topic={topic}\n"
         f"research_mode={research_mode}\n"
@@ -1436,6 +1552,43 @@ def _build_stage_span_summaries(
             }
         )
     return spans
+
+
+def _build_otel_trace_metadata(
+    *,
+    trace_id: str,
+    run_id: str,
+    stage_spans: list[dict[str, Any]],
+    flow_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    span_rows: list[dict[str, Any]] = []
+    for row in stage_spans:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("stage") or "").strip()
+        if not name:
+            continue
+        span_rows.append(
+            {
+                "name": name,
+                "status": str(row.get("status") or "unknown"),
+                "start_at": row.get("start_at"),
+                "end_at": row.get("end_at"),
+                "duration_ms": row.get("duration_ms"),
+                "event_count": row.get("event_count"),
+                "source_count": row.get("source_count"),
+            }
+        )
+
+    return {
+        "trace_id": trace_id,
+        "run_id": run_id,
+        "service_name": "clara-ml",
+        "component": "research_tier2",
+        "span_count": len(span_rows),
+        "event_count": len(flow_events),
+        "spans": span_rows,
+    }
 
 
 def _build_deep_subqueries(
@@ -3292,6 +3445,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         }
         for stage_entry in metadata_stage_entries
     ]
+    otel_trace_metadata = _build_otel_trace_metadata(
+        trace_id=trace_id,
+        run_id=run_id,
+        stage_spans=stage_spans,
+        flow_events=flow_events,
+    )
     trace_bundle = {
         "trace_id": trace_id,
         "run_id": run_id,
@@ -3299,6 +3458,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "retrieval": retrieval_trace,
         "verifier": verifier_trace,
         "stage_spans": stage_spans,
+        "otel_trace_metadata": otel_trace_metadata,
     }
     source_reasoning: list[dict[str, Any]] = []
     retriever_debug = (
@@ -3648,6 +3808,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "reasoning_digest": reasoning_digest,
         "verification_matrix": verification_matrix_payload,
         "stage_spans": stage_spans,
+        "otel_trace_metadata": otel_trace_metadata,
     }
     citations_payload = [asdict(item) for item in citations]
     compact_context_debug = _compact_context_debug(rag_result.context_debug)
@@ -3684,6 +3845,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "trace": trace_bundle,
             "flow_events": flow_events,
             "telemetry": telemetry,
+            "otel_trace_metadata": otel_trace_metadata,
             "deep_research_methodology": deep_research_method,
             "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
             "pass_summaries": deep_pass_summaries if research_mode == "deep_beta" else [],
@@ -3727,6 +3889,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "verifier_trace": verifier_trace,
         "trace": trace_bundle,
         "telemetry": telemetry,
+        "otel_trace_metadata": otel_trace_metadata,
         "policy_action": policy_action,
         "verification_status": verification_status,
         "verification_matrix": verification_matrix_payload,

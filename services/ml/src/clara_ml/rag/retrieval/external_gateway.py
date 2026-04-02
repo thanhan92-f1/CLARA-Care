@@ -167,6 +167,21 @@ class ExternalSourceGateway:
         return query
 
     @staticmethod
+    def _normalize_provider_query_overrides(
+        value: dict[str, str] | None,
+    ) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, str] = {}
+        for provider_raw, query_raw in value.items():
+            provider = str(provider_raw or "").strip().lower()
+            query_text = " ".join(str(query_raw or "").split()).strip()
+            if not provider or not query_text:
+                continue
+            normalized[provider] = query_text[:360]
+        return normalized
+
+    @staticmethod
     def _tokenize(text: str) -> set[str]:
         return {token for token in re.findall(r"[0-9a-zA-ZÀ-ỹ]{2,}", text.lower()) if token}
 
@@ -1031,13 +1046,19 @@ class ExternalSourceGateway:
         return docs
 
     def retrieve_scientific(
-        self, query: str, *, top_k: int, timeout_seconds: float
+        self,
+        query: str,
+        *,
+        top_k: int,
+        timeout_seconds: float,
+        provider_query_overrides: dict[str, str] | None = None,
     ) -> list[Document]:
         return self.retrieve_scientific_with_telemetry(
             query,
             top_k=top_k,
             timeout_seconds=timeout_seconds,
             telemetry=None,
+            provider_query_overrides=provider_query_overrides,
         )
 
     def retrieve_scientific_with_telemetry(
@@ -1048,6 +1069,7 @@ class ExternalSourceGateway:
         timeout_seconds: float,
         telemetry: dict[str, Any] | None,
         allowed_providers: set[str] | None = None,
+        provider_query_overrides: dict[str, str] | None = None,
     ) -> list[Document]:
         if top_k <= 0:
             if telemetry is not None:
@@ -1066,6 +1088,9 @@ class ExternalSourceGateway:
         docs: list[Document] = []
         provider_events: list[dict[str, Any]] = []
         profile = analyze_query_profile(query)
+        normalized_provider_query_overrides = self._normalize_provider_query_overrides(
+            provider_query_overrides
+        )
         is_ddi_query = bool(profile.get("is_ddi_query"))
         base_order = (
             [
@@ -1105,6 +1130,9 @@ class ExternalSourceGateway:
             "dailymed": self._provider_query(query, profile, provider="dailymed"),
             "rxnorm": self._provider_query(query, profile, provider="rxnorm"),
         }
+        for provider_name, override_query in normalized_provider_query_overrides.items():
+            if provider_name in provider_queries:
+                provider_queries[provider_name] = override_query
         provider_map: dict[str, Any] = {
             "pubmed": lambda: self.retrieve_pubmed(
                 provider_queries["pubmed"],
@@ -1164,6 +1192,7 @@ class ExternalSourceGateway:
                         "requested_top_k": int(top_k),
                         "provider_events": [],
                         "provider_count": 0,
+                        "provider_query_overrides": normalized_provider_query_overrides,
                         "documents_by_source": {},
                         "total_documents": 0,
                         "timeout_seconds": float(timeout_seconds),
@@ -1261,6 +1290,7 @@ class ExternalSourceGateway:
                     "requested_top_k": int(top_k),
                     "provider_events": provider_events,
                     "provider_count": len(provider_events),
+                    "provider_query_overrides": normalized_provider_query_overrides,
                     "documents_by_source": by_source,
                     "total_documents": len(docs),
                     "timeout_seconds": float(timeout_seconds),

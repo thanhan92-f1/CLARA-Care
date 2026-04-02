@@ -224,9 +224,11 @@ def test_research_tier2_returns_progressive_schema():
     assert isinstance(body["metadata"].get("planner_trace"), dict)
     assert isinstance(body["metadata"].get("retrieval_trace"), dict)
     assert isinstance(body["metadata"].get("verifier_trace"), dict)
+    assert isinstance(body["metadata"].get("otel_trace_metadata"), dict)
     assert isinstance(body["telemetry"].get("search_plan"), dict)
     assert isinstance(body["telemetry"].get("index_summary"), dict)
     assert isinstance(body["telemetry"].get("source_attempts"), list)
+    assert isinstance(body["telemetry"].get("otel_trace_metadata"), dict)
     assert body["metadata"]["verification_status"]["verdict"] in {"pass", "warn", "fail"}
     assert any(event.get("stage") == "evidence_search" for event in body["flow_events"])
     assert any(event.get("stage") == "evidence_index" for event in body["flow_events"])

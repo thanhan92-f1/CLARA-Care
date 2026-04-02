@@ -1337,6 +1337,26 @@ class RagPipelineP1:
 
         internal_query = self._source_query(query_plan, "internal", query)
         scientific_query = self._source_query(query_plan, "scientific", query)
+        web_query = self._source_query(query_plan, "web", query)
+        provider_query_overrides_raw = (
+            query_plan.get("provider_queries") if isinstance(query_plan, dict) else {}
+        )
+        provider_query_overrides = (
+            provider_query_overrides_raw
+            if isinstance(provider_query_overrides_raw, dict)
+            else {}
+        )
+        scientific_provider_query_overrides = (
+            provider_query_overrides.get("scientific")
+            if isinstance(provider_query_overrides.get("scientific"), dict)
+            else {}
+        )
+        web_provider_query_overrides = (
+            provider_query_overrides.get("web")
+            if isinstance(provider_query_overrides.get("web"), dict)
+            else {}
+        )
+        web_query_override = str(web_provider_query_overrides.get("searxng") or web_query).strip()
         retrieval_trace: dict[str, Any] = {
             "planner_hints": normalized_hints,
             "query_profile": query_profile,
@@ -1356,6 +1376,10 @@ class RagPipelineP1:
             "source_errors": {},
             "fallback_reason": None,
             "query_plan": query_plan,
+            "provider_query_overrides": {
+                "scientific": scientific_provider_query_overrides,
+                "web": web_provider_query_overrides,
+            },
             "graphrag": {
                 "enabled": bool(graphrag_enabled_runtime),
                 "node_count": 0,
@@ -1558,15 +1582,17 @@ class RagPipelineP1:
                         "medical connectors."
                     ),
                     component="retrieval",
-                    payload={
-                        "top_k": hybrid_top_k,
-                        "web_retrieval_enabled": web_retrieval_enabled,
-                        "low_context_before_external": low_context_before_external,
-                        "should_force_external": should_force_external,
-                        "resolved_query": scientific_query,
-                        "original_query": query,
-                    },
-                )
+                payload={
+                    "top_k": hybrid_top_k,
+                    "web_retrieval_enabled": web_retrieval_enabled,
+                    "low_context_before_external": low_context_before_external,
+                    "should_force_external": should_force_external,
+                    "resolved_query": scientific_query,
+                    "web_query_override": web_query_override,
+                    "provider_query_overrides": scientific_provider_query_overrides,
+                    "original_query": query,
+                },
+            )
             )
             flow_events.append(
                 self._flow_event(
@@ -1586,15 +1612,30 @@ class RagPipelineP1:
                 )
             )
             try:
-                docs = self.retriever.retrieve(
-                    scientific_query,
-                    top_k=hybrid_top_k,
-                    scientific_retrieval_enabled=True,
-                    web_retrieval_enabled=web_retrieval_enabled,
-                    file_retrieval_enabled=file_retrieval_enabled,
-                    rag_sources=rag_sources,
-                    uploaded_documents=uploaded_documents,
-                )
+                try:
+                    docs = self.retriever.retrieve(
+                        scientific_query,
+                        top_k=hybrid_top_k,
+                        scientific_retrieval_enabled=True,
+                        web_retrieval_enabled=web_retrieval_enabled,
+                        file_retrieval_enabled=file_retrieval_enabled,
+                        rag_sources=rag_sources,
+                        uploaded_documents=uploaded_documents,
+                        provider_query_overrides=scientific_provider_query_overrides,
+                        web_query_override=web_query_override,
+                    )
+                except TypeError as type_exc:
+                    if "unexpected keyword argument" not in str(type_exc):
+                        raise
+                    docs = self.retriever.retrieve(
+                        scientific_query,
+                        top_k=hybrid_top_k,
+                        scientific_retrieval_enabled=True,
+                        web_retrieval_enabled=web_retrieval_enabled,
+                        file_retrieval_enabled=file_retrieval_enabled,
+                        rag_sources=rag_sources,
+                        uploaded_documents=uploaded_documents,
+                    )
                 retrieval_trace["hybrid"] = self._extract_retriever_trace(self.retriever)
                 hybrid_trace = (
                     retrieval_trace["hybrid"] if isinstance(retrieval_trace["hybrid"], dict) else {}

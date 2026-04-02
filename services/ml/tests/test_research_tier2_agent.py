@@ -422,6 +422,14 @@ def test_build_source_aware_query_plan_handles_vi_en_ddi():
     assert len(query_plan["source_queries"].get("scientific", [])) >= 1
     assert isinstance(query_plan.get("decomposition"), dict)
     assert len(query_plan["decomposition"].get("fast_pass_queries", [])) >= 1
+    provider_queries = query_plan.get("provider_queries")
+    assert isinstance(provider_queries, dict)
+    scientific_provider_queries = provider_queries.get("scientific")
+    assert isinstance(scientific_provider_queries, dict)
+    assert "pubmed" in scientific_provider_queries
+    web_provider_queries = provider_queries.get("web")
+    assert isinstance(web_provider_queries, dict)
+    assert "searxng" in web_provider_queries
 
 
 def test_run_research_tier2_llm_query_planner_success_path(monkeypatch):

@@ -143,6 +143,7 @@ class InMemoryRetriever:
         timeout_seconds: float = 1.2,
         rag_sources: object = None,
         allowed_providers: set[str] | None = None,
+        provider_query_overrides: dict[str, str] | None = None,
     ) -> list[Document]:
         started = perf_counter()
         gateway_trace: dict[str, Any] = {}
@@ -152,6 +153,7 @@ class InMemoryRetriever:
             timeout_seconds=timeout_seconds,
             telemetry=gateway_trace,
             allowed_providers=allowed_providers,
+            provider_query_overrides=provider_query_overrides,
         )
         ranked, index_trace = self._index_candidates(
             query=query,
@@ -307,6 +309,8 @@ class InMemoryRetriever:
         file_retrieval_enabled: bool = True,
         rag_sources: object = None,
         uploaded_documents: object = None,
+        provider_query_overrides: dict[str, str] | None = None,
+        web_query_override: str | None = None,
     ) -> list[Document]:
         started = perf_counter()
         if top_k <= 0:
@@ -388,6 +392,7 @@ class InMemoryRetriever:
                     timeout_seconds=settings.pubmed_connector_timeout_seconds,
                     telemetry=external_scientific_trace,
                     allowed_providers=allowed_scientific_providers,
+                    provider_query_overrides=provider_query_overrides,
                 )
                 staged_docs.extend(scientific_docs)
                 after_external_scientific_count = len(staged_docs)
@@ -425,7 +430,7 @@ class InMemoryRetriever:
             searxng_trace: dict[str, Any] = {}
             try:
                 searxng_docs = self.external_gateway.retrieve_searxng_with_telemetry(
-                    query=query,
+                    query=web_query_override or query,
                     top_k=max(top_k, 1),
                     timeout_seconds=settings.searxng_timeout_seconds,
                     telemetry=searxng_trace,
