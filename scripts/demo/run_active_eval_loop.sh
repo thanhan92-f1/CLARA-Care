@@ -25,6 +25,11 @@ MAX_DROP_RATE="${CLARA_COMPARE_MAX_DROP_RATE:-2.0}"
 MAX_LATENCY_INCREASE_MS="${CLARA_COMPARE_MAX_LATENCY_INCREASE_MS:-350.0}"
 
 CONVERSATION_LOGS=()
+BASELINE_DONE="false"
+MINING_DONE="false"
+POST_RUN_DONE="false"
+COMPARE_DONE="false"
+GATE_PASSED="true"
 
 usage() {
   cat <<'EOF'
@@ -239,6 +244,7 @@ if [[ ! -d "$ARTIFACT_RUN_BASE" ]]; then
   echo "[active-eval] baseline run artifact missing: ${ARTIFACT_RUN_BASE}" >&2
   exit 3
 fi
+BASELINE_DONE="true"
 
 # (b) mine hard negatives from latest run
 if [[ "${PULL_PRODUCTION_LOGS}" == "true" ]]; then
@@ -283,6 +289,7 @@ log "Mine hard negatives from ${BASE_RUN_ID}"
 
 NEGATIVE_COUNT="$(count_jsonl_rows "$NEGATIVE_SET")"
 log "Mined negatives: ${NEGATIVE_COUNT}"
+MINING_DONE="true"
 
 # (c) re-run KPI after mining (if any)
 POST_EXECUTED="false"
@@ -295,6 +302,7 @@ if [[ "$NEGATIVE_COUNT" -gt 0 ]]; then
     echo "[active-eval] post-negative run artifact missing: ${ARTIFACT_RUN_POST}" >&2
     exit 4
   fi
+  POST_RUN_DONE="true"
 else
   log "Skip post-negative KPI run because mined set is empty"
 fi
@@ -331,8 +339,19 @@ if [[ -n "$PREVIOUS_KPI_RESOLVED" && -f "$PREVIOUS_KPI_RESOLVED" && -f "$TARGET_
       exit 5
     fi
   fi
+  COMPARE_DONE="true"
 else
   log "Skip baseline compare (missing previous KPI or current target report)."
+fi
+
+if [[ "$NEGATIVE_COUNT" -gt 0 && "$POST_EXECUTED" != "true" ]]; then
+  GATE_PASSED="false"
+fi
+if [[ "$COMPARE_EXECUTED" == "true" && "$COMPARE_GO" == "false" ]]; then
+  GATE_PASSED="false"
+fi
+if [[ "$BASELINE_DONE" != "true" || "$MINING_DONE" != "true" ]]; then
+  GATE_PASSED="false"
 fi
 
 # (e) summary markdown/json
@@ -360,6 +379,11 @@ cat > "$SUMMARY_MD" <<EOF
 - compare_go: ${COMPARE_GO}
 - compare_json: ${COMPARE_JSON}
 - compare_md: ${COMPARE_MD}
+- stage_baseline_done: ${BASELINE_DONE}
+- stage_mining_done: ${MINING_DONE}
+- stage_post_run_done: ${POST_RUN_DONE}
+- stage_compare_done: ${COMPARE_DONE}
+- gate_passed: ${GATE_PASSED}
 
 ## Steps
 1. Baseline KPI run completed.
@@ -391,10 +415,18 @@ cat > "$SUMMARY_JSON" <<EOF
   "compare_previous_kpi": "${COMPARE_PREVIOUS_KPI}",
   "compare_go": ${COMPARE_GO},
   "compare_json": "${COMPARE_JSON}",
-  "compare_md": "${COMPARE_MD}"
+  "compare_md": "${COMPARE_MD}",
+  "stage_status": {
+    "baseline_done": ${BASELINE_DONE},
+    "mining_done": ${MINING_DONE},
+    "post_run_done": ${POST_RUN_DONE},
+    "compare_done": ${COMPARE_DONE}
+  },
+  "gate_passed": ${GATE_PASSED}
 }
 EOF
 
 log "Done"
 log "- summary: ${SUMMARY_MD}"
 log "- summary_json: ${SUMMARY_JSON}"
+log "- gate_passed: ${GATE_PASSED}"

@@ -280,40 +280,40 @@ Day 17
 - [x] Kiểm tra giảm miss DDI critical.
 
 Day 18 (Gate)
-- [ ] Gate phase2 đạt ngưỡng.
-- [ ] Merge + tag `phase2-ready`.
+- [x] Gate phase2 đạt ngưỡng.
+- [x] Merge + tag `phase2-ready`.
 
 ### Day 19-28 (Phase 3)
 Day 19
-- [ ] OCR correction module (post-processing only).
+- [x] OCR correction module (post-processing only).
 
 Day 20
-- [ ] Cắm OCR correction vào flow scan (không bỏ manual confirm).
+- [x] Cắm OCR correction vào flow scan (không bỏ manual confirm).
 
 Day 21
-- [ ] Neural source router module.
+- [x] Neural source router module.
 
 Day 22
-- [ ] Cắm router vào retrieval orchestrator + policy constraints.
+- [x] Cắm router vào retrieval orchestrator + policy constraints.
 
 Day 23
-- [ ] Chuẩn hóa metadata lỗi/fallback/degraded path.
+- [x] Chuẩn hóa metadata lỗi/fallback/degraded path.
 
 Day 24
-- [ ] Nâng active-eval loop: baseline -> mine -> rerun -> compare.
+- [x] Nâng active-eval loop: baseline -> mine -> rerun -> compare.
 
 Day 25
-- [ ] Workflow schedule + artifact upload + strict gate.
+- [x] Workflow schedule + artifact upload + strict gate.
 
 Day 26
-- [ ] Update canvas flow theo runtime thật.
+- [x] Update canvas flow theo runtime thật.
 
 Day 27
-- [ ] Full stack live KPI run + canary deploy.
+- [x] Full stack live KPI run + canary deploy.
 
 Day 28 (Final Gate)
 - [ ] Gate phase3 đạt ngưỡng.
-- [ ] Release tag + report tổng kết.
+- [x] Report tổng kết Final Gate đã tạo (release tag bị chặn khi NO-GO).
 
 ## 7. Checklist vận hành mỗi ngày
 1. [ ] Standup 15 phút: blocker, owner, ETA.

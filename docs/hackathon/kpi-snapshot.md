@@ -1,25 +1,14 @@
 # CLARA Hackathon KPI Snapshot
 
-Generated at (UTC): 2026-04-02T15:51:43.072685+00:00
-Round2 run_id: `phase1-day10-live-20260402-225142`
+Generated at (UTC): 2026-04-02T19:06:12.193372+00:00
+Round2 run_id: `day24-smoke-20260403-postneg`
 
 ## Core Metrics (Demo-Ready)
 - Local DDI rules count: **62** pairs
 - Internal DDI test set size: **50** cases
-- VN Drug Dictionary alias coverage (static seed file): **217** entries
-- VN Drug Dictionary production mappings (DAV full seed, 2026-04-03): **43,150** mappings
+- VN Drug Dictionary alias coverage: **217** entries
 - Refusal compliance pre-check: **10/10 (100.0%)** for prescription/diagnosis/dosage trap prompts
 - Executable KPI datasets: **4 JSONL files** (DDI / refusal / fallback / latency)
-
-## VN Dictionary Full Seed (DAVIDrug)
-- Source: DAVIDrug public paging API (`GetAllPublicServerPaging`)
-- Fetch total: **53,814** rows
-- Parsed: **53,814**
-- Inserted: **43,149**
-- Updated: **138**
-- Alias conflict skipped: **6**
-- Duration: **431.925s**
-- Artifact summary: `data/demo/vn_davidrug_seed_summary_20260403_000845.json`
 
 ## Consistency Hints
 - Snapshot này là static generation theo source code và dataset hiện tại, không phải benchmark runtime end-to-end.
@@ -31,10 +20,28 @@ Round2 run_id: `phase1-day10-live-20260402-225142`
 - Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.
 - Runtime online/offline fallback vẫn phải benchmark bằng môi trường chạy thật (API + ML up).
 
-## Day 17 Runtime Check
-- VN brand/combo eval cases: **24**
-- Mapping accuracy (local deterministic run): **100.00% (24/24)**
-- High/Critical DDI expected slice: **30**
-- Critical DDI miss rate (local deterministic run): **0.00% (0 miss)**
-- Artifact JSON: `data/demo/day17-vn-brand-combo-eval-20260402-184837.json`
-- Artifact Markdown: `docs/hackathon/day17-vn-brand-combo-eval.md`
+## Day 18 Gate (Phase 2)
+- Gate verdict: **PASS**
+- Mapping accuracy: **100.00%** (threshold >= 90%)
+- Critical DDI miss reduction: **100.00%** (threshold >= 40%)
+- Artifact JSON: `data/demo/day18-phase2-gate-20260402-185335.json`
+- Artifact Markdown: `docs/hackathon/day18-phase2-gate.md`
+
+## Day 24 Active Eval Loop
+- Run ID: `day24-smoke-20260403`
+- Stage progression: baseline -> mine -> post-negative -> compare (**completed**)
+- Gate status: **PASS** (pipeline stage gate pass, static mode smoke)
+- Summary JSON: `artifacts/round2/day24-smoke-20260403/active-eval-summary.json`
+- Summary Markdown: `artifacts/round2/day24-smoke-20260403/active-eval-summary.md`
+
+## Day 27 KPI + Readiness
+- KPI run ID: `day27-phase3-live-20260403`
+- Go/No-Go: **NO-GO**
+- Readiness: **NO** (live run bị downgrade static do API endpoint không reach được từ runner + TLS self-signed)
+- KPI artifact: `artifacts/round2/day27-phase3-live-20260403/kpi-report/kpi-report.json`
+- Go/No-Go artifact: `artifacts/round2/day27-phase3-live-20260403/go-no-go/go-no-go.json`
+
+## Day 28 Final Gate
+- Final verdict: **NO-GO**
+- Final gate artifact: `data/demo/day28-final-gate-20260402-190932.json`
+- Final report: `docs/hackathon/day28-final-gate-report.md`

@@ -13,8 +13,10 @@ export type FlowNodeId =
   | "role_router"
   | "intent_router"
   | "query_canonicalizer"
+  | "ocr_correction"
   | "vn_drug_dictionary"
   | "planner"
+  | "source_router"
   | "query_decomposition"
   | "retrieval_orchestrator"
   | "deep_research"
@@ -157,6 +159,18 @@ const NODES: FlowNodeDef[] = [
     tone: "teal",
   },
   {
+    id: "ocr_correction",
+    title: "OCR Correction",
+    subtitle: "post-processing + typo repair",
+    description:
+      "Sửa lỗi OCR phổ biến (confusable chars, spacing, ký tự noise) trước khi alias-map và manual confirm.",
+    riskNote:
+      "Nếu bỏ hậu xử lý OCR, alias recall giảm mạnh với ảnh mờ và tăng false negative ở bước nhận diện thuốc.",
+    x: 720,
+    y: 1180,
+    tone: "teal",
+  },
+  {
     id: "vn_drug_dictionary",
     title: "VN Drug Dictionary DB",
     subtitle: "brand_vn -> ingredients -> normalized/rxcui",
@@ -177,6 +191,18 @@ const NODES: FlowNodeDef[] = [
     x: 920,
     y: 520,
     tone: "amber",
+  },
+  {
+    id: "source_router",
+    title: "Source Router",
+    subtitle: "internal/scientific/web/file policy",
+    description:
+      "Chọn retrieval route theo độ rủi ro và intent, xuất `retrieval_route` + `router_confidence` cho telemetry.",
+    riskNote:
+      "Router lệch policy sẽ gây truy xuất sai nguồn hoặc thiếu evidence ở câu hỏi safety-critical.",
+    x: 1120,
+    y: 640,
+    tone: "indigo",
   },
   {
     id: "query_decomposition",
@@ -416,7 +442,7 @@ const NODES: FlowNodeDef[] = [
     title: "Flow Event Stream",
     subtitle: "research events + source-errors metadata",
     description:
-      "Ghi flow events từ research job vào stream store: stage/status, source_errors, fallback_reason, verification_matrix.",
+      "Ghi flow events runtime thật vào stream store: stage/status, source_errors, fallback_reason, degraded_path, retrieval_route, router_confidence, verification_matrix.",
     riskNote:
       "Thiếu event stream thì hard-negative mining từ production sẽ mù dữ liệu và không phản ánh runtime thực tế.",
     x: 3000,
@@ -439,7 +465,8 @@ const NODES: FlowNodeDef[] = [
     id: "evaluation_feedback",
     title: "Eval + Feedback Loop",
     subtitle: "online KPIs + hard-negative mining",
-    description: "Ghi KPI retrieval/verification, sinh hard negatives và feed ngược về planner/reranker.",
+    description:
+      "Chạy active-eval loop (baseline -> mine -> rerun -> compare), sinh hard negatives và feed ngược về planner/reranker/router.",
     riskNote: "Không có vòng lặp này thì quality không cải thiện bền vững sau mỗi lần deploy.",
     x: 3000,
     y: 1080,
@@ -461,11 +488,13 @@ const NODE_GRID_LAYOUT: Record<FlowNodeId, { col: number; row: number }> = {
   role_router: { col: 1, row: 1 },
   intent_router: { col: 1, row: 2 },
   query_canonicalizer: { col: 1, row: 3 },
+  ocr_correction: { col: 1, row: 4 },
   vn_drug_dictionary: { col: 2, row: 0 },
 
   planner: { col: 2, row: 1 },
-  query_decomposition: { col: 2, row: 2 },
-  retrieval_orchestrator: { col: 2, row: 3 },
+  source_router: { col: 2, row: 2 },
+  query_decomposition: { col: 2, row: 3 },
+  retrieval_orchestrator: { col: 2, row: 4 },
 
   deep_research: { col: 3, row: 0 },
   retrieval_internal: { col: 3, row: 2 },
@@ -572,12 +601,17 @@ const EDGES: FlowEdgeDef[] = [
   { from: "safety_ingress", to: "role_router", bend: -36 },
   { from: "safety_ingress", to: "intent_router", bend: 14 },
   { from: "safety_ingress", to: "query_canonicalizer", bend: 72 },
+  { from: "query_canonicalizer", to: "ocr_correction", bend: 42, label: "post-ocr cleanup" },
+  { from: "ocr_correction", to: "vn_drug_dictionary", bend: -58, label: "corrected tokens" },
   { from: "legal_guard", to: "policy_gate", bend: -160, label: "hard refusal" },
   { from: "role_router", to: "planner", bend: 22 },
   { from: "intent_router", to: "planner", bend: -40 },
-  { from: "query_canonicalizer", to: "vn_drug_dictionary", bend: -26, label: "brand->ingredient map" },
   { from: "vn_drug_dictionary", to: "planner", bend: -40 },
   { from: "vn_drug_dictionary", to: "retrieval_scientific", bend: 160, label: "rxnorm aligned" },
+  { from: "planner", to: "source_router", bend: 42, label: "route decision" },
+  { from: "source_router", to: "retrieval_orchestrator", bend: 56, label: "retrieval_route" },
+  { from: "source_router", to: "retrieval_scientific", bend: 132, label: "scientific-heavy" },
+  { from: "source_router", to: "retrieval_web", bend: 186, label: "web-assisted" },
   { from: "planner", to: "query_decomposition", bend: 46, label: "decompose" },
   { from: "planner", to: "deep_research", bend: -170, label: "deep mode" },
   { from: "planner", to: "deep_beta_router", bend: -250, label: "deep_beta mode" },

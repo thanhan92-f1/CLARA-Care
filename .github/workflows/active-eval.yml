@@ -198,6 +198,52 @@ jobs:
           fi
           "${cmd[@]}"
 
+      - name: Publish active eval stage status
+        if: ${{ steps.guard.outputs.should_run == 'true' }}
+        env:
+          RUN_ID: ${{ steps.ctx.outputs.run_id }}
+          STRICT_INPUT: ${{ steps.ctx.outputs.strict }}
+        run: |
+          set -euo pipefail
+          summary_json="artifacts/round2/${RUN_ID}/active-eval-summary.json"
+          if [ ! -f "${summary_json}" ]; then
+            echo "::warning::Missing active eval summary JSON at ${summary_json}"
+            exit 0
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(f"artifacts/round2/{os.environ['RUN_ID']}/active-eval-summary.json")
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          stage = payload.get("stage_status", {}) or {}
+          baseline_done = bool(stage.get("baseline_done"))
+          mining_done = bool(stage.get("mining_done"))
+          post_done = bool(stage.get("post_run_done"))
+          compare_done = bool(stage.get("compare_done"))
+          gate_passed = bool(payload.get("gate_passed"))
+          strict = str(os.environ.get("STRICT_INPUT", "true")).strip().lower() in {"1", "true", "yes", "on"}
+
+          lines = [
+              "## Active Eval Stage Status",
+              "",
+              f"- baseline_done: `{baseline_done}`",
+              f"- mining_done: `{mining_done}`",
+              f"- post_run_done: `{post_done}`",
+              f"- compare_done: `{compare_done}`",
+              f"- gate_passed: `{gate_passed}`",
+              f"- strict_input: `{strict}`",
+          ]
+          summary_file = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          existing = summary_file.read_text(encoding="utf-8") if summary_file.exists() else ""
+          summary_file.write_text(existing + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
+
+          if strict and not gate_passed:
+              raise SystemExit("Strict active-eval gate failed")
+          PY
+
       - name: Skip summary
         if: ${{ steps.guard.outputs.should_run != 'true' }}
         run: |
