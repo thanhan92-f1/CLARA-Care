@@ -263,7 +263,7 @@ Day 12
 - [x] Tạo importer script.
 
 Day 13
-- [ ] Implement hybrid normalize (dictionary + neural candidate).
+- [x] Implement hybrid normalize (dictionary + neural candidate).
 
 Day 14
 - [ ] Cắm normalize vào careguard/selfmed.

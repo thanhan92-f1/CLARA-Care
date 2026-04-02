@@ -371,6 +371,143 @@ def test_vn_dictionary_crud_and_resolve() -> None:
     assert resolve_after_delete.json()["mapping_source"] == "fallback"
 
 
+def test_dictionary_resolve_candidate_match() -> None:
+    doctor_token = _login_doctor()
+    create_response = client.post(
+        "/api/v1/careguard/dictionary",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "brand_name": "Panadol Hybrid Candidate A",
+            "aliases": ["Panadol Hybrid Candidate A"],
+            "active_ingredients": "Paracetamol + Caffeine",
+            "normalized_name": "paracetamol caffeine",
+            "rx_cui": "900001",
+            "mapping_source": "manual",
+            "notes": "candidate match test",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+    mapping_id = create_response.json()["id"]
+
+    resolve_response = client.post(
+        "/api/v1/careguard/dictionary/resolve",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={"drug_name": "Panadol Hybrd Candidate A"},
+    )
+    assert resolve_response.status_code == 200
+    payload = resolve_response.json()
+    assert payload["mapping_source"] == "candidate"
+    assert payload["normalized_name"] == "paracetamol caffeine"
+    assert payload["rx_cui"] == "900001"
+
+    delete_response = client.delete(
+        f"/api/v1/careguard/dictionary/{mapping_id}",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert delete_response.status_code == 200
+
+
+def test_add_cabinet_item_candidate_normalization() -> None:
+    doctor_token = _login_doctor()
+    create_response = client.post(
+        "/api/v1/careguard/dictionary",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "brand_name": "Panadol Hybrid Candidate B",
+            "aliases": ["Panadol Hybrid Candidate B"],
+            "active_ingredients": "Paracetamol + Caffeine",
+            "normalized_name": "paracetamol caffeine",
+            "rx_cui": "900002",
+            "mapping_source": "manual",
+            "notes": "candidate add test",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+    mapping_id = create_response.json()["id"]
+
+    add_response = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={"drug_name": "Panadol Hybrd Candidate B", "source": "manual"},
+    )
+    assert add_response.status_code == 200
+    added = add_response.json()
+    assert added["normalized_name"] == "paracetamol caffeine"
+    assert added["rx_cui"] == "900002"
+
+    duplicate_response = client.post(
+        "/api/v1/careguard/cabinet/items",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={"drug_name": "Panadol Hybrid Candidate B", "source": "manual"},
+    )
+    assert duplicate_response.status_code == 409
+    assert "Thuốc đã tồn tại" in duplicate_response.json()["detail"]
+
+    delete_response = client.delete(
+        f"/api/v1/careguard/dictionary/{mapping_id}",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert delete_response.status_code == 200
+
+
+def test_import_detections_candidate_normalization() -> None:
+    doctor_token = _login_doctor()
+    create_response = client.post(
+        "/api/v1/careguard/dictionary",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "brand_name": "Panadol Hybrid Candidate C",
+            "aliases": ["Panadol Hybrid Candidate C"],
+            "active_ingredients": "Paracetamol + Caffeine",
+            "normalized_name": "paracetamol caffeine",
+            "rx_cui": "900003",
+            "mapping_source": "manual",
+            "notes": "candidate import test",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+    mapping_id = create_response.json()["id"]
+
+    import_response = client.post(
+        "/api/v1/careguard/cabinet/import-detections",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "detections": [
+                {
+                    "drug_name": "Panadol Hybrd Candidate C",
+                    "normalized_name": "Panadol Hybrd Candidate C",
+                    "confidence": 0.95,
+                    "evidence": "ocr-line-candidate",
+                    "requires_manual_confirm": False,
+                    "confirmed": True,
+                }
+            ]
+        },
+    )
+    assert import_response.status_code == 200
+    assert import_response.json()["inserted"] == 1
+
+    cabinet_response = client.get(
+        "/api/v1/careguard/cabinet",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert cabinet_response.status_code == 200
+    assert any(
+        item["normalized_name"] == "paracetamol caffeine"
+        and item["rx_cui"] == "900003"
+        for item in cabinet_response.json()["items"]
+    )
+
+    delete_response = client.delete(
+        f"/api/v1/careguard/dictionary/{mapping_id}",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert delete_response.status_code == 200
+
+
 def test_auto_ddi_proxy_payload(monkeypatch) -> None:
     token = _login("ddi-user@example.com")
     client.post(

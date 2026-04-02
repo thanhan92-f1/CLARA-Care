@@ -335,7 +335,7 @@ class VnDrugResolveResponse(BaseModel):
     display_name: str
     normalized_name: str
     rx_cui: str
-    mapping_source: Literal["db", "fallback"]
+    mapping_source: Literal["db", "candidate", "fallback"]
 
 
 class RagSourceEntry(BaseModel):

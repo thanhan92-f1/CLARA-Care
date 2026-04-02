@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
+from time import perf_counter
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
 from clara_api.core.attribution import (
@@ -179,6 +182,9 @@ DRUG_RXCUI_MAP: dict[str, str] = {
 }
 
 LOW_CONFIDENCE_OCR_THRESHOLD = 0.9
+_CANDIDATE_DB_LIMIT = 120
+_CANDIDATE_MIN_SCORE = 0.78
+_CANDIDATE_MIN_MARGIN = 0.05
 
 _CAREGUARD_SOURCE_CATALOG: dict[str, dict[str, str]] = {
     "local_rules": {
@@ -218,6 +224,15 @@ def _normalize_text(value: str) -> str:
 
 
 DRUG_ALIAS_LOOKUP = _build_alias_lookup()
+
+
+def _ascii_fold(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def _tokenize_terms(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", value.lower()))
 
 
 def _normalize_aliases(raw_aliases: list[str], brand_name: str) -> list[str]:
@@ -260,6 +275,92 @@ def _find_db_mapping_by_alias(db: Session, normalized_input: str) -> VnDrugMappi
     ).scalar_one_or_none()
 
 
+def _compute_candidate_similarity(query: str, candidate: str) -> float:
+    query_fold = _ascii_fold(query)
+    candidate_fold = _ascii_fold(candidate)
+    sequence_ratio = SequenceMatcher(a=query_fold, b=candidate_fold).ratio()
+    query_terms = _tokenize_terms(query_fold)
+    candidate_terms = _tokenize_terms(candidate_fold)
+    if not query_terms:
+        return sequence_ratio
+
+    overlap = len(query_terms & candidate_terms) / len(query_terms)
+    union = query_terms | candidate_terms
+    jaccard = len(query_terms & candidate_terms) / len(union) if union else 0.0
+    contains_bonus = 0.08 if query_fold in candidate_fold or candidate_fold in query_fold else 0.0
+    score = (sequence_ratio * 0.55) + (overlap * 0.35) + (jaccard * 0.10) + contains_bonus
+    return min(score, 1.0)
+
+
+def _collect_db_candidate_mappings(db: Session, normalized_input: str) -> list[VnDrugMapping]:
+    terms = [term for term in normalized_input.split(" ") if term]
+    first_term = terms[0] if terms else normalized_input
+    second_term = terms[1] if len(terms) > 1 else ""
+    like_conditions = [
+        VnDrugMapping.normalized_brand.like(f"{normalized_input}%"),
+        VnDrugMappingAlias.normalized_alias.like(f"{normalized_input}%"),
+        VnDrugMapping.normalized_brand.like(f"%{first_term}%"),
+        VnDrugMappingAlias.normalized_alias.like(f"%{first_term}%"),
+    ]
+    if second_term:
+        like_conditions.extend(
+            [
+                VnDrugMapping.normalized_brand.like(f"%{second_term}%"),
+                VnDrugMappingAlias.normalized_alias.like(f"%{second_term}%"),
+            ]
+        )
+
+    return (
+        db.execute(
+            select(VnDrugMapping)
+            .options(selectinload(VnDrugMapping.aliases))
+            .outerjoin(VnDrugMappingAlias, VnDrugMappingAlias.mapping_id == VnDrugMapping.id)
+            .where(
+                VnDrugMapping.is_active.is_(True),
+                or_(*like_conditions),
+            )
+            .order_by(VnDrugMapping.id.desc())
+            .limit(_CANDIDATE_DB_LIMIT)
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+
+
+def _find_db_mapping_candidate(
+    db: Session,
+    normalized_input: str,
+) -> tuple[VnDrugMapping | None, float, int, int]:
+    started_at = perf_counter()
+    candidates = _collect_db_candidate_mappings(db, normalized_input)
+    if not candidates:
+        elapsed = int((perf_counter() - started_at) * 1000)
+        return None, 0.0, 0, elapsed
+
+    ranked: list[tuple[float, VnDrugMapping]] = []
+    for mapping in candidates:
+        names = [mapping.normalized_brand, *(alias.normalized_alias for alias in mapping.aliases)]
+        best_score = 0.0
+        for name in names:
+            if not name:
+                continue
+            best_score = max(best_score, _compute_candidate_similarity(normalized_input, name))
+        ranked.append((best_score, mapping))
+
+    ranked.sort(key=lambda entry: entry[0], reverse=True)
+    best_score, best_mapping = ranked[0]
+    second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+    elapsed_ms = int((perf_counter() - started_at) * 1000)
+
+    if best_score < _CANDIDATE_MIN_SCORE:
+        return None, best_score, len(candidates), elapsed_ms
+    if best_score < 0.9 and (best_score - second_score) < _CANDIDATE_MIN_MARGIN:
+        return None, best_score, len(candidates), elapsed_ms
+
+    return best_mapping, best_score, len(candidates), elapsed_ms
+
+
 def _resolve_dictionary_mapping_with_source(
     drug_name: str,
     db: Session | None = None,
@@ -274,6 +375,15 @@ def _resolve_dictionary_mapping_with_source(
             if not rx_cui:
                 rx_cui = DRUG_RXCUI_MAP.get(normalized_name, "")
             return display_name, normalized_name, rx_cui, "db"
+
+        candidate_mapping, _, _, _ = _find_db_mapping_candidate(db, normalized_input)
+        if candidate_mapping is not None:
+            display_name = candidate_mapping.brand_name.strip() or _to_title_case(candidate_mapping.normalized_name)
+            normalized_name = candidate_mapping.normalized_name.strip() or normalized_input
+            rx_cui = candidate_mapping.rx_cui.strip()
+            if not rx_cui:
+                rx_cui = DRUG_RXCUI_MAP.get(normalized_name, "")
+            return display_name, normalized_name, rx_cui, "candidate"
 
     canonical = DRUG_ALIAS_LOOKUP.get(normalized_input, normalized_input)
     display_name = _to_title_case(canonical)
