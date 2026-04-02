@@ -104,6 +104,8 @@ jobs:
             echo "API_IMAGE=${REGISTRY_REPO}/clara-api:${IMAGE_TAG}"
             echo "ML_IMAGE=${REGISTRY_REPO}/clara-ml:${IMAGE_TAG}"
             echo "WEB_IMAGE=${REGISTRY_REPO}/clara-web:${IMAGE_TAG}"
+            echo "DATABASE_FALLBACK_ENABLED=true"
+            echo "DATABASE_FALLBACK_URL=sqlite+pysqlite:////data/clara.db"
           } >> .env
 
       - name: Pull and deploy staging stack
@@ -220,6 +222,8 @@ jobs:
             echo "API_IMAGE=${REGISTRY_REPO}/clara-api:${IMAGE_TAG}"
             echo "ML_IMAGE=${REGISTRY_REPO}/clara-ml:${IMAGE_TAG}"
             echo "WEB_IMAGE=${REGISTRY_REPO}/clara-web:${IMAGE_TAG}"
+            echo "DATABASE_FALLBACK_ENABLED=true"
+            echo "DATABASE_FALLBACK_URL=sqlite+pysqlite:////data/clara.db"
           } >> .env
 
       - name: Pull and deploy production stack
