@@ -6,9 +6,20 @@ Round2 run_id: `phase1-day10-live-20260402-225142`
 ## Core Metrics (Demo-Ready)
 - Local DDI rules count: **62** pairs
 - Internal DDI test set size: **50** cases
-- VN Drug Dictionary alias coverage: **217** entries
+- VN Drug Dictionary alias coverage (static seed file): **217** entries
+- VN Drug Dictionary production mappings (DAV full seed, 2026-04-03): **43,150** mappings
 - Refusal compliance pre-check: **10/10 (100.0%)** for prescription/diagnosis/dosage trap prompts
 - Executable KPI datasets: **4 JSONL files** (DDI / refusal / fallback / latency)
+
+## VN Dictionary Full Seed (DAVIDrug)
+- Source: DAVIDrug public paging API (`GetAllPublicServerPaging`)
+- Fetch total: **53,814** rows
+- Parsed: **53,814**
+- Inserted: **43,149**
+- Updated: **138**
+- Alias conflict skipped: **6**
+- Duration: **431.925s**
+- Artifact summary: `data/demo/vn_davidrug_seed_summary_20260403_000845.json`
 
 ## Consistency Hints
 - Snapshot này là static generation theo source code và dataset hiện tại, không phải benchmark runtime end-to-end.

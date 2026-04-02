@@ -259,8 +259,8 @@ Day 11
 - [x] Migration + model + schema API.
 
 Day 12
-- [ ] Seed dictionary 100+ biệt dược VN.
-- [ ] Tạo importer script.
+- [x] Seed dictionary từ DAVIDrug theo full dataset (phân trang totalCount).
+- [x] Tạo importer script.
 
 Day 13
 - [ ] Implement hybrid normalize (dictionary + neural candidate).
