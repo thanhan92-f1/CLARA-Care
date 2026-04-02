@@ -853,9 +853,16 @@ def _coerce_retrieval_stack_mode(payload: dict[str, Any]) -> str:
     )
 
 
-def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _resolve_tier2_execution_modes(payload: dict[str, Any]) -> tuple[str, str]:
     research_mode = _coerce_research_mode(payload)
     retrieval_stack_mode = _coerce_retrieval_stack_mode(payload)
+    if research_mode == "fast" and retrieval_stack_mode == "full":
+        retrieval_stack_mode = "auto"
+    return research_mode, retrieval_stack_mode
+
+
+def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    research_mode, retrieval_stack_mode = _resolve_tier2_execution_modes(payload)
     fallback_answer_text = (
         "Hệ thống truy xuất chuyên sâu đang bận hoặc tạm thời không kết nối được nguồn RAG. "
         "Tạm thời dùng chế độ an toàn: bạn nên ưu tiên phác đồ chính thống, "
@@ -1546,9 +1553,11 @@ def _build_tier2_upstream_payload(
 ) -> dict[str, Any]:
     settings = get_settings()
     upstream_payload = dict(payload)
-    if "research_mode" in upstream_payload or "mode" in upstream_payload:
-        upstream_payload["research_mode"] = _coerce_research_mode(upstream_payload)
-    upstream_payload["retrieval_stack_mode"] = _coerce_retrieval_stack_mode(upstream_payload)
+    explicit_research_mode = "research_mode" in upstream_payload or "mode" in upstream_payload
+    research_mode, retrieval_stack_mode = _resolve_tier2_execution_modes(upstream_payload)
+    if explicit_research_mode:
+        upstream_payload["research_mode"] = research_mode
+    upstream_payload["retrieval_stack_mode"] = retrieval_stack_mode
     upstream_payload.pop("stack_mode", None)
     upstream_payload["answer_format"] = str(upstream_payload.get("answer_format") or "markdown")
     upstream_payload["response_format"] = str(upstream_payload.get("response_format") or "markdown")
@@ -1603,17 +1612,11 @@ def _enforce_request_execution_contract(
         metadata_obj = {}
         response["metadata"] = metadata_obj
 
-    research_mode = _coerce_research_mode(request_payload)
-    if not response.get("research_mode"):
-        response["research_mode"] = research_mode
-    if not metadata_obj.get("research_mode"):
-        metadata_obj["research_mode"] = research_mode
-
-    retrieval_stack_mode = _coerce_retrieval_stack_mode(request_payload)
-    if not response.get("retrieval_stack_mode"):
-        response["retrieval_stack_mode"] = retrieval_stack_mode
-    if not metadata_obj.get("retrieval_stack_mode"):
-        metadata_obj["retrieval_stack_mode"] = retrieval_stack_mode
+    research_mode, retrieval_stack_mode = _resolve_tier2_execution_modes(request_payload)
+    response["research_mode"] = research_mode
+    metadata_obj["research_mode"] = research_mode
+    response["retrieval_stack_mode"] = retrieval_stack_mode
+    metadata_obj["retrieval_stack_mode"] = retrieval_stack_mode
 
     return response
 
@@ -3341,7 +3344,9 @@ def research_tier2(
         "/v1/research/tier2",
         upstream_payload,
         fail_soft_payload=(
-            None if settings.deepseek_strict_mode else _research_tier2_fallback_payload(payload)
+            None
+            if settings.deepseek_strict_mode
+            else _research_tier2_fallback_payload(upstream_payload)
         ),
     )
     normalized = _normalize_tier2_response(response)

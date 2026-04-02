@@ -483,6 +483,7 @@ def test_research_tier2_job_create_forwards_full_retrieval_stack_mode(
         headers={"Authorization": f"Bearer {token}"},
         json={
             "query": "Persist retrieval full mode",
+            "research_mode": "deep",
             "stack_mode": "full",
         },
     )
@@ -824,6 +825,42 @@ def test_research_tier2_fail_soft_keeps_deep_mode_flags(
     assert call_count["count"] == 2
 
 
+def test_research_tier2_fail_soft_reflects_fast_full_downgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+    call_count = {"count": 0}
+
+    def _fake_post(_url: str, *, json: dict[str, object], timeout: float) -> object:
+        call_count["count"] += 1
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "fast mode fail soft",
+            "research_mode": "fast",
+            "retrieval_stack_mode": "full",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fallback"] is True
+    assert payload["research_mode"] == "fast"
+    assert payload["retrieval_stack_mode"] == "auto"
+    assert payload["metadata"]["research_mode"] == "fast"
+    assert payload["metadata"]["retrieval_stack_mode"] == "auto"
+    assert payload["fallback_reason"] == "ConnectError"
+    assert payload["attribution"]["channel"] == "research"
+    assert payload["attribution"]["fallback_used"] is True
+    assert payload["attribution"]["mode"] == "fast"
+    assert call_count["count"] == 2
+
+
 def test_research_tier2_fail_soft_keeps_deep_beta_mode_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -956,7 +993,11 @@ def test_research_tier2_forwards_full_retrieval_stack_mode_to_ml(
     response = client.post(
         "/api/v1/research/tier2",
         headers={"Authorization": f"Bearer {token}"},
-        json={"query": "stack mode full test", "stack_mode": "full"},
+        json={
+            "query": "stack mode full test",
+            "research_mode": "deep",
+            "stack_mode": "full",
+        },
     )
 
     assert response.status_code == 200
@@ -964,6 +1005,49 @@ def test_research_tier2_forwards_full_retrieval_stack_mode_to_ml(
     forwarded = captured["json"]
     assert isinstance(forwarded, dict)
     assert forwarded["retrieval_stack_mode"] == "full"
+    assert "stack_mode" not in forwarded
+
+
+def test_research_tier2_downgrades_fast_full_stack_mode_to_auto_for_ml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+    captured: dict[str, object] = {}
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"answer": "ok", "metadata": {"research_mode": "fast"}}
+
+    def _fake_post(url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        captured["url"] = url
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "stack mode downgrade test",
+            "research_mode": "fast",
+            "stack_mode": "full",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["research_mode"] == "fast"
+    assert payload["retrieval_stack_mode"] == "auto"
+    assert payload["metadata"]["retrieval_stack_mode"] == "auto"
+    assert str(captured["url"]).endswith("/v1/research/tier2")
+    forwarded = captured["json"]
+    assert isinstance(forwarded, dict)
+    assert forwarded["retrieval_stack_mode"] == "auto"
     assert "stack_mode" not in forwarded
 
 

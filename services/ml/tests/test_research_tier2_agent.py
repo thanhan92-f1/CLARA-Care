@@ -120,7 +120,7 @@ def test_build_planner_hints_applies_latency_guard_for_fast_ddi_query():
     assert "fast_scientific_disabled_for_sla" in hints["reason_codes"]
 
 
-def test_build_planner_hints_full_stack_mode_forces_connectors_and_graphrag():
+def test_build_planner_hints_fast_mode_downgrades_full_stack_mode_to_auto():
     hints = tier2._build_planner_hints(
         topic="Tương tác warfarin với ibuprofen ở người cao tuổi",
         source_mode=None,
@@ -131,11 +131,34 @@ def test_build_planner_hints_full_stack_mode_forces_connectors_and_graphrag():
         research_mode="fast",
         retrieval_stack_mode="full",
     )
+    assert hints["retrieval_stack_mode"] == "auto"
+    assert hints["scientific_retrieval_enabled"] is False
+    assert hints["web_retrieval_enabled"] is False
+    assert hints["graphrag_enabled_override"] is None
+    assert "stack_mode_full_downgraded_for_fast_mode" in hints["reason_codes"]
+    assert "retrieval_stack_mode_auto" in hints["reason_codes"]
+    assert "stack_mode_full_force_scientific" not in hints["reason_codes"]
+    assert "stack_mode_full_force_web" not in hints["reason_codes"]
+    assert "stack_mode_full_force_graphrag" not in hints["reason_codes"]
+
+
+def test_build_planner_hints_deep_mode_full_stack_still_forces_connectors_and_graphrag():
+    hints = tier2._build_planner_hints(
+        topic="Tương tác warfarin với ibuprofen ở người cao tuổi",
+        source_mode=None,
+        route_role="researcher",
+        route_intent="evidence_review",
+        uploaded_documents=[],
+        rag_sources=[],
+        research_mode="deep",
+        retrieval_stack_mode="full",
+    )
     assert hints["retrieval_stack_mode"] == "full"
     assert hints["scientific_retrieval_enabled"] is True
     assert hints["web_retrieval_enabled"] is True
     assert hints["graphrag_enabled_override"] is True
     assert "retrieval_stack_mode_full" in hints["reason_codes"]
+    assert "stack_mode_full_downgraded_for_fast_mode" not in hints["reason_codes"]
     assert "stack_mode_full_force_scientific" in hints["reason_codes"]
     assert "stack_mode_full_force_web" in hints["reason_codes"]
     assert "stack_mode_full_force_graphrag" in hints["reason_codes"]
@@ -516,7 +539,7 @@ def test_run_research_tier2_llm_query_planner_success_path(monkeypatch):
     assert any(event.get("status") == "completed" for event in llm_events)
 
 
-def test_run_research_tier2_full_stack_mode_forces_and_reports_stack_coverage(monkeypatch):
+def test_run_research_tier2_fast_mode_full_stack_request_downgrades_to_auto(monkeypatch):
     captured_calls: list[dict] = []
 
     def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
@@ -655,16 +678,16 @@ def test_run_research_tier2_full_stack_mode_forces_and_reports_stack_coverage(mo
 
     assert len(captured_calls) == 1
     call = captured_calls[0]
-    assert call["scientific_retrieval_enabled"] is True
-    assert call["web_retrieval_enabled"] is True
-    assert call["planner_hints"]["retrieval_stack_mode"] == "full"
-    assert call["planner_hints"]["graphrag_enabled_override"] is True
+    assert call["scientific_retrieval_enabled"] is False
+    assert call["web_retrieval_enabled"] is False
+    assert call["planner_hints"]["retrieval_stack_mode"] == "auto"
+    assert call["planner_hints"]["graphrag_enabled_override"] is None
 
-    assert "retrieval_stack_mode_full" in result["metadata"]["planner_trace"]["planner_hints"][
+    assert "stack_mode_full_downgraded_for_fast_mode" in result["metadata"]["planner_trace"]["planner_hints"][
         "reason_codes"
     ]
-    assert result["telemetry"]["stack_mode"]["requested"] == "full"
-    assert result["telemetry"]["stack_mode"]["effective"] == "full"
+    assert result["telemetry"]["stack_mode"]["requested"] == "auto"
+    assert result["telemetry"]["stack_mode"]["effective"] == "auto"
     assert result["telemetry"]["stack_coverage"]["vector_internal_used"] is True
     assert result["telemetry"]["stack_coverage"]["scientific_used"] is True
     assert result["telemetry"]["stack_coverage"]["web_used"] is True
@@ -775,7 +798,7 @@ def test_run_research_tier2_full_stack_mode_degrades_to_auto_when_stack_missing(
     result = tier2.run_research_tier2(
         {
             "query": "Compare warfarin and ibuprofen evidence.",
-            "research_mode": "fast",
+            "research_mode": "deep",
             "retrieval_stack_mode": "full",
             "strict_deepseek_required": False,
         }

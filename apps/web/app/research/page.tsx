@@ -233,18 +233,20 @@ export default function ResearchPage() {
         if (!items.length) return;
 
         const firstItem = items[0];
-        setActiveConversationId(firstItem.id);
-        setConversationTurns([firstItem]);
-        setSelectedTier(firstItem.result.tier);
-        setSelectedResearchMode(
-          firstItem.result.tier === "tier2" ? normalizeResearchMode(firstItem.result.researchMode) : "fast"
-        );
-        setSelectedRetrievalStackMode(
+        const firstItemResearchMode =
+          firstItem.result.tier === "tier2" ? normalizeResearchMode(firstItem.result.researchMode) : "fast";
+        const firstItemRetrievalStackMode =
           firstItem.result.tier === "tier2"
             ? normalizeRetrievalStackMode(
                 firstItem.result.retrievalStackMode ?? firstItem.result.debug?.retrievalStackMode
               )
-            : "auto"
+            : "auto";
+        setActiveConversationId(firstItem.id);
+        setConversationTurns([firstItem]);
+        setSelectedTier(firstItem.result.tier);
+        setSelectedResearchMode(firstItemResearchMode);
+        setSelectedRetrievalStackMode(
+          firstItemResearchMode === "fast" ? "auto" : firstItemRetrievalStackMode
         );
         void loadConversationTurns(firstItem.id, firstItem);
       } catch (cause) {
@@ -298,14 +300,18 @@ export default function ResearchPage() {
   };
 
   const onSelectConversation = (item: ConversationItem) => {
+    const conversationResearchMode =
+      item.result.tier === "tier2" ? normalizeResearchMode(item.result.researchMode) : "fast";
+    const conversationRetrievalStackMode =
+      item.result.tier === "tier2"
+        ? normalizeRetrievalStackMode(item.result.retrievalStackMode ?? item.result.debug?.retrievalStackMode)
+        : "auto";
     setActiveConversationId(item.id);
     setConversationTurns([item]);
     setSelectedTier(item.result.tier);
-    setSelectedResearchMode(item.result.tier === "tier2" ? normalizeResearchMode(item.result.researchMode) : "fast");
+    setSelectedResearchMode(conversationResearchMode);
     setSelectedRetrievalStackMode(
-      item.result.tier === "tier2"
-        ? normalizeRetrievalStackMode(item.result.retrievalStackMode ?? item.result.debug?.retrievalStackMode)
-        : "auto"
+      conversationResearchMode === "fast" ? "auto" : conversationRetrievalStackMode
     );
     setError("");
     setLiveFlowStages([]);
@@ -314,6 +320,20 @@ export default function ResearchPage() {
     setLiveStatusNote("");
     setLiveJobId(null);
     void loadConversationTurns(item.id, item);
+  };
+
+  useEffect(() => {
+    if (selectedTier !== "tier2") return;
+    if (selectedResearchMode !== "fast") return;
+    if (selectedRetrievalStackMode === "auto") return;
+    setSelectedRetrievalStackMode("auto");
+  }, [selectedResearchMode, selectedRetrievalStackMode, selectedTier]);
+
+  const onSelectResearchMode = (mode: ResearchExecutionMode) => {
+    setSelectedResearchMode(mode);
+    if (mode === "fast" && selectedRetrievalStackMode !== "auto") {
+      setSelectedRetrievalStackMode("auto");
+    }
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -580,6 +600,7 @@ export default function ResearchPage() {
   );
 
   const isTier2Running = isSubmitting && selectedTier === "tier2";
+  const isFastResearchMode = selectedTier === "tier2" && selectedResearchMode === "fast";
 
   const displayedFlowStages = useMemo(() => {
     if (isTier2Running && liveFlowStages.length) {
@@ -706,7 +727,7 @@ export default function ResearchPage() {
                       <button
                         key={mode.id}
                         type="button"
-                        onClick={() => setSelectedResearchMode(mode.id)}
+                        onClick={() => onSelectResearchMode(mode.id)}
                         disabled={isSubmitting}
                         className={[
                           "rounded-full px-3 py-1 text-xs font-semibold transition",
@@ -894,23 +915,38 @@ export default function ResearchPage() {
                 {selectedTier === "tier2" ? (
                   <fieldset className="inline-flex rounded-full border border-cyan-300/70 bg-cyan-500/10 p-1">
                     <legend className="sr-only">Chọn retrieval stack mode</legend>
-                    {RESEARCH_RETRIEVAL_STACK_OPTIONS.map((mode) => (
-                      <button
-                        key={mode.id}
-                        type="button"
-                        onClick={() => setSelectedRetrievalStackMode(mode.id)}
-                        disabled={isSubmitting}
-                        className={[
-                          "rounded-full px-3 py-1 text-xs font-semibold transition",
-                          selectedRetrievalStackMode === mode.id
-                            ? "bg-cyan-500 text-white"
-                            : "text-cyan-700 dark:text-cyan-200"
-                        ].join(" ")}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
+                    {RESEARCH_RETRIEVAL_STACK_OPTIONS.map((mode) => {
+                      const isFullStackMode = mode.id === "full";
+                      const isDisabled = isSubmitting || (isFastResearchMode && isFullStackMode);
+                      return (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          onClick={() => setSelectedRetrievalStackMode(mode.id)}
+                          disabled={isDisabled}
+                          title={
+                            isFastResearchMode && isFullStackMode
+                              ? "Fast mode chỉ hỗ trợ Auto stack."
+                              : undefined
+                          }
+                          className={[
+                            "rounded-full px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+                            selectedRetrievalStackMode === mode.id
+                              ? "bg-cyan-500 text-white"
+                              : "text-cyan-700 dark:text-cyan-200"
+                          ].join(" ")}
+                        >
+                          {mode.label}
+                        </button>
+                      );
+                    })}
                   </fieldset>
+                ) : null}
+
+                {isFastResearchMode ? (
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Fast mode cố định retrieval ở Auto stack để giảm độ trễ.
+                  </p>
                 ) : null}
 
                 <div className="flex flex-wrap items-center justify-between gap-2">

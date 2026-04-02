@@ -723,7 +723,13 @@ def _build_planner_hints(
         reason_codes.append("ddi_query_detected")
     if is_ddi_critical_query:
         reason_codes.append("ddi_critical_query")
-    stack_mode = "full" if str(retrieval_stack_mode).strip().lower() == "full" else "auto"
+    requested_stack_mode = (
+        "full" if str(retrieval_stack_mode).strip().lower() == "full" else "auto"
+    )
+    stack_mode = requested_stack_mode
+    if research_mode == "fast" and requested_stack_mode == "full":
+        stack_mode = "auto"
+        reason_codes.append("stack_mode_full_downgraded_for_fast_mode")
     reason_codes.append(f"retrieval_stack_mode_{stack_mode}")
 
     internal_top_k = 4 if has_uploaded else 3

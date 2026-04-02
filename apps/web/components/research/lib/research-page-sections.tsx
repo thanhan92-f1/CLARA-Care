@@ -84,6 +84,14 @@ export function ResearchMainCard({
   showDebugHints,
   evidenceSteps
 }: ResearchMainCardProps) {
+  const isFastResearchMode = selectedResearchMode === "fast";
+  const onModeChange = (mode: ResearchExecutionMode) => {
+    onSelectResearchMode(mode);
+    if (mode === "fast" && selectedRetrievalStackMode !== "auto") {
+      onSelectRetrievalStackMode("auto");
+    }
+  };
+
   return (
     <section className="rounded-3xl border border-slate-200 bg-white/90 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/85 sm:p-5 lg:p-6">
       <form onSubmit={onSubmit} className="space-y-3">
@@ -147,7 +155,7 @@ export function ResearchMainCard({
                     <legend className="sr-only">Chọn mức research</legend>
                     <button
                       type="button"
-                      onClick={() => onSelectResearchMode("fast")}
+                      onClick={() => onModeChange("fast")}
                       disabled={isSubmitting}
                       className={[
                         "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
@@ -160,7 +168,7 @@ export function ResearchMainCard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onSelectResearchMode("deep")}
+                      onClick={() => onModeChange("deep")}
                       disabled={isSubmitting}
                       className={[
                         "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
@@ -173,7 +181,7 @@ export function ResearchMainCard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onSelectResearchMode("deep_beta")}
+                      onClick={() => onModeChange("deep_beta")}
                       disabled={isSubmitting}
                       className={[
                         "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
@@ -204,7 +212,8 @@ export function ResearchMainCard({
                     <button
                       type="button"
                       onClick={() => onSelectRetrievalStackMode("full")}
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || isFastResearchMode}
+                      title={isFastResearchMode ? "Fast mode chỉ hỗ trợ Auto stack." : undefined}
                       className={[
                         "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                         selectedRetrievalStackMode === "full"
@@ -215,6 +224,12 @@ export function ResearchMainCard({
                       Full stack
                     </button>
                   </fieldset>
+
+                  {isFastResearchMode ? (
+                    <p className="text-xs text-cyan-700 dark:text-cyan-300">
+                      Fast mode cố định retrieval ở Auto stack để giảm độ trễ.
+                    </p>
+                  ) : null}
                 </>
               ) : null}
             </div>
