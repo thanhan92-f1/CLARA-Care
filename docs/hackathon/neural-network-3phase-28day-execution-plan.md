@@ -242,8 +242,8 @@ Day 7
 - [x] So sánh baseline vs bật reranker+NLI.
 
 Day 8
-- [ ] Tối ưu latency p95.
-- [ ] Cache candidate embedding/rerank inputs.
+- [x] Tối ưu latency p95.
+- [x] Cache candidate embedding/rerank inputs.
 
 Day 9
 - [ ] Chạy active eval loop full.

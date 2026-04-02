@@ -283,7 +283,7 @@ const NODES: FlowNodeDef[] = [
     title: "Evidence Index + Rerank",
     subtitle: "dedupe / hybrid score / neural reranker",
     description:
-      "Dedupe, hybrid dense+sparse score, biomedical boost và neural reranker sidecar (timeout-safe fallback) để chọn evidence chất lượng cao.",
+      "Dedupe, hybrid dense+sparse score, biomedical boost và neural reranker sidecar (timeout-safe fallback + input cache TTL) để chọn evidence chất lượng cao.",
     riskNote:
       "Nếu reranker không có timeout-safe fallback thì một connector chậm có thể làm gãy toàn bộ flow.",
     x: 1640,
@@ -793,7 +793,8 @@ export default function AdminFlowVisualizer({
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
             Canvas mới mô tả pipeline deep research nâng cấp: safety/legal ingress, query canonicalization,
             deep_beta critic loop, retrieval orchestration, contradiction mining, verification, API pass-through
-            contract, UI telemetry matrix và baseline compare gate (Day7) trước khi vào feedback loop.
+            contract, UI telemetry matrix, baseline compare gate (Day7) và reranker cache gate (Day8)
+            trước khi vào feedback loop.
           </p>
         </div>
 
