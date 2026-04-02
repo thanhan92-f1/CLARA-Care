@@ -270,7 +270,7 @@ Day 14
 - [x] Bổ sung `mapping_source`, `confidence`.
 
 Day 15
-- [ ] Nâng UX manual confirm cho người lớn tuổi.
+- [x] Nâng UX manual confirm cho người lớn tuổi.
 
 Day 16
 - [ ] Admin curation endpoint + audit trail.

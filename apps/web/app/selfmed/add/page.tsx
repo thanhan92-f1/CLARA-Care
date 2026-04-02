@@ -68,6 +68,11 @@ export default function SelfMedAddPage() {
     });
   }, [confirmedLowConfidenceKeys, detections, selectedKeys]);
 
+  const lowConfidenceTotal = useMemo(
+    () => detections.filter((item) => isLowConfidenceDetection(item)).length,
+    [detections]
+  );
+
   const resetSelection = (items: ScanDetection[]) => {
     const nextSelected: Record<string, boolean> = {};
     const nextConfirmed: Record<string, boolean> = {};
@@ -150,6 +155,29 @@ export default function SelfMedAddPage() {
 
   const onToggleLowConfidenceConfirm = (key: string) => {
     setConfirmedLowConfidenceKeys((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const onSelectAllDetections = (selected: boolean) => {
+    if (!detections.length) return;
+    const nextSelected: Record<string, boolean> = {};
+    detections.forEach((item, index) => {
+      const key = getDetectionKey(item, index);
+      nextSelected[key] = selected;
+    });
+    setSelectedKeys(nextSelected);
+  };
+
+  const onConfirmAllLowConfidence = (confirmed: boolean) => {
+    if (!detections.length) return;
+    const nextConfirmed = { ...confirmedLowConfidenceKeys };
+    detections.forEach((item, index) => {
+      if (!isLowConfidenceDetection(item)) return;
+      const key = getDetectionKey(item, index);
+      if (selectedKeys[key]) {
+        nextConfirmed[key] = confirmed;
+      }
+    });
+    setConfirmedLowConfidenceKeys(nextConfirmed);
   };
 
   const onAddManual = async (event: FormEvent<HTMLFormElement>) => {
@@ -263,9 +291,33 @@ export default function SelfMedAddPage() {
                     Đã chọn {selectedDetections.length}/{detections.length}
                   </span>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onSelectAllDetections(true)}
+                    className="min-h-11 rounded-xl border border-cyan-300/55 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
+                  >
+                    Chọn tất cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectAllDetections(false)}
+                    className="min-h-11 rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2 text-sm font-semibold text-[var(--text-secondary)] transition hover:border-[color:var(--shell-border-strong)]"
+                  >
+                    Bỏ chọn tất cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onConfirmAllLowConfidence(true)}
+                    disabled={!lowConfidenceTotal}
+                    className="min-h-11 rounded-xl border border-amber-300/70 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-60"
+                  >
+                    Xác nhận tất cả thuốc độ tin cậy thấp
+                  </button>
+                </div>
                 {pendingLowConfidenceSelections.length ? (
-                  <p className="rounded-xl border border-amber-300/70 bg-amber-500/20 px-3 py-2 text-sm font-medium text-amber-100">
-                    Còn {pendingLowConfidenceSelections.length} thuốc độ tin cậy thấp cần xác nhận thủ công trước khi nhập.
+                  <p className="rounded-xl border-2 border-amber-300/80 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100">
+                    Còn {pendingLowConfidenceSelections.length}/{lowConfidenceTotal} thuốc độ tin cậy thấp cần xác nhận thủ công trước khi nhập.
                   </p>
                 ) : null}
 

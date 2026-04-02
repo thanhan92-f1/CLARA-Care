@@ -135,6 +135,11 @@ export default function CareguardPage() {
     });
   }, [confirmedDetectionKeys, receiptDetections]);
 
+  const lowConfidenceDetectionCount = useMemo(
+    () => receiptDetections.filter((item) => isLowConfidenceDetection(item)).length,
+    [receiptDetections]
+  );
+
   const refreshConsentStatus = async (): Promise<boolean> => {
     setConsentError("");
     try {
@@ -284,6 +289,17 @@ export default function CareguardPage() {
 
   const onConfirmDetection = (key: string) => {
     setConfirmedDetectionKeys((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const onConfirmAllLowConfidence = (confirmed: boolean) => {
+    if (!receiptDetections.length) return;
+    const nextConfirmed = { ...confirmedDetectionKeys };
+    receiptDetections.forEach((item, index) => {
+      if (!isLowConfidenceDetection(item)) return;
+      const key = getDetectionKey(item, index);
+      nextConfirmed[key] = confirmed;
+    });
+    setConfirmedDetectionKeys(nextConfirmed);
   };
 
   const onAddManualMedication = async () => {
@@ -501,9 +517,27 @@ export default function CareguardPage() {
                   className="mt-2 rounded-xl border-2 border-amber-400 bg-amber-100 px-3 py-2 text-base font-semibold text-amber-950"
                   aria-live="assertive"
                 >
-                  Còn {pendingLowConfidenceDetections.length} thuốc độ tin cậy thấp chưa được xác nhận thủ công.
+                  Còn {pendingLowConfidenceDetections.length}/{lowConfidenceDetectionCount} thuốc độ tin cậy thấp chưa được xác nhận thủ công.
                 </p>
               ) : null}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onConfirmAllLowConfidence(true)}
+                  disabled={!lowConfidenceDetectionCount}
+                  className="min-h-12 rounded-xl border-2 border-amber-400 bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-950 transition hover:bg-amber-200 disabled:opacity-60"
+                >
+                  Xác nhận tất cả mục độ tin cậy thấp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onConfirmAllLowConfidence(false)}
+                  disabled={!lowConfidenceDetectionCount}
+                  className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+                >
+                  Bỏ xác nhận tất cả
+                </button>
+              </div>
               <ul className="mt-3 grid gap-2 md:grid-cols-2">
                 {receiptDetections.map((item, index) => {
                   const key = getDetectionKey(item, index);
