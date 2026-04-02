@@ -415,7 +415,7 @@ const NODES: FlowNodeDef[] = [
     title: "Baseline Regression Compare",
     subtitle: "current vs previous KPI report",
     description:
-      "So sánh KPI run hiện tại với baseline run trước, phát hiện tụt chất lượng theo ngưỡng drop-rate/latency.",
+      "So sánh KPI run hiện tại với baseline run trước (kể cả profile baseline vs reranker+nli), phát hiện tụt chất lượng theo ngưỡng drop-rate/latency.",
     riskNote:
       "Không có regression compare sẽ khó phát hiện quality degrade trước khi merge/deploy.",
     x: 3360,
@@ -793,7 +793,7 @@ export default function AdminFlowVisualizer({
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
             Canvas mới mô tả pipeline deep research nâng cấp: safety/legal ingress, query canonicalization,
             deep_beta critic loop, retrieval orchestration, contradiction mining, verification, API pass-through
-            contract và UI telemetry matrix trước khi vào feedback loop.
+            contract, UI telemetry matrix và baseline compare gate (Day7) trước khi vào feedback loop.
           </p>
         </div>
 
