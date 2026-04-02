@@ -371,7 +371,18 @@ class RagPipelineP1:
         except (TypeError, ValueError):
             parsed_duration = None
 
-        rerank_payload = rerank if isinstance(rerank, dict) else {}
+        rerank_payload = dict(rerank) if isinstance(rerank, dict) else {}
+        neural_payload = (
+            rerank_payload.get("neural") if isinstance(rerank_payload.get("neural"), dict) else {}
+        )
+        if "rerank_latency_ms" not in rerank_payload:
+            rerank_payload["rerank_latency_ms"] = neural_payload.get("rerank_latency_ms")
+        if "rerank_topn" not in rerank_payload:
+            rerank_payload["rerank_topn"] = neural_payload.get("rerank_topn")
+        if "rerank_timed_out" not in rerank_payload:
+            rerank_payload["rerank_timed_out"] = bool(neural_payload.get("rerank_timed_out"))
+        if "rerank_reason" not in rerank_payload:
+            rerank_payload["rerank_reason"] = neural_payload.get("rerank_reason")
         return {
             "retrieved_count": len(docs),
             "source_counts": self._source_counts(docs),

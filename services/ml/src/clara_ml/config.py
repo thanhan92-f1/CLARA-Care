@@ -237,6 +237,26 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="RAG_BIOMEDICAL_RERANK_ENABLED",
     )
+    rag_reranker_enabled: bool = Field(
+        default=False,
+        validation_alias="RAG_RERANKER_ENABLED",
+    )
+    rag_reranker_model: str = Field(
+        default="phase1-skeleton-reranker-v0",
+        validation_alias="RAG_RERANKER_MODEL",
+    )
+    rag_reranker_top_n: int = Field(
+        default=12,
+        validation_alias="RAG_RERANKER_TOP_N",
+        ge=1,
+        le=128,
+    )
+    rag_reranker_timeout_ms: int = Field(
+        default=250,
+        validation_alias="RAG_RERANKER_TIMEOUT_MS",
+        ge=50,
+        le=30000,
+    )
     rag_biomedical_rerank_alpha: float = Field(
         default=0.28,
         validation_alias="RAG_BIOMEDICAL_RERANK_ALPHA",

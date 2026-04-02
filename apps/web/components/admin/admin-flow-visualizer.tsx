@@ -279,9 +279,11 @@ const NODES: FlowNodeDef[] = [
   {
     id: "evidence_index",
     title: "Evidence Index + Rerank",
-    subtitle: "dedupe / hybrid score / trust weighting",
-    description: "Dedupe, hybrid dense+sparse score, trust-tier weighting và chọn evidence có chất lượng cao.",
-    riskNote: "Nếu rerank không có trust/claim signals thì tài liệu nhiễu vẫn lọt vào synthesis.",
+    subtitle: "dedupe / hybrid score / neural reranker",
+    description:
+      "Dedupe, hybrid dense+sparse score, biomedical boost và neural reranker sidecar (timeout-safe fallback) để chọn evidence chất lượng cao.",
+    riskNote:
+      "Nếu reranker không có timeout-safe fallback thì một connector chậm có thể làm gãy toàn bộ flow.",
     x: 1640,
     y: 700,
     tone: "teal",
@@ -320,9 +322,11 @@ const NODES: FlowNodeDef[] = [
   {
     id: "verification_matrix",
     title: "Claim Matrix",
-    subtitle: "supported / unsupported / confidence",
-    description: "Chuẩn hóa verdict, severity và unsupported claims trước khi policy gate ra quyết định.",
-    riskNote: "Claim matrix lệch sẽ tạo warning sai, làm giảm niềm tin vào hệ thống.",
+    subtitle: "supported / unsupported / confidence / NLI",
+    description:
+      "Chuẩn hóa verdict claim-level (NLI style), severity và unsupported claims trước khi policy gate ra quyết định.",
+    riskNote:
+      "Claim matrix lệch hoặc thiếu contradiction signal sẽ đẩy policy gate về nhánh quyết định sai.",
     x: 2220,
     y: 1220,
     tone: "indigo",

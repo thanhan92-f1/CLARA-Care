@@ -9,6 +9,7 @@ from clara_ml.rag.embedder import HttpEmbeddingClient
 from .document_builder import DocumentBuilder
 from .domain import Document
 from .external_gateway import ExternalSourceGateway
+from .reranker import NeuralReranker
 from .score_engine import DocumentScorer
 from .text_utils import dedupe_documents, query_terms
 
@@ -35,6 +36,7 @@ class InMemoryRetriever:
         self.builder = DocumentBuilder()
         self.external_gateway = ExternalSourceGateway()
         self.scorer = DocumentScorer(embedder=embedder)
+        self.reranker = NeuralReranker()
         self.documents = [
             self.builder.normalized_document(doc, default_source="internal") for doc in documents
         ]
@@ -125,20 +127,31 @@ class InMemoryRetriever:
             source_policies=self.builder.parse_source_policies(rag_sources),
             score_trace=score_trace,
         )
+        rerank_result = self.reranker.rerank(query, ranked, top_k=top_k)
+        ranked = rerank_result.documents
+        neural_rerank = rerank_result.metadata if isinstance(rerank_result.metadata, dict) else {}
+        biomedical_rerank = {
+            "enabled": bool(settings.rag_biomedical_rerank_enabled),
+            "alpha": float(settings.rag_biomedical_rerank_alpha),
+            "top_n": int(settings.rag_biomedical_rerank_top_n),
+            "applied_count": sum(
+                1
+                for doc in ranked
+                if bool((doc.metadata or {}).get("biomedical_rerank_enabled"))
+            ),
+        }
         index_trace = {
             "before_dedupe_count": len(candidates),
             "after_dedupe_count": len(deduped),
             "selected_count": len(ranked),
             "duration_ms": round((perf_counter() - started) * 1000.0, 3),
             "rerank": {
-                "enabled": bool(settings.rag_biomedical_rerank_enabled),
-                "alpha": float(settings.rag_biomedical_rerank_alpha),
-                "top_n": int(settings.rag_biomedical_rerank_top_n),
-                "applied_count": sum(
-                    1
-                    for doc in ranked
-                    if bool((doc.metadata or {}).get("biomedical_rerank_enabled"))
-                ),
+                **biomedical_rerank,
+                "neural": neural_rerank,
+                "rerank_latency_ms": neural_rerank.get("rerank_latency_ms"),
+                "rerank_topn": neural_rerank.get("rerank_topn"),
+                "rerank_timed_out": bool(neural_rerank.get("rerank_timed_out")),
+                "rerank_reason": neural_rerank.get("rerank_reason"),
             },
             "score_trace": score_trace,
             "top_documents": self._trace_top_docs(ranked),
@@ -208,6 +221,7 @@ class InMemoryRetriever:
                 "after_dedupe_count": index_trace.get("after_dedupe_count"),
                 "selected_count": index_trace.get("selected_count"),
                 "duration_ms": index_trace.get("duration_ms"),
+                "rerank": index_trace.get("rerank", {}),
             },
             "crawl_summary": {},
             "score_trace": index_trace["score_trace"],
@@ -301,6 +315,7 @@ class InMemoryRetriever:
                 "after_dedupe_count": index_phase.get("after_dedupe_count"),
                 "selected_count": index_phase.get("selected_count"),
                 "duration_ms": index_phase.get("duration_ms"),
+                "rerank": index_phase.get("rerank", {}),
             },
             "crawl_summary": {},
             "score_trace": index_phase["score_trace"],
@@ -541,6 +556,7 @@ class InMemoryRetriever:
                 "after_dedupe_count": int(index_phase["after_dedupe_count"]),
                 "selected_count": int(index_phase["selected_count"]),
                 "duration_ms": index_phase.get("duration_ms"),
+                "rerank": index_phase.get("rerank", {}),
             },
             "crawl_summary": crawl_trace,
             "duration_ms": round((perf_counter() - started) * 1000.0, 3),
