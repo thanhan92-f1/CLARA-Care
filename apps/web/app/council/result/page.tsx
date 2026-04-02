@@ -3,11 +3,26 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CouncilEmptyState from "@/components/council/council-empty-state";
+import CouncilFlowCanvas from "@/components/council/council-flow-canvas";
 import CouncilWorkspaceNav from "@/components/council/council-workspace-nav";
 import { CouncilList, CouncilMetricCard, CouncilSection } from "@/components/council/council-primitives";
 import PageShell from "@/components/ui/page-shell";
 import { clearCouncilSnapshot, CouncilRunSnapshot, loadCouncilSnapshot } from "@/lib/council";
 import { buildCouncilView } from "@/lib/council-view";
+
+function resolveNeedsMoreInfo(snapshot: CouncilRunSnapshot): boolean {
+  const root = snapshot.raw as Record<string, unknown> | null;
+  if (!root || typeof root !== "object") return false;
+
+  const direct = root.needs_more_info;
+  if (typeof direct === "boolean") return direct;
+
+  const analyze = root.analyze as Record<string, unknown> | null;
+  if (analyze && typeof analyze === "object" && typeof analyze.needs_more_info === "boolean") {
+    return analyze.needs_more_info;
+  }
+  return false;
+}
 
 export default function CouncilResultPage() {
   const [snapshot, setSnapshot] = useState<CouncilRunSnapshot | null>(null);
@@ -34,6 +49,13 @@ export default function CouncilResultPage() {
           />
         ) : (
           <>
+            <CouncilFlowCanvas
+              isEmergency={view.urgencyTone === "emergency"}
+              needsMoreInfo={resolveNeedsMoreInfo(view.snapshot)}
+              hasCitations={view.citations.length > 0}
+              confidenceScore={view.snapshot.result.confidenceScore ?? null}
+            />
+
             <CouncilSection eyebrow="Summary" title="Tóm tắt kết quả">
               <div className="grid gap-3 md:grid-cols-4">
                 <CouncilMetricCard label="Thời gian" value={view.createdAtLabel} />
