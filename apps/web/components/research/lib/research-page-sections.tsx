@@ -1,7 +1,12 @@
 import { ChangeEvent, FormEvent, RefObject } from "react";
 import MarkdownAnswer from "@/components/research/markdown-answer";
 import { ResearchResult } from "@/components/research/lib/research-page-types";
-import { ResearchExecutionMode, ResearchTier, Tier2Step } from "@/lib/research";
+import {
+  ResearchExecutionMode,
+  ResearchRetrievalStackMode,
+  ResearchTier,
+  Tier2Step
+} from "@/lib/research";
 
 type ResearchWorkspaceHeaderProps = {
   roleLabel: string;
@@ -51,6 +56,8 @@ type ResearchMainCardProps = {
   onSelectTier: (tier: ResearchTier) => void;
   selectedResearchMode: ResearchExecutionMode;
   onSelectResearchMode: (mode: ResearchExecutionMode) => void;
+  selectedRetrievalStackMode: ResearchRetrievalStackMode;
+  onSelectRetrievalStackMode: (mode: ResearchRetrievalStackMode) => void;
 
   lastQuery: string;
   result: ResearchResult | null;
@@ -70,6 +77,8 @@ export function ResearchMainCard({
   onSelectTier,
   selectedResearchMode,
   onSelectResearchMode,
+  selectedRetrievalStackMode,
+  onSelectRetrievalStackMode,
   lastQuery,
   result,
   showDebugHints,
@@ -133,48 +142,80 @@ export function ResearchMainCard({
               </fieldset>
 
               {selectedTier === "tier2" ? (
-                <fieldset className="inline-flex rounded-full border border-sky-300 bg-sky-50 p-1 dark:border-sky-700 dark:bg-sky-950/30">
-                  <legend className="sr-only">Chọn mức research</legend>
-                  <button
-                    type="button"
-                    onClick={() => onSelectResearchMode("fast")}
-                    disabled={isSubmitting}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                      selectedResearchMode === "fast"
-                        ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
-                        : "text-sky-700 dark:text-sky-300"
-                    ].join(" ")}
-                  >
-                    Fast research
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSelectResearchMode("deep")}
-                    disabled={isSubmitting}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                      selectedResearchMode === "deep"
-                        ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
-                        : "text-sky-700 dark:text-sky-300"
-                    ].join(" ")}
-                  >
-                    Deep research
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSelectResearchMode("deep_beta")}
-                    disabled={isSubmitting}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                      selectedResearchMode === "deep_beta"
-                        ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
-                        : "text-sky-700 dark:text-sky-300"
-                    ].join(" ")}
-                  >
-                    Deep beta
-                  </button>
-                </fieldset>
+                <>
+                  <fieldset className="inline-flex rounded-full border border-sky-300 bg-sky-50 p-1 dark:border-sky-700 dark:bg-sky-950/30">
+                    <legend className="sr-only">Chọn mức research</legend>
+                    <button
+                      type="button"
+                      onClick={() => onSelectResearchMode("fast")}
+                      disabled={isSubmitting}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                        selectedResearchMode === "fast"
+                          ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
+                          : "text-sky-700 dark:text-sky-300"
+                      ].join(" ")}
+                    >
+                      Fast research
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectResearchMode("deep")}
+                      disabled={isSubmitting}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                        selectedResearchMode === "deep"
+                          ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
+                          : "text-sky-700 dark:text-sky-300"
+                      ].join(" ")}
+                    >
+                      Deep research
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectResearchMode("deep_beta")}
+                      disabled={isSubmitting}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                        selectedResearchMode === "deep_beta"
+                          ? "bg-sky-700 text-white dark:bg-sky-300 dark:text-slate-900"
+                          : "text-sky-700 dark:text-sky-300"
+                      ].join(" ")}
+                    >
+                      Deep beta
+                    </button>
+                  </fieldset>
+
+                  <fieldset className="inline-flex rounded-full border border-cyan-300 bg-cyan-50 p-1 dark:border-cyan-700 dark:bg-cyan-950/30">
+                    <legend className="sr-only">Chọn retrieval stack</legend>
+                    <button
+                      type="button"
+                      onClick={() => onSelectRetrievalStackMode("auto")}
+                      disabled={isSubmitting}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                        selectedRetrievalStackMode === "auto"
+                          ? "bg-cyan-700 text-white dark:bg-cyan-300 dark:text-slate-900"
+                          : "text-cyan-700 dark:text-cyan-300"
+                      ].join(" ")}
+                    >
+                      Auto stack
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectRetrievalStackMode("full")}
+                      disabled={isSubmitting}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                        selectedRetrievalStackMode === "full"
+                          ? "bg-cyan-700 text-white dark:bg-cyan-300 dark:text-slate-900"
+                          : "text-cyan-700 dark:text-cyan-300"
+                      ].join(" ")}
+                    >
+                      Full stack
+                    </button>
+                  </fieldset>
+                </>
               ) : null}
             </div>
 
@@ -211,7 +252,7 @@ export function ResearchMainCard({
             <span className="inline-flex items-center gap-2">
               <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
               {selectedTier === "tier2"
-                ? `Server đang xử lý research mode: ${selectedResearchMode === "deep_beta" ? "DEEP BETA" : selectedResearchMode.toUpperCase()}. Timeline sẽ cập nhật theo flow thật từ backend.`
+                ? `Server đang xử lý research mode: ${selectedResearchMode === "deep_beta" ? "DEEP BETA" : selectedResearchMode.toUpperCase()} · retrieval: ${selectedRetrievalStackMode === "full" ? "FULL STACK" : "AUTO STACK"}. Timeline sẽ cập nhật theo flow thật từ backend.`
                 : "CLARA đang tổng hợp trả lời nhanh..."}
             </span>
           </article>

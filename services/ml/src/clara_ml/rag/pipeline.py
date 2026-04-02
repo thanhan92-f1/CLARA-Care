@@ -1149,6 +1149,15 @@ class RagPipelineP1:
             "graphrag_edge_count": int(retrieval_trace.get("graphrag_edge_count") or 0),
             "stack_mode_requested": str(retrieval_trace.get("stack_mode_requested") or "auto"),
             "stack_mode_effective": str(retrieval_trace.get("stack_mode_effective") or "auto"),
+            "stack_mode_reason_codes": (
+                [
+                    str(item).strip()
+                    for item in retrieval_trace.get("stack_mode_reason_codes", [])
+                    if str(item).strip()
+                ]
+                if isinstance(retrieval_trace.get("stack_mode_reason_codes"), list)
+                else []
+            ),
             "stack_coverage": (
                 retrieval_trace.get("stack_coverage")
                 if isinstance(retrieval_trace.get("stack_coverage"), dict)
@@ -1359,6 +1368,7 @@ class RagPipelineP1:
             "graphrag_edge_count": 0,
             "stack_mode_requested": requested_stack_mode,
             "stack_mode_effective": "auto",
+            "stack_mode_reason_codes": [],
             "stack_coverage": {},
         }
 
@@ -1919,25 +1929,44 @@ class RagPipelineP1:
         web_used = bool(provider_keys.intersection(self._WEB_PROVIDER_KEYS))
         graph_used = bool(retrieval_trace.get("graphrag_enabled"))
         graph_expansion_count = int(retrieval_trace.get("graphrag_expansion_count") or 0)
-        stack_mode_effective = (
-            "full"
-            if (
-                requested_stack_mode == "full"
-                and vector_internal_used
-                and scientific_used
-                and web_used
-                and graph_used
-            )
-            else "auto"
-        )
-        retrieval_trace["stack_mode_effective"] = stack_mode_effective
-        retrieval_trace["stack_coverage"] = {
+        stack_coverage = {
             "vector_internal_used": vector_internal_used,
             "graph_used": graph_used,
             "graph_expansion_count": graph_expansion_count,
             "scientific_used": scientific_used,
             "web_used": web_used,
         }
+        missing_stack_components = [
+            name
+            for name, used in (
+                ("vector_internal", vector_internal_used),
+                ("graph", graph_used),
+                ("scientific", scientific_used),
+                ("web", web_used),
+            )
+            if not used
+        ]
+        stack_mode_effective = (
+            "full"
+            if (
+                requested_stack_mode == "full"
+                and not missing_stack_components
+            )
+            else "auto"
+        )
+        stack_mode_reason_codes: list[str] = [f"stack_mode_requested_{requested_stack_mode}"]
+        if stack_mode_effective == "full":
+            stack_mode_reason_codes.append("stack_mode_effective_full")
+        elif requested_stack_mode == "full":
+            stack_mode_reason_codes.append("stack_mode_effective_auto_missing_stack")
+            stack_mode_reason_codes.extend(
+                f"stack_mode_missing_{component}" for component in missing_stack_components
+            )
+        else:
+            stack_mode_reason_codes.append("stack_mode_effective_auto")
+        retrieval_trace["stack_mode_effective"] = stack_mode_effective
+        retrieval_trace["stack_mode_reason_codes"] = list(dict.fromkeys(stack_mode_reason_codes))
+        retrieval_trace["stack_coverage"] = stack_coverage
 
         def _build_result(
             *,

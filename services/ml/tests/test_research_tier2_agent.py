@@ -239,6 +239,96 @@ def test_rag_pipeline_honors_graphrag_enabled_override_runtime(monkeypatch):
     )
 
 
+def test_rag_pipeline_full_stack_mode_degrades_when_web_provider_missing(monkeypatch):
+    class _FakeRetriever:
+        def __init__(self) -> None:
+            self.last_trace: dict = {}
+
+        def retrieve_internal(self, query: str, top_k: int = 3, **_kwargs) -> list[Document]:
+            self.last_trace = {
+                "search_phase": {
+                    "query_terms": ["warfarin", "ibuprofen"],
+                    "connectors_attempted": [
+                        {"provider": "internal_corpus", "status": "completed", "documents": 1}
+                    ],
+                    "source_errors": {},
+                    "total_candidates": 1,
+                },
+                "index_phase": {
+                    "before_dedupe_count": 1,
+                    "after_dedupe_count": 1,
+                    "selected_count": 1,
+                    "duration_ms": 1.0,
+                },
+            }
+            return [
+                Document(
+                    id="internal-1",
+                    text="internal evidence",
+                    metadata={"source": "internal", "url": "https://internal.example/1", "score": 0.9},
+                )
+            ]
+
+        def retrieve(self, query: str, top_k: int = 3, **_kwargs) -> list[Document]:
+            self.last_trace = {
+                "search_phase": {
+                    "query_terms": ["warfarin", "ibuprofen", "interaction"],
+                    "connectors_attempted": [
+                        {"provider": "pubmed", "status": "completed", "documents": 1}
+                    ],
+                    "source_errors": {},
+                    "total_candidates": 1,
+                },
+                "index_phase": {
+                    "before_dedupe_count": 1,
+                    "after_dedupe_count": 1,
+                    "selected_count": 1,
+                    "duration_ms": 1.0,
+                },
+            }
+            return [
+                Document(
+                    id="pubmed-1",
+                    text="scientific evidence",
+                    metadata={"source": "pubmed", "url": "https://pubmed.ncbi.nlm.nih.gov/123/", "score": 0.88},
+                )
+            ]
+
+    class _FakeGraphSidecar:
+        def expand(self, query: str, documents: list[Document], max_neighbors: int, expansion_docs: int):
+            return SimpleNamespace(
+                summary={
+                    "enabled": True,
+                    "node_count": 2,
+                    "edge_count": 1,
+                    "expansion_count": 0,
+                    "max_neighbors": max_neighbors,
+                    "expansion_doc_budget": expansion_docs,
+                },
+                expansion_docs=[],
+            )
+
+    pipeline = RagPipelineP1(retriever=_FakeRetriever(), llm_client=None, deepseek_api_key="")
+    pipeline._graphrag = _FakeGraphSidecar()
+    monkeypatch.setattr(pipeline, "_context_relevance", lambda _query, _docs: 0.0)
+
+    result = pipeline.run(
+        "warfarin ibuprofen interaction",
+        generation_enabled=False,
+        planner_hints={"retrieval_stack_mode": "full", "graphrag_enabled_override": True},
+    )
+
+    retrieval_trace = result.trace["retrieval"]
+    assert retrieval_trace["stack_mode_requested"] == "full"
+    assert retrieval_trace["stack_mode_effective"] == "auto"
+    assert retrieval_trace["stack_coverage"]["vector_internal_used"] is True
+    assert retrieval_trace["stack_coverage"]["scientific_used"] is True
+    assert retrieval_trace["stack_coverage"]["web_used"] is False
+    assert retrieval_trace["stack_coverage"]["graph_used"] is True
+    assert "stack_mode_effective_auto_missing_stack" in retrieval_trace["stack_mode_reason_codes"]
+    assert "stack_mode_missing_web" in retrieval_trace["stack_mode_reason_codes"]
+
+
 def test_filter_context_for_ddi_keeps_primary_alias_rows():
     topic = "Tương tác warfarin với thuốc giảm đau"
     rows = [
@@ -589,6 +679,118 @@ def test_run_research_tier2_full_stack_mode_forces_and_reports_stack_coverage(mo
         event.get("stage") == "graphrag_sidecar" and event.get("status") == "completed"
         for event in result.get("flow_events", [])
     )
+
+
+def test_run_research_tier2_full_stack_mode_degrades_to_auto_when_stack_missing(monkeypatch):
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        planner_hints = kwargs.get("planner_hints", {})
+        if not isinstance(planner_hints, dict):
+            planner_hints = {}
+        retrieval_trace = {
+            "source_attempts": [
+                {"provider": "internal_corpus", "status": "completed", "documents": 1},
+                {"provider": "pubmed", "status": "completed", "documents": 1},
+            ],
+            "source_errors": {},
+            "index_summary": {"selected_count": 2, "retrieved_count": 2},
+            "crawl_summary": {"domains": []},
+            "query_plan": planner_hints.get("query_plan", {}),
+            "graphrag_enabled": True,
+            "graphrag_expansion_count": 1,
+            "graphrag_node_count": 2,
+            "graphrag_edge_count": 1,
+            "stack_mode_requested": "full",
+            # Simulate inconsistent upstream trace; agent telemetry must harden this.
+            "stack_mode_effective": "full",
+            "stack_mode_reason_codes": ["stack_mode_effective_full"],
+            "stack_coverage": {
+                "vector_internal_used": True,
+                "graph_used": True,
+                "graph_expansion_count": 1,
+                "scientific_used": True,
+                "web_used": False,
+            },
+        }
+        return RagResult(
+            query=query,
+            retrieved_ids=["internal-1", "pubmed-1"],
+            answer="Thiếu lớp web retrieval nên full stack không đạt.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "internal-1",
+                    "source": "internal",
+                    "title": "Internal context",
+                    "text": "Internal evidence.",
+                    "url": "https://internal.example/1",
+                    "score": 0.82,
+                },
+                {
+                    "id": "pubmed-1",
+                    "source": "pubmed",
+                    "title": "Scientific context",
+                    "text": "Scientific evidence.",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/87654321/",
+                    "score": 0.88,
+                },
+            ],
+            context_debug={
+                "relevance": 0.9,
+                "low_context_threshold": kwargs.get("low_context_threshold", 0.15),
+                "source_counts": {"internal": 1, "pubmed": 1},
+                "retrieval_trace": retrieval_trace,
+            },
+            flow_events=[],
+            trace={
+                "retrieval": retrieval_trace,
+                "generation": {"mode": "llm"},
+            },
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]) -> SimpleNamespace:
+        return SimpleNamespace(
+            stage="fides_lite",
+            verdict="pass",
+            severity="low",
+            confidence=0.95,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            note="OK",
+            verification_matrix=[],
+            contradiction_summary={
+                "version": "claim-v1",
+                "has_contradiction": False,
+                "contradiction_count": 0,
+                "claims": [],
+                "details": [],
+                "note": "No contradiction detected.",
+            },
+        )
+
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": "Compare warfarin and ibuprofen evidence.",
+            "research_mode": "fast",
+            "retrieval_stack_mode": "full",
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert result["telemetry"]["stack_mode"]["requested"] == "full"
+    assert result["telemetry"]["stack_mode"]["effective"] == "auto"
+    reason_codes = result["telemetry"]["stack_mode"]["reason_codes"]
+    assert "stack_mode_effective_auto_missing_stack" in reason_codes
+    assert "stack_mode_missing_web" in reason_codes
+    assert "stack_mode_effective_adjusted_from_retrieval_trace" in reason_codes
+    assert result["telemetry"]["stack_coverage"]["vector_internal_used"] is True
+    assert result["telemetry"]["stack_coverage"]["scientific_used"] is True
+    assert result["telemetry"]["stack_coverage"]["graph_used"] is True
+    assert result["telemetry"]["stack_coverage"]["web_used"] is False
 
 
 def test_run_research_tier2_llm_query_planner_fallback_path(monkeypatch):

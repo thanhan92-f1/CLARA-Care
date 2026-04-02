@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 
 Role = Literal["normal", "researcher", "doctor", "admin"]
 
@@ -506,6 +506,10 @@ class ResearchTier2JobCreateRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     message: str | None = None
     research_mode: Literal["fast", "deep", "deep_beta"] = "fast"
+    retrieval_stack_mode: Literal["auto", "full"] = Field(
+        default="auto",
+        validation_alias=AliasChoices("retrieval_stack_mode", "stack_mode"),
+    )
     answer_format: str = "markdown"
     response_format: str = "markdown"
     render_hints: dict[str, object] = Field(default_factory=dict)

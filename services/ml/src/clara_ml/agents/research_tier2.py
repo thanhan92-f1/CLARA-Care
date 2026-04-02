@@ -1237,6 +1237,11 @@ def _build_retrieval_trace(
         "query_plan": query_plan,
         "stack_mode_requested": str(retrieval_debug.get("stack_mode_requested") or "auto"),
         "stack_mode_effective": str(retrieval_debug.get("stack_mode_effective") or "auto"),
+        "stack_mode_reason_codes": (
+            [str(item).strip() for item in retrieval_debug.get("stack_mode_reason_codes", []) if str(item).strip()]
+            if isinstance(retrieval_debug.get("stack_mode_reason_codes"), list)
+            else []
+        ),
         "stack_coverage": retrieval_debug.get("stack_coverage")
         if isinstance(retrieval_debug.get("stack_coverage"), dict)
         else {},
@@ -3360,12 +3365,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         if str(planner_hints.get("retrieval_stack_mode") or "").strip().lower() == "full"
         else "auto"
     )
-    stack_coverage = (
+    stack_coverage_raw = (
         retrieval_trace.get("stack_coverage")
         if isinstance(retrieval_trace.get("stack_coverage"), dict)
         else {}
     )
-    if not stack_coverage:
+    if not stack_coverage_raw:
         provider_keys: set[str] = set()
         for attempt in source_attempts:
             if not isinstance(attempt, dict):
@@ -3386,27 +3391,74 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "external_scientific",
         }
         web_provider_keys = {"searxng", "searxng-crawl", "web_crawl"}
-        stack_coverage = {
+        stack_coverage_raw = {
             "vector_internal_used": "internal_corpus" in provider_keys,
             "graph_used": bool(retrieval_trace.get("graphrag_enabled")),
             "graph_expansion_count": _safe_int(retrieval_trace.get("graphrag_expansion_count"), 0),
             "scientific_used": bool(provider_keys.intersection(scientific_provider_keys)),
             "web_used": bool(provider_keys.intersection(web_provider_keys)),
         }
-    stack_mode_effective = str(
-        retrieval_trace.get("stack_mode_effective")
-        or (
-            "full"
-            if (
-                stack_mode_requested == "full"
-                and bool(stack_coverage.get("vector_internal_used"))
-                and bool(stack_coverage.get("scientific_used"))
-                and bool(stack_coverage.get("web_used"))
-                and bool(stack_coverage.get("graph_used"))
-            )
-            else "auto"
+    stack_coverage = {
+        "vector_internal_used": bool(stack_coverage_raw.get("vector_internal_used")),
+        "graph_used": bool(stack_coverage_raw.get("graph_used")),
+        "graph_expansion_count": _safe_int(
+            stack_coverage_raw.get("graph_expansion_count"),
+            _safe_int(retrieval_trace.get("graphrag_expansion_count"), 0),
+        ),
+        "scientific_used": bool(stack_coverage_raw.get("scientific_used")),
+        "web_used": bool(stack_coverage_raw.get("web_used")),
+    }
+    missing_stack_components = [
+        name
+        for name, used in (
+            ("vector_internal", stack_coverage["vector_internal_used"]),
+            ("graph", stack_coverage["graph_used"]),
+            ("scientific", stack_coverage["scientific_used"]),
+            ("web", stack_coverage["web_used"]),
         )
+        if not used
+    ]
+
+    stack_mode_effective_from_trace = str(retrieval_trace.get("stack_mode_effective") or "").strip().lower()
+    if stack_mode_effective_from_trace not in {"auto", "full"}:
+        stack_mode_effective_from_trace = ""
+    computed_stack_mode_effective = (
+        "full"
+        if stack_mode_requested == "full" and not missing_stack_components
+        else "auto"
     )
+    # requested=full must degrade to auto if any stack is missing.
+    if stack_mode_requested == "full":
+        stack_mode_effective = computed_stack_mode_effective
+    else:
+        stack_mode_effective = stack_mode_effective_from_trace or computed_stack_mode_effective
+
+    stack_mode_reason_codes = (
+        [str(item).strip() for item in retrieval_trace.get("stack_mode_reason_codes", []) if str(item).strip()]
+        if isinstance(retrieval_trace.get("stack_mode_reason_codes"), list)
+        else []
+    )
+    stack_mode_reason_codes.append(f"stack_mode_requested_{stack_mode_requested}")
+    if stack_mode_effective == "full":
+        stack_mode_reason_codes.append("stack_mode_effective_full")
+    elif stack_mode_requested == "full":
+        stack_mode_reason_codes.append("stack_mode_effective_auto_missing_stack")
+        stack_mode_reason_codes.extend(
+            f"stack_mode_missing_{component}" for component in missing_stack_components
+        )
+    else:
+        stack_mode_reason_codes.append("stack_mode_effective_auto")
+    if (
+        stack_mode_requested == "full"
+        and stack_mode_effective_from_trace == "full"
+        and stack_mode_effective == "auto"
+    ):
+        stack_mode_reason_codes.append("stack_mode_effective_adjusted_from_retrieval_trace")
+    stack_mode_reason_codes = list(dict.fromkeys(stack_mode_reason_codes))
+
+    retrieval_trace["stack_mode_effective"] = stack_mode_effective
+    retrieval_trace["stack_mode_reason_codes"] = stack_mode_reason_codes
+    retrieval_trace["stack_coverage"] = stack_coverage
 
     target_sources = ["internal"]
     if bool(planner_hints.get("scientific_retrieval_enabled")):
@@ -3494,6 +3546,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "stack_mode": {
             "requested": stack_mode_requested,
             "effective": stack_mode_effective,
+            "reason_codes": stack_mode_reason_codes,
         },
         "stack_coverage": stack_coverage,
         "docs": _compact_context_rows(effective_context, max_items=10, max_text_len=240),

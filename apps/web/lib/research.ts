@@ -3,6 +3,7 @@ import { getAccessToken } from "@/lib/auth-store";
 
 export type ResearchTier = "tier1" | "tier2";
 export type ResearchExecutionMode = "fast" | "deep" | "deep_beta";
+export type ResearchRetrievalStackMode = "auto" | "full";
 
 export const RESEARCH_UPLOAD_TIMEOUT_MS = 60000;
 export const RESEARCH_TIER2_TIMEOUT_MS = 120000;
@@ -61,6 +62,7 @@ export type ResearchTier2DebugMeta = {
   responseStyle?: string;
   sourceMode?: string;
   researchMode?: string;
+  retrievalStackMode?: ResearchRetrievalStackMode;
   deepPassCount?: number;
   stageCount: number;
   flowEventCount: number;
@@ -269,6 +271,7 @@ export type ResearchTier2Result = {
   policyAction?: "allow" | "warn";
   fallbackUsed?: boolean;
   researchMode?: string;
+  retrievalStackMode?: ResearchRetrievalStackMode;
   deepPassCount?: number;
 };
 
@@ -472,6 +475,13 @@ function uniqueText(values: string[]): string[] {
 function normalizeResearchExecutionMode(mode?: ResearchExecutionMode): ResearchExecutionMode {
   if (mode === "deep" || mode === "deep_beta" || mode === "fast") return mode;
   return "fast";
+}
+
+function normalizeResearchRetrievalStackMode(
+  mode?: ResearchRetrievalStackMode | string
+): ResearchRetrievalStackMode {
+  if (mode === "full") return "full";
+  return "auto";
 }
 
 function resolveApiBaseUrl(): string {
@@ -2148,6 +2158,7 @@ export async function runResearchTier2(
     uploadedFileIds?: string[];
     sourceIds?: number[];
     researchMode?: ResearchExecutionMode;
+    retrievalStackMode?: ResearchRetrievalStackMode;
   }
 ): Promise<ResearchTier2RawResponse> {
   const uploadedFileIds = uniqueIds((options?.uploadedFileIds ?? []).map((item) => item.trim()).filter(Boolean));
@@ -2156,7 +2167,9 @@ export async function runResearchTier2(
   );
   const payload: Record<string, unknown> = { query, message: query };
   const researchMode = normalizeResearchExecutionMode(options?.researchMode);
+  const retrievalStackMode = normalizeResearchRetrievalStackMode(options?.retrievalStackMode);
   payload.research_mode = researchMode;
+  payload.retrieval_stack_mode = retrievalStackMode;
   payload.answer_format = "markdown";
   payload.response_format = "markdown";
   payload.render_hints = {
@@ -2186,6 +2199,7 @@ export async function createResearchTier2Job(
     sourceIds?: number[];
     sourceHubSources?: SourceHubSourceKey[];
     researchMode?: ResearchExecutionMode;
+    retrievalStackMode?: ResearchRetrievalStackMode;
   }
 ): Promise<ResearchTier2JobResponse> {
   const uploadedFileIds = uniqueIds((options?.uploadedFileIds ?? []).map((item) => item.trim()).filter(Boolean));
@@ -2194,11 +2208,13 @@ export async function createResearchTier2Job(
   );
   const sourceHubSources = uniqueText((options?.sourceHubSources ?? []).map((item) => String(item))) as SourceHubSourceKey[];
   const researchMode = normalizeResearchExecutionMode(options?.researchMode);
+  const retrievalStackMode = normalizeResearchRetrievalStackMode(options?.retrievalStackMode);
 
   const payload: Record<string, unknown> = {
     query,
     message: query,
     research_mode: researchMode,
+    retrieval_stack_mode: retrievalStackMode,
     answer_format: "markdown",
     response_format: "markdown",
     render_hints: {
@@ -2594,6 +2610,10 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
         ? data.fallback_used
         : undefined;
   const rawVerificationState = asText(metadata.verification_status);
+  const retrievalStackMode = normalizeResearchRetrievalStackMode(
+    asText(metadata.retrieval_stack_mode) ??
+      asText((data as Record<string, unknown>).retrieval_stack_mode)
+  );
 
   const verificationStatus = verification
     ? {
@@ -2620,6 +2640,7 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
       responseStyle: asText(metadata.response_style),
       sourceMode: asText(metadata.source_mode),
       researchMode: asText(metadata.research_mode) ?? asText((data as Record<string, unknown>).research_mode),
+      retrievalStackMode,
       deepPassCount:
         asNumber(metadata.deep_pass_count) ??
         asNumber((data as Record<string, unknown>).deep_pass_count),
@@ -2644,6 +2665,7 @@ export function normalizeResearchTier2(data: ResearchTier2RawResponse): Research
     researchMode:
       asText(metadata.research_mode) ??
       asText((data as Record<string, unknown>).research_mode),
+    retrievalStackMode,
     deepPassCount:
       asNumber(metadata.deep_pass_count) ??
       asNumber((data as Record<string, unknown>).deep_pass_count)

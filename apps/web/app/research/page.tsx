@@ -21,6 +21,7 @@ import {
   ResearchExecutionMode,
   ResearchFlowEvent,
   ResearchFlowStage,
+  ResearchRetrievalStackMode,
   ResearchTier,
   appendResearchConversationMessage,
   createResearchTier2Job,
@@ -51,6 +52,11 @@ const RESEARCH_MODE_OPTIONS: Array<{ id: ResearchExecutionMode; label: string }>
   { id: "fast", label: "Fast" },
   { id: "deep", label: "Deep" },
   { id: "deep_beta", label: "Deep Beta" }
+];
+
+const RESEARCH_RETRIEVAL_STACK_OPTIONS: Array<{ id: ResearchRetrievalStackMode; label: string }> = [
+  { id: "auto", label: "Auto stack" },
+  { id: "full", label: "Full stack" }
 ];
 
 const EMPTY_TELEMETRY = {
@@ -117,6 +123,11 @@ function normalizeResearchMode(value?: string): ResearchExecutionMode {
   return "fast";
 }
 
+function normalizeRetrievalStackMode(value?: string): ResearchRetrievalStackMode {
+  if (value === "full") return "full";
+  return "auto";
+}
+
 function formatLiveEventTime(timestamp?: string): string {
   if (!timestamp) return "";
   const date = new Date(timestamp);
@@ -147,10 +158,16 @@ function toResearchModeLabel(mode?: string): string {
   return "FAST";
 }
 
+function toRetrievalStackModeLabel(mode?: string): string {
+  if (mode === "full") return "FULL STACK";
+  return "AUTO STACK";
+}
+
 export default function ResearchPage() {
   const [role, setRole] = useState<UserRole>("normal");
   const [selectedTier, setSelectedTier] = useState<ResearchTier>("tier1");
   const [selectedResearchMode, setSelectedResearchMode] = useState<ResearchExecutionMode>("fast");
+  const [selectedRetrievalStackMode, setSelectedRetrievalStackMode] = useState<ResearchRetrievalStackMode>("auto");
   const [query, setQuery] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
@@ -222,6 +239,13 @@ export default function ResearchPage() {
         setSelectedResearchMode(
           firstItem.result.tier === "tier2" ? normalizeResearchMode(firstItem.result.researchMode) : "fast"
         );
+        setSelectedRetrievalStackMode(
+          firstItem.result.tier === "tier2"
+            ? normalizeRetrievalStackMode(
+                firstItem.result.retrievalStackMode ?? firstItem.result.debug?.retrievalStackMode
+              )
+            : "auto"
+        );
         void loadConversationTurns(firstItem.id, firstItem);
       } catch (cause) {
         if (cancelled) return;
@@ -265,6 +289,7 @@ export default function ResearchPage() {
     setConversationTurns([]);
     setQuery("");
     setError("");
+    setSelectedRetrievalStackMode("auto");
     setLiveFlowStages([]);
     setLiveFlowEvents([]);
     setLiveReasoningNotes([]);
@@ -277,6 +302,11 @@ export default function ResearchPage() {
     setConversationTurns([item]);
     setSelectedTier(item.result.tier);
     setSelectedResearchMode(item.result.tier === "tier2" ? normalizeResearchMode(item.result.researchMode) : "fast");
+    setSelectedRetrievalStackMode(
+      item.result.tier === "tier2"
+        ? normalizeRetrievalStackMode(item.result.retrievalStackMode ?? item.result.debug?.retrievalStackMode)
+        : "auto"
+    );
     setError("");
     setLiveFlowStages([]);
     setLiveFlowEvents([]);
@@ -309,7 +339,8 @@ export default function ResearchPage() {
         };
       } else {
         const job = await createResearchTier2Job(message, {
-          researchMode: selectedResearchMode
+          researchMode: selectedResearchMode,
+          retrievalStackMode: selectedRetrievalStackMode
         });
         setLiveJobId(job.job_id);
 
@@ -860,10 +891,32 @@ export default function ResearchPage() {
                   className="min-h-[120px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)] outline-none transition focus:border-[color:var(--shell-border-strong)]"
                 />
 
+                {selectedTier === "tier2" ? (
+                  <fieldset className="inline-flex rounded-full border border-cyan-300/70 bg-cyan-500/10 p-1">
+                    <legend className="sr-only">Chọn retrieval stack mode</legend>
+                    {RESEARCH_RETRIEVAL_STACK_OPTIONS.map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setSelectedRetrievalStackMode(mode.id)}
+                        disabled={isSubmitting}
+                        className={[
+                          "rounded-full px-3 py-1 text-xs font-semibold transition",
+                          selectedRetrievalStackMode === mode.id
+                            ? "bg-cyan-500 text-white"
+                            : "text-cyan-700 dark:text-cyan-200"
+                        ].join(" ")}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </fieldset>
+                ) : null}
+
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-[var(--text-muted)]">
                     {selectedTier === "tier2"
-                      ? `Research mode: ${toResearchModeLabel(selectedResearchMode)} · hiển thị query plan/source attempts/errors + timeline.`
+                      ? `Research mode: ${toResearchModeLabel(selectedResearchMode)} · Retrieval: ${toRetrievalStackModeLabel(selectedRetrievalStackMode)} · hiển thị query plan/source attempts/errors + timeline.`
                       : "Quick mode: phản hồi nhanh với guard an toàn."}
                   </p>
 

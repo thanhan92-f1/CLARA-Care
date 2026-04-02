@@ -468,6 +468,36 @@ def test_research_tier2_job_create_accepts_deep_beta_mode(
         assert row.request_payload["research_mode"] == "deep_beta"
 
 
+def test_research_tier2_job_create_forwards_full_retrieval_stack_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+
+    monkeypatch.setattr(
+        "clara_api.api.v1.endpoints.research._queue_research_job",
+        lambda _job_id: None,
+    )
+
+    create_response = client.post(
+        "/api/v1/research/tier2/jobs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "Persist retrieval full mode",
+            "stack_mode": "full",
+        },
+    )
+    assert create_response.status_code == 200
+    payload = create_response.json()
+    job_id = payload["job_id"]
+
+    with SessionLocal() as db:
+        row = db.query(ResearchJob).filter(ResearchJob.job_id == job_id).first()
+        assert row is not None
+        assert isinstance(row.request_payload, dict)
+        assert row.request_payload["retrieval_stack_mode"] == "full"
+        assert "stack_mode" not in row.request_payload
+
+
 def test_research_tier2_job_get_404_for_other_user(monkeypatch: pytest.MonkeyPatch) -> None:
     token_a = _login("alice@research.clara")
     token_b = _login("bob@example.com")
@@ -894,6 +924,41 @@ def test_research_tier2_forwards_deep_beta_mode_to_ml(
     assert isinstance(forwarded, dict)
     assert forwarded["research_mode"] == "deep_beta"
     assert forwarded["role"] == "researcher"
+
+
+def test_research_tier2_forwards_full_retrieval_stack_mode_to_ml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+    captured: dict[str, object] = {}
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"answer": "ok", "metadata": {"research_mode": "fast"}}
+
+    def _fake_post(url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        captured["url"] = url
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "stack mode full test", "stack_mode": "full"},
+    )
+
+    assert response.status_code == 200
+    assert str(captured["url"]).endswith("/v1/research/tier2")
+    forwarded = captured["json"]
+    assert isinstance(forwarded, dict)
+    assert forwarded["retrieval_stack_mode"] == "full"
+    assert "stack_mode" not in forwarded
 
 
 def test_research_tier2_normalize_preserves_new_telemetry_fields(

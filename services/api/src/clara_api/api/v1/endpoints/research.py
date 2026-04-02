@@ -157,6 +157,7 @@ _research_job_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="r
 _research_job_futures: dict[str, Future[Any]] = {}
 _research_job_lock = Lock()
 _RESEARCH_MODE_ALLOWED = {"fast", "deep", "deep_beta"}
+_RETRIEVAL_STACK_MODE_ALLOWED = {"auto", "full"}
 
 
 def _load_research_rag_runtime(db: Session) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -449,6 +450,13 @@ def _normalize_research_mode_value(raw_mode: Any, *, default: str = "fast") -> s
     return default
 
 
+def _normalize_retrieval_stack_mode_value(raw_mode: Any, *, default: str = "auto") -> str:
+    normalized = str(raw_mode or "").strip().lower().replace("-", "_")
+    if normalized in _RETRIEVAL_STACK_MODE_ALLOWED:
+        return normalized
+    return default
+
+
 def _canonicalize_research_payload_contract(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     metadata_obj = normalized.get("metadata")
@@ -470,6 +478,29 @@ def _canonicalize_research_payload_contract(payload: dict[str, Any]) -> dict[str
         normalized["research_mode"] = mode
         if metadata_obj is not None:
             metadata_obj["research_mode"] = mode
+
+    has_stack_mode_signal = (
+        ("retrieval_stack_mode" in normalized)
+        or ("stack_mode" in normalized)
+        or (
+            metadata_obj is not None
+            and (
+                metadata_obj.get("retrieval_stack_mode") is not None
+                or metadata_obj.get("stack_mode") is not None
+            )
+        )
+    )
+    if has_stack_mode_signal:
+        stack_mode = _normalize_retrieval_stack_mode_value(
+            normalized.get("retrieval_stack_mode")
+            or normalized.get("stack_mode")
+            or (metadata_obj.get("retrieval_stack_mode") if metadata_obj is not None else None)
+            or (metadata_obj.get("stack_mode") if metadata_obj is not None else None),
+            default="auto",
+        )
+        normalized["retrieval_stack_mode"] = stack_mode
+        if metadata_obj is not None:
+            metadata_obj["retrieval_stack_mode"] = stack_mode
 
     fallback_reason = normalized.get("fallback_reason")
     if (not isinstance(fallback_reason, str) or not fallback_reason.strip()) and (
@@ -815,8 +846,16 @@ def _coerce_research_mode(payload: dict[str, Any]) -> str:
     )
 
 
+def _coerce_retrieval_stack_mode(payload: dict[str, Any]) -> str:
+    return _normalize_retrieval_stack_mode_value(
+        payload.get("retrieval_stack_mode") or payload.get("stack_mode"),
+        default="auto",
+    )
+
+
 def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
     research_mode = _coerce_research_mode(payload)
+    retrieval_stack_mode = _coerce_retrieval_stack_mode(payload)
     fallback_answer_text = (
         "Hệ thống truy xuất chuyên sâu đang bận hoặc tạm thời không kết nối được nguồn RAG. "
         "Tạm thời dùng chế độ an toàn: bạn nên ưu tiên phác đồ chính thống, "
@@ -844,6 +883,7 @@ def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "render_hints": dict(_DEFAULT_MARKDOWN_RENDER_HINTS),
         "metadata": {
             "research_mode": research_mode,
+            "retrieval_stack_mode": retrieval_stack_mode,
             "deep_pass_count": 0,
             "answer_format": "markdown",
             "render_hints": dict(_DEFAULT_MARKDOWN_RENDER_HINTS),
@@ -854,6 +894,7 @@ def _research_tier2_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "fallback": True,
         "source_mode": payload.get("source_mode"),
         "research_mode": research_mode,
+        "retrieval_stack_mode": retrieval_stack_mode,
         "deep_pass_count": 0,
     }
 
@@ -1507,6 +1548,8 @@ def _build_tier2_upstream_payload(
     upstream_payload = dict(payload)
     if "research_mode" in upstream_payload or "mode" in upstream_payload:
         upstream_payload["research_mode"] = _coerce_research_mode(upstream_payload)
+    upstream_payload["retrieval_stack_mode"] = _coerce_retrieval_stack_mode(upstream_payload)
+    upstream_payload.pop("stack_mode", None)
     upstream_payload["answer_format"] = str(upstream_payload.get("answer_format") or "markdown")
     upstream_payload["response_format"] = str(upstream_payload.get("response_format") or "markdown")
     incoming_render_hints = upstream_payload.get("render_hints")
