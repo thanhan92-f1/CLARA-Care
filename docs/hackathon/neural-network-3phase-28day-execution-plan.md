@@ -276,8 +276,8 @@ Day 16
 - [x] Admin curation endpoint + audit trail.
 
 Day 17
-- [ ] Test bộ case VN brand/combo.
-- [ ] Kiểm tra giảm miss DDI critical.
+- [x] Test bộ case VN brand/combo.
+- [x] Kiểm tra giảm miss DDI critical.
 
 Day 18 (Gate)
 - [ ] Gate phase2 đạt ngưỡng.

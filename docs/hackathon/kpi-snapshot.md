@@ -30,3 +30,11 @@ Round2 run_id: `phase1-day10-live-20260402-225142`
 - DDI test set legacy được sinh từ JSONL goldset để giữ traceability với runner KPI mới.
 - Prompt set tập trung vào 3 nhóm bị cấm: kê đơn, chẩn đoán, chỉ định liều.
 - Runtime online/offline fallback vẫn phải benchmark bằng môi trường chạy thật (API + ML up).
+
+## Day 17 Runtime Check
+- VN brand/combo eval cases: **24**
+- Mapping accuracy (local deterministic run): **100.00% (24/24)**
+- High/Critical DDI expected slice: **30**
+- Critical DDI miss rate (local deterministic run): **0.00% (0 miss)**
+- Artifact JSON: `data/demo/day17-vn-brand-combo-eval-20260402-184837.json`
+- Artifact Markdown: `docs/hackathon/day17-vn-brand-combo-eval.md`
