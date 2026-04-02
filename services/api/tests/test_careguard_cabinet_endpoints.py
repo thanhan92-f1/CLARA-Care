@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from clara_api.core.config import get_settings
+from clara_api.core.security import create_access_token
 from clara_api.main import app
 
 client = TestClient(app)
@@ -32,6 +34,24 @@ def _login(email: str) -> str:
 
 def _login_doctor() -> str:
     return _login("doctor-mapping@doctor.clara")
+
+
+def _login_admin() -> str:
+    settings = get_settings()
+    token = create_access_token(subject=settings.auth_bootstrap_admin_email, role="admin")
+    status_response = client.get(
+        "/api/v1/auth/consent-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert status_response.status_code == 200
+    required_version = status_response.json()["required_version"]
+    accept_response = client.post(
+        "/api/v1/auth/consent",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"consent_version": required_version, "accepted": True},
+    )
+    assert accept_response.status_code == 200
+    return token
 
 
 def test_cabinet_requires_consent_gate() -> None:
@@ -380,6 +400,103 @@ def test_vn_dictionary_crud_and_resolve() -> None:
     assert resolve_after_delete.json()["mapping_source"] == "fallback"
     assert 0.0 <= resolve_after_delete.json()["mapping_confidence"] <= 1.0
 
+
+def test_vn_dictionary_curation_requires_admin_role() -> None:
+    doctor_token = _login_doctor()
+    create_response = client.post(
+        "/api/v1/careguard/dictionary",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "brand_name": "Curation Role Gate Drug",
+            "aliases": ["Curation Role Gate Drug"],
+            "active_ingredients": "Paracetamol",
+            "normalized_name": "paracetamol",
+            "rx_cui": "161",
+            "mapping_source": "manual",
+            "notes": "role gate",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+    mapping_id = create_response.json()["id"]
+
+    doctor_curation_response = client.post(
+        f"/api/v1/careguard/dictionary/{mapping_id}/curation",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={"is_active": False, "reason": "doctor should be blocked"},
+    )
+    assert doctor_curation_response.status_code == 403
+    assert "Không đủ quyền" in doctor_curation_response.json()["detail"]
+
+
+def test_vn_dictionary_admin_curation_and_audit_trail() -> None:
+    doctor_token = _login_doctor()
+    admin_token = _login_admin()
+
+    create_response = client.post(
+        "/api/v1/careguard/dictionary",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+        json={
+            "brand_name": "Audit Trail Drug",
+            "aliases": ["Audit Trail Drug", "AuditTrail"],
+            "active_ingredients": "Paracetamol + Caffeine",
+            "normalized_name": "paracetamol caffeine",
+            "rx_cui": "999111",
+            "mapping_source": "manual",
+            "notes": "needs curation",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+    mapping_id = create_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/v1/careguard/dictionary/{mapping_id}/curation",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "aliases": ["Audit Trail Drug", "AuditTrail", "Audit Drug VN"],
+            "notes": "reviewed by admin",
+            "rx_cui": "999222",
+            "is_active": True,
+            "reason": "reviewed",
+        },
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.json()["mapping_source"] == "curated"
+    assert approve_response.json()["is_active"] is True
+    assert approve_response.json()["rx_cui"] == "999222"
+    assert "Audit Drug VN" in approve_response.json()["aliases"]
+
+    reject_response = client.post(
+        f"/api/v1/careguard/dictionary/{mapping_id}/curation",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"is_active": False, "reason": "deactivate due to duplicate"},
+    )
+    assert reject_response.status_code == 200
+    assert reject_response.json()["is_active"] is False
+
+    doctor_audit_response = client.get(
+        f"/api/v1/careguard/dictionary/{mapping_id}/audit",
+        headers={"Authorization": f"Bearer {doctor_token}"},
+    )
+    assert doctor_audit_response.status_code == 403
+
+    audit_response = client.get(
+        f"/api/v1/careguard/dictionary/{mapping_id}/audit",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert audit_response.status_code == 200
+    audit_payload = audit_response.json()
+    assert audit_payload["total"] >= 3
+    actions = [item["action"] for item in audit_payload["items"]]
+    assert "create" in actions
+    assert actions.count("curate") >= 2
+    latest = audit_payload["items"][0]
+    assert latest["actor_email"] == get_settings().auth_bootstrap_admin_email
+    assert latest["reason"] == "deactivate due to duplicate"
+    assert isinstance(latest.get("before_json"), (dict, type(None)))
+    assert isinstance(latest.get("after_json"), (dict, type(None)))
+    assert isinstance(latest.get("metadata_json"), (dict, type(None)))
 
 def test_dictionary_resolve_candidate_match() -> None:
     doctor_token = _login_doctor()

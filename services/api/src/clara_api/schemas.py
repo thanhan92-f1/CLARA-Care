@@ -310,6 +310,17 @@ class VnDrugMappingUpdateRequest(BaseModel):
     is_active: bool | None = None
 
 
+class VnDrugMappingCurationRequest(BaseModel):
+    brand_name: str | None = Field(default=None, min_length=1, max_length=255)
+    aliases: list[str] | None = None
+    active_ingredients: str | None = Field(default=None, max_length=2000)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=255)
+    rx_cui: str | None = Field(default=None, max_length=64)
+    notes: str | None = Field(default=None, max_length=4000)
+    is_active: bool | None = None
+    reason: str = Field(default="", max_length=1000)
+
+
 class VnDrugMappingResponse(BaseModel):
     id: int
     brand_name: str
@@ -328,6 +339,24 @@ class VnDrugMappingResponse(BaseModel):
 class VnDrugMappingListResponse(BaseModel):
     total: int
     items: list[VnDrugMappingResponse] = Field(default_factory=list)
+
+
+class VnDrugMappingAuditResponse(BaseModel):
+    id: int
+    mapping_id: int
+    actor_user_id: int | None
+    actor_email: str | None = None
+    action: str
+    reason: str
+    before_json: dict | list | None = None
+    after_json: dict | list | None = None
+    metadata_json: dict | list | None = None
+    created_at: datetime
+
+
+class VnDrugMappingAuditListResponse(BaseModel):
+    total: int
+    items: list[VnDrugMappingAuditResponse] = Field(default_factory=list)
 
 
 class VnDrugResolveRequest(BaseModel):

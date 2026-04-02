@@ -176,6 +176,11 @@ class VnDrugMapping(Base):
         cascade="all, delete-orphan",
         back_populates="mapping",
     )
+    audit_events: Mapped[list["VnDrugMappingAudit"]] = relationship(
+        "VnDrugMappingAudit",
+        cascade="all, delete-orphan",
+        back_populates="mapping",
+    )
 
 
 class VnDrugMappingAlias(Base):
@@ -192,6 +197,30 @@ class VnDrugMappingAlias(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     mapping: Mapped[VnDrugMapping] = relationship("VnDrugMapping", back_populates="aliases")
+
+
+class VnDrugMappingAudit(Base):
+    __tablename__ = "vn_drug_mapping_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mapping_id: Mapped[int] = mapped_column(
+        ForeignKey("vn_drug_mappings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(32), index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    before_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    after_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    mapping: Mapped[VnDrugMapping] = relationship("VnDrugMapping", back_populates="audit_events")
+    actor: Mapped[User | None] = relationship("User")
 
 
 class SystemSetting(Base):

@@ -32,6 +32,7 @@ from clara_api.db.models import (
     User,
     VnDrugMapping,
     VnDrugMappingAlias,
+    VnDrugMappingAudit,
 )
 from clara_api.db.session import get_db
 from clara_api.schemas import (
@@ -44,7 +45,10 @@ from clara_api.schemas import (
     MedicineCabinetItemResponse,
     MedicineCabinetItemUpdate,
     MedicineCabinetResponse,
+    VnDrugMappingAuditListResponse,
+    VnDrugMappingAuditResponse,
     VnDrugMappingCreateRequest,
+    VnDrugMappingCurationRequest,
     VnDrugMappingListResponse,
     VnDrugMappingResponse,
     VnDrugMappingUpdateRequest,
@@ -456,6 +460,65 @@ def _to_mapping_response(mapping: VnDrugMapping) -> VnDrugMappingResponse:
     )
 
 
+def _mapping_snapshot(mapping: VnDrugMapping) -> dict[str, Any]:
+    aliases_sorted = sorted(
+        [alias.alias_name for alias in mapping.aliases],
+        key=lambda alias_name: alias_name.lower(),
+    )
+    return {
+        "id": mapping.id,
+        "brand_name": mapping.brand_name,
+        "aliases": aliases_sorted,
+        "active_ingredients": mapping.active_ingredients,
+        "normalized_name": mapping.normalized_name,
+        "rx_cui": mapping.rx_cui,
+        "mapping_source": mapping.mapping_source,
+        "notes": mapping.notes,
+        "is_active": mapping.is_active,
+        "created_by_user_id": mapping.created_by_user_id,
+        "updated_at": mapping.updated_at.isoformat() if mapping.updated_at else None,
+    }
+
+
+def _to_mapping_audit_response(audit: VnDrugMappingAudit) -> VnDrugMappingAuditResponse:
+    return VnDrugMappingAuditResponse(
+        id=audit.id,
+        mapping_id=audit.mapping_id,
+        actor_user_id=audit.actor_user_id,
+        actor_email=audit.actor.email if audit.actor else None,
+        action=audit.action,
+        reason=audit.reason,
+        before_json=audit.before_json,
+        after_json=audit.after_json,
+        metadata_json=audit.metadata_json,
+        created_at=audit.created_at,
+    )
+
+
+def _create_mapping_audit(
+    db: Session,
+    *,
+    mapping: VnDrugMapping,
+    action: str,
+    actor_user_id: int | None,
+    reason: str = "",
+    before_snapshot: dict[str, Any] | None = None,
+    after_snapshot: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> VnDrugMappingAudit:
+    audit = VnDrugMappingAudit(
+        mapping_id=mapping.id,
+        action=action,
+        reason=reason.strip(),
+        before_json=before_snapshot,
+        after_json=after_snapshot,
+        actor_user_id=actor_user_id,
+        metadata_json=metadata,
+    )
+    db.add(audit)
+    return audit
+
+
 def _get_mapping_or_404(db: Session, mapping_id: int) -> VnDrugMapping:
     mapping = db.execute(select(VnDrugMapping).where(VnDrugMapping.id == mapping_id)).scalar_one_or_none()
     if mapping is None:
@@ -494,15 +557,15 @@ def _validate_alias_conflicts(
 
 
 def _replace_mapping_aliases(db: Session, mapping: VnDrugMapping, aliases: list[str]) -> None:
-    db.query(VnDrugMappingAlias).filter(VnDrugMappingAlias.mapping_id == mapping.id).delete()
+    mapping.aliases.clear()
+    db.flush()
     for index, alias in enumerate(aliases):
-        db.add(
+        mapping.aliases.append(
             VnDrugMappingAlias(
-                mapping_id=mapping.id,
                 alias_name=alias,
                 normalized_alias=_normalize_text(alias),
                 is_primary=index == 0,
-            )
+            ),
         )
 
 
@@ -585,6 +648,19 @@ def _require_user(
             detail="Không tìm thấy người dùng",
         )
     ensure_medical_disclaimer_consent(db, user_id=user.id)
+    return user
+
+
+def _require_admin_user(
+    token: TokenPayload,
+    db: Session,
+) -> User:
+    user = _require_user(token, db)
+    if token.role != "admin" and user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ admin mới được thực hiện thao tác này",
+        )
     return user
 
 
@@ -1275,6 +1351,15 @@ def create_vn_drug_mapping(
     db.add(mapping)
     db.flush()
     _replace_mapping_aliases(db, mapping, aliases)
+    _create_mapping_audit(
+        db,
+        mapping=mapping,
+        action="create",
+        actor_user_id=user.id,
+        reason=payload.notes,
+        before_snapshot=None,
+        after_snapshot=_mapping_snapshot(mapping),
+    )
     db.commit()
     db.refresh(mapping)
     return _to_mapping_response(mapping)
@@ -1288,8 +1373,9 @@ def update_vn_drug_mapping(
     token: TokenPayload = Depends(require_roles("doctor")),
     db: Session = Depends(get_db),
 ) -> VnDrugMappingResponse:
-    _require_user(token, db)
+    user = _require_user(token, db)
     mapping = _get_mapping_or_404(db, mapping_id)
+    before_snapshot = _mapping_snapshot(mapping)
     provided = set(payload.model_fields_set)
     if not provided:
         raise HTTPException(
@@ -1345,6 +1431,15 @@ def update_vn_drug_mapping(
 
     mapping.updated_at = datetime.now(tz=UTC)
     db.add(mapping)
+    _create_mapping_audit(
+        db,
+        mapping=mapping,
+        action="update",
+        actor_user_id=user.id,
+        reason=payload.notes or "",
+        before_snapshot=before_snapshot,
+        after_snapshot=_mapping_snapshot(mapping),
+    )
     db.commit()
     db.refresh(mapping)
     return _to_mapping_response(mapping)
@@ -1356,13 +1451,147 @@ def deactivate_vn_drug_mapping(
     token: TokenPayload = Depends(require_roles("doctor")),
     db: Session = Depends(get_db),
 ) -> dict[str, bool]:
-    _require_user(token, db)
+    user = _require_user(token, db)
     mapping = _get_mapping_or_404(db, mapping_id)
+    before_snapshot = _mapping_snapshot(mapping)
     mapping.is_active = False
     mapping.updated_at = datetime.now(tz=UTC)
     db.add(mapping)
+    _create_mapping_audit(
+        db,
+        mapping=mapping,
+        action="deactivate",
+        actor_user_id=user.id,
+        reason="Deactivate mapping",
+        before_snapshot=before_snapshot,
+        after_snapshot=_mapping_snapshot(mapping),
+    )
     db.commit()
     return {"deleted": True}
+
+
+@router.post("/dictionary/{mapping_id}/curation", response_model=VnDrugMappingResponse)
+def curate_vn_drug_mapping(
+    mapping_id: int,
+    payload: VnDrugMappingCurationRequest,
+    token: TokenPayload = Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+) -> VnDrugMappingResponse:
+    admin_user = _require_admin_user(token, db)
+    mapping = _get_mapping_or_404(db, mapping_id)
+    before_snapshot = _mapping_snapshot(mapping)
+    provided = set(payload.model_fields_set)
+    mutable_fields = {
+        "brand_name",
+        "aliases",
+        "active_ingredients",
+        "normalized_name",
+        "rx_cui",
+        "notes",
+        "is_active",
+    }
+    if not provided.intersection(mutable_fields):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payload curation rỗng",
+        )
+
+    if "brand_name" in provided:
+        brand_name = " ".join((payload.brand_name or "").split()).strip()
+        if not brand_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="brand_name không hợp lệ",
+            )
+        normalized_brand = _normalize_text(brand_name)
+        existing_brand = db.execute(
+            select(VnDrugMapping).where(
+                VnDrugMapping.normalized_brand == normalized_brand,
+                VnDrugMapping.id != mapping.id,
+            )
+        ).scalar_one_or_none()
+        if existing_brand is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Brand đã tồn tại trong dictionary",
+            )
+        mapping.brand_name = brand_name
+        mapping.normalized_brand = normalized_brand
+
+    if "active_ingredients" in provided:
+        mapping.active_ingredients = (payload.active_ingredients or "").strip()
+    if "normalized_name" in provided:
+        normalized_name = _normalize_text(payload.normalized_name or "")
+        if not normalized_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="normalized_name không hợp lệ",
+            )
+        mapping.normalized_name = normalized_name
+    if "rx_cui" in provided:
+        mapping.rx_cui = (payload.rx_cui or "").strip()
+    if "notes" in provided:
+        mapping.notes = (payload.notes or "").strip()
+    if "is_active" in provided and payload.is_active is not None:
+        mapping.is_active = payload.is_active
+    if "aliases" in provided:
+        aliases = _normalize_aliases(payload.aliases or [], mapping.brand_name)
+        _validate_alias_conflicts(db, aliases, exclude_mapping_id=mapping.id)
+        _replace_mapping_aliases(db, mapping, aliases)
+
+    mapping.mapping_source = "curated"
+    mapping.updated_at = datetime.now(tz=UTC)
+    db.add(mapping)
+    _create_mapping_audit(
+        db,
+        mapping=mapping,
+        action="curate",
+        actor_user_id=admin_user.id,
+        reason=payload.reason,
+        before_snapshot=before_snapshot,
+        after_snapshot=_mapping_snapshot(mapping),
+        metadata={"fields_updated": sorted(provided.intersection(mutable_fields))},
+    )
+    db.commit()
+    db.refresh(mapping)
+    return _to_mapping_response(mapping)
+
+
+@router.get("/dictionary/{mapping_id}/audit", response_model=VnDrugMappingAuditListResponse)
+def list_vn_drug_mapping_audits(
+    mapping_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    token: TokenPayload = Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+) -> VnDrugMappingAuditListResponse:
+    _require_admin_user(token, db)
+    _get_mapping_or_404(db, mapping_id)
+    safe_limit = min(max(limit, 1), 200)
+    safe_offset = max(offset, 0)
+
+    total = int(
+        db.execute(
+            select(func.count(VnDrugMappingAudit.id)).where(VnDrugMappingAudit.mapping_id == mapping_id)
+        ).scalar_one()
+        or 0
+    )
+    audits = (
+        db.execute(
+            select(VnDrugMappingAudit)
+            .options(selectinload(VnDrugMappingAudit.actor))
+            .where(VnDrugMappingAudit.mapping_id == mapping_id)
+            .order_by(VnDrugMappingAudit.id.desc())
+            .limit(safe_limit)
+            .offset(safe_offset)
+        )
+        .scalars()
+        .all()
+    )
+    return VnDrugMappingAuditListResponse(
+        total=total,
+        items=[_to_mapping_audit_response(audit) for audit in audits],
+    )
 
 
 @router.post("/dictionary/resolve", response_model=VnDrugResolveResponse)

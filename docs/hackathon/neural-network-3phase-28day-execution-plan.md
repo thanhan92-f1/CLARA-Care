@@ -273,7 +273,7 @@ Day 15
 - [x] Nâng UX manual confirm cho người lớn tuổi.
 
 Day 16
-- [ ] Admin curation endpoint + audit trail.
+- [x] Admin curation endpoint + audit trail.
 
 Day 17
 - [ ] Test bộ case VN brand/combo.
