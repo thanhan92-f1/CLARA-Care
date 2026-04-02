@@ -3,8 +3,15 @@ from __future__ import annotations
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from clara_ml.agents import research_tier2 as tier2
 from clara_ml.rag.pipeline import RagResult
+
+
+@pytest.fixture(autouse=True)
+def _disable_deepseek_planner_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(tier2.settings, "deepseek_api_key", "")
 
 
 def test_filter_context_for_ddi_keeps_authoritative_label_rows():
@@ -182,6 +189,327 @@ def test_build_source_aware_query_plan_handles_vi_en_ddi():
     assert len(query_plan["source_queries"].get("scientific", [])) >= 1
     assert isinstance(query_plan.get("decomposition"), dict)
     assert len(query_plan["decomposition"].get("fast_pass_queries", [])) >= 1
+
+
+def test_run_research_tier2_llm_query_planner_success_path(monkeypatch):
+    class _FakePlannerClient:
+        def generate(self, prompt: str, system_prompt: str | None = None) -> SimpleNamespace:
+            return SimpleNamespace(
+                content=(
+                    "```json\n"
+                    "{\n"
+                    '  "canonical_query": "warfarin interaction with ibuprofen bleeding risk guidance",\n'
+                    '  "language_hint": "mixed",\n'
+                    '  "keywords": ["warfarin", "ibuprofen", "interaction", "bleeding", "guideline"],\n'
+                    '  "source_queries": {\n'
+                    '    "internal": ["warfarin ibuprofen warning"],\n'
+                    '    "scientific": ["warfarin ibuprofen clinical evidence"],\n'
+                    '    "web": ["warfarin ibuprofen guideline warning"]\n'
+                    "  },\n"
+                    '  "decomposition": {\n'
+                    '    "deep_pass_queries": ["warfarin ibuprofen systematic review"],\n'
+                    '    "deep_beta_pass_queries": ["warfarin ibuprofen subgroup bleeding evidence"]\n'
+                    "  }\n"
+                    "}\n"
+                    "```"
+                ),
+                model="deepseek-v3.2",
+            )
+
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        planner_hints = kwargs.get("planner_hints", {})
+        if not isinstance(planner_hints, dict):
+            planner_hints = {}
+        query_plan = planner_hints.get("query_plan", {}) if isinstance(planner_hints, dict) else {}
+        generation_enabled = bool(kwargs.get("generation_enabled", True))
+        return RagResult(
+            query=query,
+            retrieved_ids=["doc-llm-plan-1"],
+            answer="Tổng hợp bằng chứng về tương tác warfarin và ibuprofen.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "doc-llm-plan-1",
+                    "source": "pubmed",
+                    "title": "Evidence summary",
+                    "text": "Evidence text",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+                    "score": 0.89,
+                }
+            ],
+            context_debug={
+                "relevance": 0.89,
+                "low_context_threshold": 0.15,
+                "source_counts": {"pubmed": 1},
+                "retrieval_trace": {
+                    "source_attempts": [
+                        {"provider": "pubmed", "status": "completed", "documents": 1}
+                    ],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "query_plan": query_plan,
+                },
+            },
+            flow_events=[],
+            trace={
+                "retrieval": {
+                    "source_attempts": [{"provider": "pubmed", "status": "completed"}],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "hybrid": {"source_errors": {}},
+                },
+                "generation": {"mode": "llm"} if generation_enabled else {"mode": "retrieval_only"},
+            },
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]) -> SimpleNamespace:
+        return SimpleNamespace(
+            stage="fides_lite",
+            verdict="pass",
+            severity="low",
+            confidence=0.95,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            note="OK",
+            verification_matrix=[],
+            contradiction_summary={
+                "version": "claim-v1",
+                "has_contradiction": False,
+                "contradiction_count": 0,
+                "claims": [],
+                "details": [],
+                "note": "No contradiction detected.",
+            },
+        )
+
+    monkeypatch.setattr(tier2.settings, "deepseek_api_key", "test-key")
+    monkeypatch.setattr(tier2, "_build_query_planner_client", lambda: _FakePlannerClient())
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": "Tương tác warfarin với ibuprofen",
+            "research_mode": "fast",
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert "llm_query_planner_enabled" in result["metadata"]["planner_trace"]["planner_hints"][
+        "reason_codes"
+    ]
+    assert result["query_plan"]["canonical_query"].startswith("warfarin interaction")
+    assert len(result["query_plan"]["source_queries"]["internal"]) >= 1
+    llm_events = [event for event in result["flow_events"] if event.get("stage") == "llm_query_planner"]
+    assert any(event.get("status") == "completed" for event in llm_events)
+
+
+def test_run_research_tier2_llm_query_planner_fallback_path(monkeypatch):
+    class _BadPlannerClient:
+        def generate(self, prompt: str, system_prompt: str | None = None) -> SimpleNamespace:
+            return SimpleNamespace(
+                content='{"canonical_query":"UNEXPECTED_CANONICAL_ONLY"}',
+                model="deepseek-v3.2",
+            )
+
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        planner_hints = kwargs.get("planner_hints", {})
+        query_plan = planner_hints.get("query_plan", {}) if isinstance(planner_hints, dict) else {}
+        return RagResult(
+            query=query,
+            retrieved_ids=["doc-fallback-1"],
+            answer="Nội dung tổng hợp.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "doc-fallback-1",
+                    "source": "pubmed",
+                    "title": "Fallback evidence",
+                    "text": "Fallback evidence text.",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/10000001/",
+                    "score": 0.8,
+                }
+            ],
+            context_debug={
+                "relevance": 0.8,
+                "low_context_threshold": 0.15,
+                "source_counts": {"pubmed": 1},
+                "retrieval_trace": {
+                    "source_attempts": [
+                        {"provider": "pubmed", "status": "completed", "documents": 1}
+                    ],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "query_plan": query_plan,
+                },
+            },
+            flow_events=[],
+            trace={
+                "retrieval": {
+                    "source_attempts": [{"provider": "pubmed", "status": "completed"}],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "hybrid": {"source_errors": {}},
+                },
+                "generation": {"mode": "llm"},
+            },
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]) -> SimpleNamespace:
+        return SimpleNamespace(
+            stage="fides_lite",
+            verdict="pass",
+            severity="low",
+            confidence=0.9,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            note="OK",
+            verification_matrix=[],
+            contradiction_summary={
+                "version": "claim-v1",
+                "has_contradiction": False,
+                "contradiction_count": 0,
+                "claims": [],
+                "details": [],
+                "note": "No contradiction detected.",
+            },
+        )
+
+    topic = "Tương tác warfarin với ibuprofen"
+    expected_base = tier2._build_source_aware_query_plan(
+        topic=topic,
+        research_mode="fast",
+        keywords=tier2.query_terms(topic),
+    )
+
+    monkeypatch.setattr(tier2.settings, "deepseek_api_key", "test-key")
+    monkeypatch.setattr(tier2, "_build_query_planner_client", lambda: _BadPlannerClient())
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": topic,
+            "research_mode": "fast",
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert "llm_query_planner_fallback" in result["metadata"]["planner_trace"]["planner_hints"][
+        "reason_codes"
+    ]
+    assert "llm_query_planner_enabled" not in result["metadata"]["planner_trace"]["planner_hints"][
+        "reason_codes"
+    ]
+    assert result["query_plan"]["canonical_query"] == expected_base["canonical_query"]
+    llm_events = [event for event in result["flow_events"] if event.get("stage") == "llm_query_planner"]
+    assert any(event.get("status") == "degraded" for event in llm_events)
+
+
+def test_run_research_tier2_includes_chart_specs_visual_assets_and_reasoning_digest(monkeypatch):
+    def _fake_pipeline_run(self, query: str, **kwargs) -> RagResult:  # pragma: no cover - helper
+        planner_hints = kwargs.get("planner_hints", {})
+        if not isinstance(planner_hints, dict):
+            planner_hints = {}
+        generation_enabled = bool(kwargs.get("generation_enabled", True))
+        return RagResult(
+            query=query,
+            retrieved_ids=["doc-visual-1"],
+            answer="Kết quả tổng hợp bằng chứng cần theo dõi chảy máu.",
+            model_used="deepseek-v3.2",
+            retrieved_context=[
+                {
+                    "id": "doc-visual-1",
+                    "source": "pubmed",
+                    "title": "Bleeding risk evidence",
+                    "text": "Evidence details for table and chart.",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/11111111/",
+                    "score": 0.84,
+                }
+            ],
+            context_debug={
+                "relevance": 0.84,
+                "low_context_threshold": kwargs.get("low_context_threshold", 0.12),
+                "source_counts": {"pubmed": 1},
+                "retrieval_trace": {
+                    "source_attempts": [
+                        {"provider": "pubmed", "status": "completed", "documents": 1}
+                    ],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "query_plan": planner_hints.get("query_plan", {}),
+                },
+            },
+            flow_events=[],
+            trace={
+                "retrieval": {
+                    "source_attempts": [{"provider": "pubmed", "status": "completed"}],
+                    "index_summary": {"selected_count": 1, "retrieved_count": 1},
+                    "crawl_summary": {"domains": []},
+                    "hybrid": {"source_errors": {}},
+                },
+                "generation": {"mode": "llm"} if generation_enabled else {"mode": "retrieval_only"},
+            },
+        )
+
+    def _fake_factcheck(answer: str, retrieved_context: list[dict]) -> SimpleNamespace:
+        return SimpleNamespace(
+            stage="fides_lite",
+            verdict="pass",
+            severity="low",
+            confidence=0.9,
+            supported_claims=2,
+            total_claims=2,
+            unsupported_claims=[],
+            evidence_count=max(len(retrieved_context), 1),
+            note="OK",
+            verification_matrix=[
+                {
+                    "claim": "Tăng nguy cơ chảy máu",
+                    "support_status": "supported",
+                    "overlap_score": 0.88,
+                    "confidence": 0.87,
+                    "evidence_ref": "pubmed",
+                    "evidence_snippet": "Evidence details",
+                }
+            ],
+            contradiction_summary={
+                "version": "claim-v1",
+                "has_contradiction": False,
+                "contradiction_count": 0,
+                "claims": [],
+                "details": [],
+                "note": "No contradiction detected.",
+            },
+        )
+
+    monkeypatch.setattr(tier2.RagPipelineP1, "run", _fake_pipeline_run)
+    monkeypatch.setattr(tier2, "run_fides_lite", _fake_factcheck)
+
+    result = tier2.run_research_tier2(
+        {
+            "query": "Compare warfarin and ibuprofen bleeding risk evidence",
+            "research_mode": "deep_beta",
+            "deep_pass_count": 2,
+            "strict_deepseek_required": False,
+        }
+    )
+
+    assert isinstance(result.get("chart_specs"), list)
+    assert len(result["chart_specs"]) >= 1
+    assert all(item.get("type") == "chart-spec" for item in result["chart_specs"])
+    assert isinstance(result.get("visual_assets"), list)
+    assert len(result["visual_assets"]) >= 1
+    assert isinstance(result.get("reasoning_digest"), dict)
+    assert isinstance(result["reasoning_digest"].get("highlights"), list)
+    assert result["render_hints"]["markdown"] is True
+    assert result["render_hints"]["tables"] is True
+    assert "## Tóm tắt điều hành" in result["answer_markdown"]
+    assert "## Bảng tổng hợp bằng chứng" in result["answer_markdown"]
 
 
 def test_run_research_tier2_emits_contradiction_miner_and_verification_matrix(monkeypatch):

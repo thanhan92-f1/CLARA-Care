@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import json
 import re
 from time import perf_counter
 from typing import Any
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 from clara_ml.config import settings
 from clara_ml.factcheck import run_fides_lite
+from clara_ml.llm.deepseek_client import DeepSeekClient
 from clara_ml.rag.pipeline import RagPipelineP1
 from clara_ml.rag.retrieval.text_utils import analyze_query_profile, query_terms
 from clara_ml.routing import P1RoleIntentRouter
@@ -39,6 +41,19 @@ _REQUIRED_MARKDOWN_HEADINGS = (
     "## Khuyến nghị an toàn",
     "## Nguồn tham chiếu",
 )
+
+_REQUIRED_DEEP_MARKDOWN_HEADINGS = (
+    "## Kết luận nhanh",
+    "## Tóm tắt điều hành",
+    "## Phân tích chi tiết",
+    "## Bảng tổng hợp bằng chứng",
+    "## Rủi ro & giới hạn",
+    "## Khuyến nghị an toàn",
+    "## Nguồn tham chiếu",
+)
+
+_DEFAULT_DEEP_PASS_CAP = 12
+_DEEP_BETA_PASS_CAP = 14
 
 
 def _now_iso() -> str:
@@ -287,6 +302,218 @@ def _build_source_aware_query_plan(
     }
 
 
+def _strip_markdown_fence(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"```$", "", text).strip()
+    return text
+
+
+def _safe_planner_error_code(exc: Exception) -> str:
+    normalized = f"{exc.__class__.__name__}:{exc}".lower()
+    if "timeout" in normalized:
+        return "timeout"
+    if "json" in normalized:
+        return "invalid_json"
+    if "schema" in normalized or "required" in normalized or "missing" in normalized:
+        return "invalid_schema"
+    if "deepseek_request_failed" in normalized:
+        return "provider_request_failed"
+    return "runtime_error"
+
+
+def _sanitize_required_query_entries(
+    value: Any,
+    *,
+    field_name: str,
+    limit: int,
+) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"Missing required list field: {field_name}")
+    cleaned = _dedupe_query_list([str(item) for item in value], limit=limit)
+    if not cleaned:
+        raise ValueError(f"Required list field has no usable values: {field_name}")
+    return cleaned
+
+
+def _sanitize_llm_query_plan_payload(
+    payload: Any,
+    *,
+    base_query_plan: dict[str, Any],
+    research_mode: str,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Planner output must be a JSON object")
+
+    required_keys = {"canonical_query", "language_hint", "keywords", "source_queries", "decomposition"}
+    if not required_keys.issubset(set(payload.keys())):
+        raise ValueError("Planner output missing required keys")
+
+    canonical_query = " ".join(str(payload.get("canonical_query") or "").split()).strip()
+    if not canonical_query:
+        raise ValueError("Planner output missing canonical_query")
+    canonical_query = canonical_query[:320]
+
+    language_hint_raw = str(payload.get("language_hint") or "").strip().lower()
+    language_hint = language_hint_raw if language_hint_raw in {"vi", "en", "mixed"} else "mixed"
+
+    keywords_raw = payload.get("keywords")
+    if not isinstance(keywords_raw, list):
+        raise ValueError("Planner output keywords must be list")
+    keywords = _dedupe_query_list([str(item) for item in keywords_raw], limit=12)
+    if not keywords:
+        keywords = _dedupe_query_list(query_terms(canonical_query), limit=12)
+    if not keywords:
+        raise ValueError("Planner output keywords must not be empty")
+
+    source_queries_raw = payload.get("source_queries")
+    if not isinstance(source_queries_raw, dict):
+        raise ValueError("Planner output source_queries must be object")
+    internal_queries = _sanitize_required_query_entries(
+        source_queries_raw.get("internal"),
+        field_name="source_queries.internal",
+        limit=8,
+    )
+    scientific_queries = _sanitize_required_query_entries(
+        source_queries_raw.get("scientific"),
+        field_name="source_queries.scientific",
+        limit=8,
+    )
+    web_queries = _sanitize_required_query_entries(
+        source_queries_raw.get("web"),
+        field_name="source_queries.web",
+        limit=8,
+    )
+
+    decomposition_raw = payload.get("decomposition")
+    if not isinstance(decomposition_raw, dict):
+        raise ValueError("Planner output decomposition must be object")
+    deep_pass_queries = _sanitize_required_query_entries(
+        decomposition_raw.get("deep_pass_queries"),
+        field_name="decomposition.deep_pass_queries",
+        limit=12,
+    )
+    deep_beta_limit = _DEEP_BETA_PASS_CAP
+    deep_beta_pass_queries = _sanitize_required_query_entries(
+        decomposition_raw.get("deep_beta_pass_queries"),
+        field_name="decomposition.deep_beta_pass_queries",
+        limit=deep_beta_limit,
+    )
+    fast_pass_queries = _dedupe_query_list(
+        [canonical_query, base_query_plan.get("original_query"), " ".join(keywords[:6])],
+        limit=4,
+    )
+
+    return {
+        "original_query": str(base_query_plan.get("original_query") or canonical_query),
+        "canonical_query": canonical_query,
+        "language_hint": language_hint,
+        "is_ddi_query": bool(base_query_plan.get("is_ddi_query")),
+        "is_ddi_critical_query": bool(base_query_plan.get("is_ddi_critical_query")),
+        "source_queries": {
+            "internal": internal_queries,
+            "scientific": scientific_queries,
+            "web": web_queries,
+        },
+        "decomposition": {
+            "fast_pass_queries": fast_pass_queries,
+            "deep_pass_queries": deep_pass_queries,
+            "deep_beta_pass_queries": deep_beta_pass_queries,
+        },
+        "research_mode": research_mode,
+        "query_terms": keywords[:10],
+    }
+
+
+def _build_query_planner_client() -> DeepSeekClient:
+    timeout_seconds = max(1.0, min(float(settings.deepseek_timeout_seconds), 8.0))
+    return DeepSeekClient(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        model=settings.deepseek_model,
+        timeout_seconds=timeout_seconds,
+        retries_per_base=0,
+        retry_backoff_seconds=0.0,
+    )
+
+
+def _refine_query_plan_with_llm(
+    *,
+    topic: str,
+    research_mode: str,
+    route_role: str,
+    route_intent: str,
+    base_query_plan: dict[str, Any],
+    keywords: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not str(settings.deepseek_api_key or "").strip():
+        return base_query_plan, {
+            "attempted": False,
+            "status": "degraded",
+            "reason": "api_key_missing",
+            "model_used": "unconfigured",
+        }
+
+    system_prompt = (
+        "You are a clinical evidence query planner. Return STRICT JSON only. "
+        "No markdown, no explanations, no extra keys."
+    )
+    prompt = (
+        "Refine this retrieval query plan for high-recall clinical research.\n"
+        "Output EXACT JSON schema:\n"
+        "{\n"
+        '  "canonical_query": "string",\n'
+        '  "language_hint": "vi|en|mixed",\n'
+        '  "keywords": ["..."],\n'
+        '  "source_queries": {\n'
+        '    "internal": ["..."],\n'
+        '    "scientific": ["..."],\n'
+        '    "web": ["..."]\n'
+        "  },\n"
+        '  "decomposition": {\n'
+        '    "deep_pass_queries": ["..."],\n'
+        '    "deep_beta_pass_queries": ["..."]\n'
+        "  }\n"
+        "}\n"
+        "Constraints:\n"
+        "- keywords length <= 12\n"
+        "- keep clinical safety terms when query is medication-related\n"
+        "- return at least one query per source and decomposition list\n"
+        "- return valid JSON only\n\n"
+        f"topic={topic}\n"
+        f"research_mode={research_mode}\n"
+        f"route_role={route_role}\n"
+        f"route_intent={route_intent}\n"
+        f"base_keywords={keywords[:12]}\n"
+        f"base_plan={json.dumps(base_query_plan, ensure_ascii=False)}\n"
+    )
+
+    try:
+        client = _build_query_planner_client()
+        llm_response = client.generate(prompt=prompt, system_prompt=system_prompt)
+        cleaned = _strip_markdown_fence(llm_response.content)
+        parsed_payload = json.loads(cleaned)
+        sanitized = _sanitize_llm_query_plan_payload(
+            parsed_payload,
+            base_query_plan=base_query_plan,
+            research_mode=research_mode,
+        )
+        return sanitized, {
+            "attempted": True,
+            "status": "completed",
+            "reason": "ok",
+            "model_used": llm_response.model,
+        }
+    except Exception as exc:  # pragma: no cover - network/provider defensive path
+        return base_query_plan, {
+            "attempted": True,
+            "status": "degraded",
+            "reason": _safe_planner_error_code(exc),
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "model_used": "planner-fallback-v1",
+        }
+
+
 def _build_plan_steps(
     topic: str,
     source_mode: str | None,
@@ -498,7 +725,7 @@ def _build_planner_hints(
     elif deep_beta_mode:
         internal_top_k = min(12, internal_top_k + 4)
         hybrid_top_k = min(12, hybrid_top_k + 5)
-        target_pass_count = 12 if is_ddi_query else (11 if evidence_query else 10)
+        target_pass_count = 13 if is_ddi_query else (12 if evidence_query else 11)
     else:
         # Fast mode ưu tiên SLA: giới hạn fan-out retrieval để tránh timeout upstream.
         internal_top_k = min(4, max(2, internal_top_k))
@@ -513,13 +740,15 @@ def _build_planner_hints(
     if not scientific_enabled and evidence_query:
         reason_codes.append("fast_scientific_disabled_for_sla")
 
+    pass_cap = _DEEP_BETA_PASS_CAP if deep_beta_mode else _DEFAULT_DEEP_PASS_CAP
     retrieval_budget = {
         "mode": research_mode,
-        "target_pass_count": max(1, min(12, target_pass_count)),
+        "target_pass_count": max(1, min(pass_cap, target_pass_count)),
+        "pass_cap": pass_cap,
         "internal_top_k": max(1, min(12, internal_top_k)),
         "hybrid_top_k": max(1, min(12, hybrid_top_k)),
         "estimated_max_documents": max(1, min(12, hybrid_top_k))
-        * max(1, min(12, target_pass_count)),
+        * max(1, min(pass_cap, target_pass_count)),
         "scientific_retrieval_enabled": scientific_enabled,
         "web_retrieval_enabled": web_enabled,
         "file_retrieval_enabled": True,
@@ -538,7 +767,7 @@ def _build_planner_hints(
         "web_retrieval_enabled": web_enabled,
         "file_retrieval_enabled": True,
         "research_mode": research_mode,
-        "deep_pass_count": target_pass_count,
+        "deep_pass_count": max(1, min(pass_cap, target_pass_count)),
         "reasoning_style": (
             (
                 "agentic_deep_research_beta_v1"
@@ -1330,7 +1559,12 @@ def _build_deep_beta_reasoning_steps(*, topic: str, subqueries: list[str]) -> li
         },
     ]
 
-def _resolve_deep_pass_count(payload: dict[str, Any], default_count: int) -> int:
+def _resolve_deep_pass_count(
+    payload: dict[str, Any],
+    default_count: int,
+    *,
+    cap: int = _DEFAULT_DEEP_PASS_CAP,
+) -> int:
     metadata_obj = payload.get("metadata")
     metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
     candidates = [
@@ -1347,8 +1581,8 @@ def _resolve_deep_pass_count(payload: dict[str, Any], default_count: int) -> int
             parsed = int(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
-        return max(1, min(12, parsed))
-    return max(1, min(12, int(default_count)))
+        return max(1, min(max(cap, 1), parsed))
+    return max(1, min(max(cap, 1), int(default_count)))
 
 
 def _merge_retrieved_context(
@@ -1512,12 +1746,225 @@ def _citation_markdown_lines(citations: list[Citation]) -> list[str]:
     return rows
 
 
-def _ensure_markdown_structure(answer: str, citations: list[Citation]) -> str:
+def _escape_markdown_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _evidence_table_markdown(
+    citations: list[Citation],
+    *,
+    max_rows: int = 8,
+) -> str:
+    headers = "| Nguồn | Tiêu đề | Mức liên quan | URL |"
+    separator = "| --- | --- | --- | --- |"
+    rows: list[str] = [headers, separator]
+    if not citations:
+        rows.append("| system_fallback | Chưa có nguồn | Cần truy xuất thêm bằng chứng. | - |")
+        return "\n".join(rows)
+
+    for citation in citations[:max_rows]:
+        url = _safe_url(citation.url) or "-"
+        rows.append(
+            "| "
+            f"{_escape_markdown_cell(citation.source)} | "
+            f"{_escape_markdown_cell(citation.title)} | "
+            f"{_escape_markdown_cell(_compact_snippet(citation.relevance, max_len=96))} | "
+            f"{_escape_markdown_cell(url)} |"
+        )
+    return "\n".join(rows)
+
+
+def _extract_answer_digest_points(answer: str, *, limit: int = 3) -> list[str]:
+    cleaned = " ".join(str(answer or "").split()).strip()
+    if not cleaned:
+        return []
+    chunks = re.split(r"(?<=[.!?])\s+", cleaned)
+    points: list[str] = []
+    for chunk in chunks:
+        point = chunk.strip(" -")
+        if not point:
+            continue
+        points.append(_compact_snippet(point, max_len=160))
+        if len(points) >= max(1, limit):
+            break
+    return points
+
+
+def _build_chart_specs(
+    *,
+    citations: list[Citation],
+    verification_matrix_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    source_counts: dict[str, int] = {}
+    for citation in citations:
+        source_name = _first_nonempty_text(citation.source, "unknown")
+        source_counts[source_name] = source_counts.get(source_name, 0) + 1
+    if not source_counts:
+        source_counts["system_fallback"] = 1
+
+    source_values = [{"source": key, "count": value} for key, value in source_counts.items()]
+    chart_specs: list[dict[str, Any]] = [
+        {
+            "id": "source_distribution",
+            "type": "chart-spec",
+            "engine": "vega-lite",
+            "title": "Phân bổ nguồn bằng chứng",
+            "config": {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "description": "Distribution of evidence citations by source.",
+                "data": {"values": source_values},
+                "mark": {"type": "bar", "cornerRadiusTopLeft": 4, "cornerRadiusTopRight": 4},
+                "encoding": {
+                    "x": {"field": "source", "type": "nominal", "sort": "-y", "title": "Nguồn"},
+                    "y": {"field": "count", "type": "quantitative", "title": "Số bằng chứng"},
+                    "tooltip": [
+                        {"field": "source", "type": "nominal"},
+                        {"field": "count", "type": "quantitative"},
+                    ],
+                },
+            },
+        }
+    ]
+
+    summary = (
+        verification_matrix_payload.get("summary")
+        if isinstance(verification_matrix_payload.get("summary"), dict)
+        else {}
+    )
+    support_values = [
+        {
+            "status": "supported",
+            "count": _safe_int(summary.get("supported_claims"), 0),
+        },
+        {
+            "status": "unsupported",
+            "count": _safe_int(summary.get("unsupported_claims"), 0),
+        },
+        {
+            "status": "contradicted",
+            "count": _safe_int(summary.get("contradicted_claims"), 0),
+        },
+    ]
+    chart_specs.append(
+        {
+            "id": "claim_support_matrix",
+            "type": "chart-spec",
+            "engine": "vega-lite",
+            "title": "Ma trận mức độ hậu thuẫn claim",
+            "config": {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "description": "Claim support profile from verification matrix.",
+                "data": {"values": support_values},
+                "mark": "arc",
+                "encoding": {
+                    "theta": {"field": "count", "type": "quantitative"},
+                    "color": {"field": "status", "type": "nominal"},
+                    "tooltip": [
+                        {"field": "status", "type": "nominal"},
+                        {"field": "count", "type": "quantitative"},
+                    ],
+                },
+            },
+        }
+    )
+    return chart_specs
+
+
+def _build_visual_assets(citations: list[Citation]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    for index, citation in enumerate(citations[:12], start=1):
+        url = _safe_url(citation.url)
+        if not url:
+            continue
+        assets.append(
+            {
+                "asset_id": f"citation-asset-{index}",
+                "type": "reference_url",
+                "source_id": citation.source_id,
+                "source": citation.source,
+                "title": citation.title,
+                "url": url,
+                "label": f"Nguồn {index}",
+            }
+        )
+    return assets
+
+
+def _build_reasoning_digest(
+    *,
+    topic: str,
+    research_mode: str,
+    planner_hints: dict[str, Any],
+    answer_markdown: str,
+    citations: list[Citation],
+    verification_matrix_payload: dict[str, Any],
+    flow_events: list[dict[str, Any]],
+    deep_pass_count: int,
+) -> dict[str, Any]:
+    summary = (
+        verification_matrix_payload.get("summary")
+        if isinstance(verification_matrix_payload.get("summary"), dict)
+        else {}
+    )
+    contradiction_summary = (
+        verification_matrix_payload.get("contradiction_summary")
+        if isinstance(verification_matrix_payload.get("contradiction_summary"), dict)
+        else {}
+    )
+    sources = [citation.source for citation in citations if citation.source]
+    top_sources: list[str] = []
+    for source in sources:
+        if source in top_sources:
+            continue
+        top_sources.append(source)
+        if len(top_sources) >= 4:
+            break
+
+    llm_status = "disabled"
+    reason_codes = (
+        planner_hints.get("reason_codes") if isinstance(planner_hints.get("reason_codes"), list) else []
+    )
+    if "llm_query_planner_enabled" in reason_codes:
+        llm_status = "enabled"
+    elif "llm_query_planner_fallback" in reason_codes:
+        llm_status = "fallback"
+
+    return {
+        "topic": topic,
+        "research_mode": research_mode,
+        "llm_query_planner_status": llm_status,
+        "highlights": _extract_answer_digest_points(answer_markdown, limit=3),
+        "evidence": {
+            "citation_count": len(citations),
+            "top_sources": top_sources,
+            "deep_pass_count": max(1, int(deep_pass_count)),
+        },
+        "verification": {
+            "support_ratio": _safe_float(summary.get("support_ratio"), 0.0),
+            "supported_claims": _safe_int(summary.get("supported_claims"), 0),
+            "total_claims": _safe_int(summary.get("total_claims"), 0),
+            "contradiction_count": _safe_int(contradiction_summary.get("contradiction_count"), 0),
+        },
+        "event_count": len(flow_events),
+    }
+
+
+def _ensure_markdown_structure(
+    answer: str,
+    citations: list[Citation],
+    *,
+    research_mode: str,
+) -> str:
     cleaned = str(answer or "").strip()
     if not cleaned:
         cleaned = "Chưa có nội dung trả lời chuyên sâu."
 
-    if all(_has_markdown_heading(cleaned, heading) for heading in _REQUIRED_MARKDOWN_HEADINGS):
+    required_headings = (
+        _REQUIRED_DEEP_MARKDOWN_HEADINGS
+        if research_mode in {"deep", "deep_beta"}
+        else _REQUIRED_MARKDOWN_HEADINGS
+    )
+    if all(_has_markdown_heading(cleaned, heading) for heading in required_headings):
         return cleaned
 
     analysis_block = cleaned
@@ -1525,6 +1972,32 @@ def _ensure_markdown_structure(answer: str, citations: list[Citation]) -> str:
         analysis_block = f"- {analysis_block}"
 
     citations_block = "\n".join(_citation_markdown_lines(citations))
+    if research_mode in {"deep", "deep_beta"}:
+        evidence_table = _evidence_table_markdown(citations, max_rows=8)
+        executive_summary = _compact_snippet(cleaned, max_len=360)
+        return (
+            "## Kết luận nhanh\n"
+            f"{_compact_snippet(cleaned, max_len=320)}\n\n"
+            "## Tóm tắt điều hành\n"
+            f"- Phạm vi nghiên cứu: {_compact_snippet(cleaned, max_len=180)}\n"
+            f"- Mức độ bằng chứng hiện có: {len(citations)} nguồn tham chiếu.\n"
+            f"- Điểm chính: {executive_summary}\n\n"
+            "## Phân tích chi tiết\n"
+            f"{analysis_block}\n\n"
+            "## Bảng tổng hợp bằng chứng\n"
+            f"{evidence_table}\n\n"
+            "## Rủi ro & giới hạn\n"
+            "- Chất lượng bằng chứng có thể không đồng nhất giữa các nguồn.\n"
+            "- Một số claim cần xác minh thêm bằng guideline cập nhật hoặc dữ liệu real-world.\n"
+            "- Kết luận không thay thế đánh giá lâm sàng trực tiếp theo từng bệnh nhân.\n\n"
+            "## Khuyến nghị an toàn\n"
+            "- Không tự ý kê đơn hoặc điều chỉnh liều nếu chưa có tư vấn chuyên môn.\n"
+            "- Ưu tiên xác minh lại thông tin với bác sĩ/dược sĩ khi có bệnh nền hoặc đa thuốc.\n"
+            "- Nếu có dấu hiệu nặng (xuất huyết, khó thở, đau ngực), cần chuyển tuyến cấp cứu ngay.\n\n"
+            "## Nguồn tham chiếu\n"
+            f"{citations_block}"
+        )
+
     return (
         "## Kết luận nhanh\n"
         f"{cleaned}\n\n"
@@ -1561,23 +2034,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         rag_sources=rag_sources,
         research_mode=research_mode,
     )
-    planner_hints["query_plan"] = _build_source_aware_query_plan(
+    base_query_plan = _build_source_aware_query_plan(
         topic=topic,
         research_mode=research_mode,
         keywords=planner_hints.get("keywords", []),
     )
-    planner_trace = _build_planner_trace(
-        topic=topic,
-        source_mode=source_mode,
-        route_role=route.role,
-        route_intent=route.intent,
-        route_confidence=route.confidence,
-        route_emergency=route.emergency,
-        planner_hints=planner_hints,
-        plan_steps=plan_steps,
-    )
-    planner_trace["trace_id"] = trace_id
-    planner_trace["run_id"] = run_id
+    planner_hints["query_plan"] = base_query_plan
     run_started_at = perf_counter()
 
     def _event(
@@ -1620,6 +2082,95 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "research_mode": research_mode,
             },
         ),
+    ]
+
+    llm_plan, llm_plan_status = _refine_query_plan_with_llm(
+        topic=topic,
+        research_mode=research_mode,
+        route_role=route.role,
+        route_intent=route.intent,
+        base_query_plan=base_query_plan,
+        keywords=planner_hints.get("keywords", []),
+    )
+    llm_attempted = bool(llm_plan_status.get("attempted"))
+    llm_status = str(llm_plan_status.get("status") or "degraded")
+    llm_reason = str(llm_plan_status.get("reason") or "unknown")
+
+    if llm_attempted:
+        flow_events.append(
+            _event(
+                stage="llm_query_planner",
+                status="started",
+                source_count=0,
+                note="LLM query planner refinement started.",
+                component="planner",
+                payload={
+                    "base_canonical_query": base_query_plan.get("canonical_query"),
+                    "model": settings.deepseek_model,
+                },
+            )
+        )
+
+    if llm_status == "completed":
+        planner_hints["query_plan"] = llm_plan
+        planner_hints["reason_codes"] = [
+            *planner_hints.get("reason_codes", []),
+            "llm_query_planner_enabled",
+        ]
+        flow_events.append(
+            _event(
+                stage="llm_query_planner",
+                status="completed",
+                source_count=0,
+                note="LLM query planner refinement completed.",
+                component="planner",
+                payload={
+                    "model_used": llm_plan_status.get("model_used"),
+                    "reason": llm_reason,
+                    "canonical_query": llm_plan.get("canonical_query"),
+                },
+            )
+        )
+    else:
+        planner_hints["query_plan"] = base_query_plan
+        if llm_attempted:
+            planner_hints["reason_codes"] = [
+                *planner_hints.get("reason_codes", []),
+                "llm_query_planner_fallback",
+            ]
+        flow_events.append(
+            _event(
+                stage="llm_query_planner",
+                status="degraded",
+                source_count=0,
+                note=(
+                    "LLM query planner degraded; fallback to base query plan."
+                    if llm_attempted
+                    else "LLM query planner skipped due to missing API key."
+                ),
+                component="planner",
+                payload={
+                    "reason": llm_reason,
+                    "attempted": llm_attempted,
+                    "error": llm_plan_status.get("error"),
+                    "canonical_query": planner_hints["query_plan"].get("canonical_query"),
+                },
+            )
+        )
+
+    planner_trace = _build_planner_trace(
+        topic=topic,
+        source_mode=source_mode,
+        route_role=route.role,
+        route_intent=route.intent,
+        route_confidence=route.confidence,
+        route_emergency=route.emergency,
+        planner_hints=planner_hints,
+        plan_steps=plan_steps,
+    )
+    planner_trace["trace_id"] = trace_id
+    planner_trace["run_id"] = run_id
+    flow_events.append(
         _event(
             stage="planner",
             status="completed",
@@ -1627,19 +2178,23 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             note="Planner produced retrieval and verification strategy.",
             component="planner",
             payload=planner_hints,
-        ),
-    ]
+        )
+    )
 
     pipeline = RagPipelineP1()
     strict_deepseek_required = bool(
         payload.get("strict_deepseek_required", settings.deepseek_required)
     )
     deepseek_fallback_enabled = not strict_deepseek_required
+    pass_count_cap = _DEEP_BETA_PASS_CAP if research_mode == "deep_beta" else _DEFAULT_DEEP_PASS_CAP
     deep_pass_count = _resolve_deep_pass_count(
         payload,
         int(planner_hints.get("deep_pass_count", 1)),
+        cap=pass_count_cap,
     )
     planner_hints["deep_pass_count"] = deep_pass_count
+    if isinstance(planner_trace.get("planner_hints"), dict):
+        planner_trace["planner_hints"]["deep_pass_count"] = deep_pass_count
     deep_subqueries: list[str] = [topic]
     deep_research_profiles: list[dict[str, Any]] = []
     deep_research_method: dict[str, Any] = {}
@@ -1881,6 +2436,14 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             seed_queries=[str(item) for item in deep_seed_queries if str(item).strip()],
         )
         deep_subqueries = subqueries
+        budget_pass_cap = _safe_int(
+            (
+                planner_hints.get("retrieval_budget", {}).get("pass_cap")
+                if isinstance(planner_hints.get("retrieval_budget"), dict)
+                else None
+            ),
+            _DEEP_BETA_PASS_CAP,
+        )
         deep_beta_retrieval_budgets = {
             **(
                 planner_hints.get("retrieval_budget")
@@ -1888,6 +2451,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 else {}
             ),
             "mode": "deep_beta",
+            "pass_cap": max(1, budget_pass_cap),
             "target_pass_count": len(subqueries),
             "allocated_pass_count": len(subqueries),
             "per_pass_doc_target": max(4, min(12, _safe_int(planner_hints.get("hybrid_top_k"), 8))),
@@ -2348,7 +2912,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             },
         )
     )
-    answer_markdown = _ensure_markdown_structure(rag_result.answer, citations)
+    answer_markdown = _ensure_markdown_structure(
+        rag_result.answer,
+        citations,
+        research_mode=research_mode,
+    )
     answer_status = "warning" if fallback_used else "completed"
     flow_events.append(
         _event(
@@ -2746,6 +3314,70 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     if not isinstance(crawl_summary.get("domains"), list):
         crawl_summary["domains"] = []
 
+    target_sources = ["internal"]
+    if bool(planner_hints.get("scientific_retrieval_enabled")):
+        target_sources.append("scientific")
+    if bool(planner_hints.get("web_retrieval_enabled")):
+        target_sources.append("web")
+    if bool(planner_hints.get("file_retrieval_enabled")):
+        target_sources.append("file")
+
+    source_target_objective = {
+        "target_sources": target_sources,
+        "target_source_count": len(target_sources),
+        "target_pass_count": deep_pass_count if research_mode in {"deep", "deep_beta"} else 1,
+        "pass_cap": pass_count_cap,
+        "target_document_budget": _safe_int(
+            (
+                planner_hints.get("retrieval_budget", {}).get("estimated_max_documents")
+                if isinstance(planner_hints.get("retrieval_budget"), dict)
+                else None
+            ),
+            max(len(target_sources), 1),
+        ),
+    }
+
+    achieved_sources: list[str] = []
+    for row in effective_context:
+        if not isinstance(row, dict):
+            continue
+        source_name = _first_nonempty_text(row.get("source"))
+        if source_name and source_name not in achieved_sources:
+            achieved_sources.append(source_name)
+    for attempt in source_attempts:
+        if not isinstance(attempt, dict):
+            continue
+        source_name = _first_nonempty_text(attempt.get("provider"), attempt.get("source"))
+        if source_name and source_name not in achieved_sources:
+            achieved_sources.append(source_name)
+
+    source_target_achieved = {
+        "achieved_sources": achieved_sources,
+        "achieved_source_count": len(achieved_sources),
+        "achieved_document_count": len(effective_context),
+        "achieved_pass_count": (
+            len(deep_pass_summaries)
+            if research_mode in {"deep", "deep_beta"} and deep_pass_summaries
+            else 1
+        ),
+    }
+
+    chart_specs = _build_chart_specs(
+        citations=citations,
+        verification_matrix_payload=verification_matrix_payload,
+    )
+    visual_assets = _build_visual_assets(citations)
+    reasoning_digest = _build_reasoning_digest(
+        topic=topic,
+        research_mode=research_mode,
+        planner_hints=planner_hints,
+        answer_markdown=answer_markdown,
+        citations=citations,
+        verification_matrix_payload=verification_matrix_payload,
+        flow_events=flow_events,
+        deep_pass_count=len(deep_pass_summaries) if deep_pass_summaries else 1,
+    )
+
     telemetry = {
         "trace_id": trace_id,
         "run_id": run_id,
@@ -2787,6 +3419,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
         "retrieval_budgets": deep_beta_retrieval_budgets if research_mode == "deep_beta" else {},
         "chain_status": deep_beta_chain_status if research_mode == "deep_beta" else {},
+        "source_target_objective": source_target_objective,
+        "source_target_achieved": source_target_achieved,
+        "chart_specs": chart_specs,
+        "visual_assets": visual_assets,
+        "reasoning_digest": reasoning_digest,
         "verification_matrix": verification_matrix_payload,
         "stage_spans": stage_spans,
     }
@@ -2834,6 +3471,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 else planner_hints.get("retrieval_budget", {})
             ),
             "chain_status": deep_beta_chain_status if research_mode == "deep_beta" else {},
+            "source_target_objective": source_target_objective,
+            "source_target_achieved": source_target_achieved,
+            "visual_assets": visual_assets,
+            "chart_specs": chart_specs,
+            "reasoning_digest": reasoning_digest,
             "routing": {
                 "role": route.role,
                 "intent": route.intent,
@@ -2882,6 +3524,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             else planner_hints.get("retrieval_budget", {})
         ),
         "chain_status": deep_beta_chain_status if research_mode == "deep_beta" else {},
+        "source_target_objective": source_target_objective,
+        "source_target_achieved": source_target_achieved,
+        "visual_assets": visual_assets,
+        "chart_specs": chart_specs,
+        "reasoning_digest": reasoning_digest,
         "plan_steps": [asdict(step) for step in plan_steps],
         "citations": citations_payload,
         # Backward-compat alias for clients still expecting `sources`.
