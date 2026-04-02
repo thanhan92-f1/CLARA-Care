@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ControlTowerRagFlow } from "@/lib/system";
 
 export type FlowToggleKey = Exclude<keyof ControlTowerRagFlow, "low_context_threshold">;
@@ -554,21 +554,21 @@ const STATUS_META: Record<
   required: {
     label: "core",
     nodeClass:
-      "border-cyan-200/70 bg-white/90 shadow-[0_16px_40px_rgba(8,47,73,0.16)] dark:border-cyan-400/35 dark:bg-slate-900/82 dark:shadow-[0_20px_46px_rgba(2,6,23,0.72)]",
+      "border-cyan-200/70 bg-white/92 shadow-[0_16px_40px_rgba(8,47,73,0.16)] dark:border-cyan-300/55 dark:bg-slate-900/90 dark:shadow-[0_20px_46px_rgba(2,6,23,0.72)]",
     badgeClass:
       "border-cyan-300/80 bg-cyan-100/90 text-cyan-800 dark:border-cyan-400/45 dark:bg-cyan-950/55 dark:text-cyan-200",
   },
   on: {
     label: "live",
     nodeClass:
-      "border-emerald-300/70 bg-white/92 shadow-[0_20px_48px_rgba(16,185,129,0.2)] dark:border-emerald-400/40 dark:bg-slate-900/86 dark:shadow-[0_24px_54px_rgba(6,78,59,0.6)]",
+      "border-emerald-300/70 bg-white/94 shadow-[0_20px_48px_rgba(16,185,129,0.2)] dark:border-emerald-300/55 dark:bg-slate-900/92 dark:shadow-[0_24px_54px_rgba(6,78,59,0.6)]",
     badgeClass:
       "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-950/55 dark:text-emerald-200",
   },
   off: {
     label: "off",
     nodeClass:
-      "border-slate-300/70 bg-slate-100/80 opacity-85 shadow-none dark:border-slate-600/70 dark:bg-slate-900/65 dark:opacity-80",
+      "border-slate-300/75 bg-slate-100/86 opacity-95 shadow-none dark:border-slate-500/75 dark:bg-slate-900/88 dark:opacity-100",
     badgeClass:
       "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
   },
@@ -636,6 +636,38 @@ export default function AdminFlowVisualizer({
 }: AdminFlowVisualizerProps) {
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const refresh = () => {
+      setIsDarkMode(root.classList.contains("dark") || root.dataset.theme === "dark");
+    };
+    refresh();
+    const observer = new MutationObserver(refresh);
+    observer.observe(root, { attributes: true, attributeFilter: ["class", "data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  const edgePalette = useMemo(
+    () =>
+      isDarkMode
+        ? {
+            live: "#22d3ee",
+            muted: "#64748b",
+            fallback: "#fb923c",
+            label: "#a5b4fc",
+          }
+        : {
+            live: "#0891b2",
+            muted: "#94a3b8",
+            fallback: "#f97316",
+            label: "#334155",
+          },
+    [isDarkMode],
+  );
+
   const statusByNode = useMemo(
     () =>
       FLOW_NODES.reduce<Record<FlowNodeId, FlowNodeStatus>>((acc, node) => {
@@ -655,8 +687,6 @@ export default function AdminFlowVisualizer({
       if (typeof document !== "undefined" && "fonts" in document) {
         await document.fonts.ready;
       }
-      const root = document.documentElement;
-      const darkModeEnabled = root.classList.contains("dark") || root.dataset.theme === "dark";
       const { toJpeg } = await import("html-to-image");
       const dataUrl = await toJpeg(sceneRef.current, {
         cacheBust: true,
@@ -664,7 +694,7 @@ export default function AdminFlowVisualizer({
         quality: 0.96,
         canvasWidth: SCENE_WIDTH * EXPORT_SCALE,
         canvasHeight: SCENE_HEIGHT * EXPORT_SCALE,
-        backgroundColor: darkModeEnabled ? "#020617" : "#eff6ff",
+        backgroundColor: isDarkMode ? "#020617" : "#eff6ff",
       });
       const anchor = document.createElement("a");
       anchor.href = dataUrl;
@@ -675,7 +705,7 @@ export default function AdminFlowVisualizer({
     } finally {
       setIsExporting(false);
     }
-  }, [isExporting]);
+  }, [isDarkMode, isExporting]);
 
   const liveNodeCount = FLOW_NODES.filter((node) => isActive(statusByNode[node.id])).length;
   const optionalNodeCount = FLOW_NODES.filter((node) => Boolean(node.toggleKey)).length;
@@ -765,7 +795,7 @@ export default function AdminFlowVisualizer({
       <div className="relative mt-5 overflow-x-auto rounded-[24px] border border-cyan-200/50 bg-slate-950/[0.04] p-3 dark:border-cyan-700/30 dark:bg-slate-950/30">
         <div
           ref={sceneRef}
-          className="relative overflow-hidden rounded-[22px] border border-cyan-200/50 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_34%),linear-gradient(180deg,_rgba(248,250,252,0.78),_rgba(241,245,249,0.88))] dark:border-cyan-700/30 dark:bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.16),_transparent_42%),linear-gradient(180deg,_rgba(2,6,23,0.74),_rgba(15,23,42,0.9))] [--flow-edge-live:#0891b2] [--flow-edge-muted:#94a3b8] [--flow-edge-fallback:#f97316] [--flow-label-color:#334155] dark:[--flow-edge-live:#22d3ee] dark:[--flow-edge-muted:#64748b] dark:[--flow-edge-fallback:#fb923c] dark:[--flow-label-color:#a5b4fc]"
+          className="relative overflow-hidden rounded-[22px] border border-cyan-200/50 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_34%),linear-gradient(180deg,_rgba(248,250,252,0.78),_rgba(241,245,249,0.88))] dark:border-cyan-700/30 dark:bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.16),_transparent_42%),linear-gradient(180deg,_rgba(2,6,23,0.74),_rgba(15,23,42,0.9))]"
           style={{ width: SCENE_WIDTH, height: SCENE_HEIGHT }}
         >
           <svg
@@ -776,13 +806,13 @@ export default function AdminFlowVisualizer({
           >
             <defs>
               <marker id="flow-arrow-live" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--flow-edge-live)" />
+                <path d="M0,0 L10,5 L0,10 z" fill={edgePalette.live} />
               </marker>
               <marker id="flow-arrow-muted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--flow-edge-muted)" />
+                <path d="M0,0 L10,5 L0,10 z" fill={edgePalette.muted} />
               </marker>
               <marker id="flow-arrow-fallback" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--flow-edge-fallback)" />
+                <path d="M0,0 L10,5 L0,10 z" fill={edgePalette.fallback} />
               </marker>
               <filter id="flow-glow" x="-30%" y="-30%" width="160%" height="160%">
                 <feGaussianBlur stdDeviation="6" result="blur" />
@@ -803,11 +833,11 @@ export default function AdminFlowVisualizer({
               const path = buildPath(from, to, edge.bend);
               const stroke = edge.fallback
                 ? fallbackEnabled
-                  ? "var(--flow-edge-fallback)"
-                  : "var(--flow-edge-muted)"
+                  ? edgePalette.fallback
+                  : edgePalette.muted
                 : edgeActive
-                  ? "var(--flow-edge-live)"
-                  : "var(--flow-edge-muted)";
+                  ? edgePalette.live
+                  : edgePalette.muted;
               const marker = edge.fallback
                 ? fallbackEnabled
                   ? "url(#flow-arrow-fallback)"
@@ -818,6 +848,7 @@ export default function AdminFlowVisualizer({
               const labelX = (from.x + to.x) / 2;
               const labelY = (from.y + to.y) / 2 + (edge.bend ?? 0) - 12;
 
+              const showGlow = !isExporting && (edgeActive || fallbackEnabled);
               return (
                 <g key={`${edge.from}-${edge.to}`}>
                   <path
@@ -825,10 +856,11 @@ export default function AdminFlowVisualizer({
                     fill="none"
                     stroke={stroke}
                     strokeWidth={edge.fallback ? 3 : 2.4}
+                    strokeLinecap="round"
                     strokeDasharray={edge.fallback ? "10 8" : undefined}
                     markerEnd={marker}
                     opacity={edgeActive || fallbackEnabled ? 0.95 : 0.6}
-                    filter={edgeActive || fallbackEnabled ? "url(#flow-glow)" : undefined}
+                    filter={showGlow ? "url(#flow-glow)" : undefined}
                   />
                   {edge.label ? (
                     <text
@@ -836,7 +868,7 @@ export default function AdminFlowVisualizer({
                       y={labelY}
                       textAnchor="middle"
                       className="text-[11px] font-semibold tracking-[0.08em]"
-                      style={{ fill: "var(--flow-label-color)" }}
+                      style={{ fill: edgePalette.label }}
                     >
                       {edge.label}
                     </text>
@@ -875,7 +907,7 @@ export default function AdminFlowVisualizer({
                     "backdrop-blur-xl",
                     meta.nodeClass,
                     tone.glow,
-                    isSelected && "border-slate-900/80 ring-2 ring-cyan-500/35 dark:border-cyan-300/65 dark:ring-cyan-400/35",
+                    isSelected && "border-slate-900/80 ring-2 ring-cyan-500/35 dark:border-cyan-200/90 dark:ring-cyan-300/45",
                   )}
                   style={{ width: NODE_CARD_WIDTH }}
                 >
