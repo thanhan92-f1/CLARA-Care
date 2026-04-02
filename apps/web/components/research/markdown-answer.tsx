@@ -24,8 +24,50 @@ type CodeFenceProps = {
   isChartSpec: boolean;
 };
 
+type SectionTone = "brand" | "evidence" | "safety" | "warning" | "neutral";
+
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
 const CHART_SPEC_LANGUAGES = new Set(["chart", "chart-spec", "vega-lite", "echarts-option", "json", "yaml", "yml"]);
+
+function normalizeHeadingKey(input: string): string {
+  return input
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function resolveSectionTone(title: string): SectionTone {
+  const key = normalizeHeadingKey(title);
+  if (key.includes("bang tong hop") || key.includes("nguon tham chieu") || key.includes("ma tran")) {
+    return "evidence";
+  }
+  if (key.includes("khuyen nghi") || key.includes("ke hoach theo doi")) {
+    return "safety";
+  }
+  if (key.includes("canh bao") || key.includes("phap ly") || key.includes("gioi han")) {
+    return "warning";
+  }
+  if (key.includes("ket luan") || key.includes("tom tat") || key.includes("boi canh")) {
+    return "brand";
+  }
+  return "neutral";
+}
+
+function sectionHeadingClasses(tone: SectionTone): string {
+  switch (tone) {
+    case "brand":
+      return "mt-8 rounded-2xl border border-cyan-300/65 bg-cyan-500/10 px-4 py-2 text-lg font-semibold tracking-tight text-cyan-950 dark:border-cyan-700/70 dark:bg-cyan-950/30 dark:text-cyan-100";
+    case "evidence":
+      return "mt-8 rounded-2xl border border-indigo-300/65 bg-indigo-500/10 px-4 py-2 text-lg font-semibold tracking-tight text-indigo-950 dark:border-indigo-700/70 dark:bg-indigo-950/30 dark:text-indigo-100";
+    case "safety":
+      return "mt-8 rounded-2xl border border-emerald-300/65 bg-emerald-500/10 px-4 py-2 text-lg font-semibold tracking-tight text-emerald-950 dark:border-emerald-700/70 dark:bg-emerald-950/30 dark:text-emerald-100";
+    case "warning":
+      return "mt-8 rounded-2xl border border-amber-300/65 bg-amber-500/10 px-4 py-2 text-lg font-semibold tracking-tight text-amber-950 dark:border-amber-700/70 dark:bg-amber-950/30 dark:text-amber-100";
+    default:
+      return "mt-8 rounded-2xl border border-slate-300/70 bg-slate-100/75 px-4 py-2 text-lg font-semibold tracking-tight text-slate-900 dark:border-slate-700/70 dark:bg-slate-800/65 dark:text-slate-100";
+  }
+}
 
 function sanitizeHref(href: string | undefined): string | undefined {
   if (!href) return undefined;
@@ -353,12 +395,34 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
   }
 
   return (
-    <div className="prose prose-slate max-w-none dark:prose-invert prose-p:leading-7 prose-li:leading-7 prose-headings:tracking-tight">
+    <div className="medical-markdown prose prose-slate max-w-none dark:prose-invert prose-p:leading-7 prose-li:leading-7 prose-headings:tracking-tight">
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-cyan-300/70 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-900 dark:border-cyan-700/70 dark:bg-cyan-950/35 dark:text-cyan-100">
+        <span>Báo cáo y khoa có cấu trúc</span>
+        <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5 text-[10px] text-cyan-700 dark:border-cyan-600/70 dark:bg-cyan-900/45 dark:text-cyan-200">
+          markdown + citation
+        </span>
+        <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5 text-[10px] text-cyan-700 dark:border-cyan-600/70 dark:bg-cyan-900/45 dark:text-cyan-200">
+          mermaid/table ready
+        </span>
+      </div>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
         components={{
           pre: ({ children }) => <>{children}</>,
+          h2: ({ children }) => {
+            const headingText = flattenMarkdownChildren(children).trim();
+            const tone = resolveSectionTone(headingText);
+            return <h2 className={sectionHeadingClasses(tone)}>{children}</h2>;
+          },
+          h3: ({ children }) => (
+            <h3 className="mt-5 border-l-4 border-slate-300 pl-3 text-base font-semibold tracking-tight text-slate-900 dark:border-slate-600 dark:text-slate-100">
+              {children}
+            </h3>
+          ),
+          p: ({ children }) => (
+            <p className="mt-3 text-[15px] leading-7 text-slate-700 dark:text-slate-200">{children}</p>
+          ),
           a: ({ href, children, ...props }) => {
             const text =
               Array.isArray(children) && typeof children[0] === "string" ? children[0] : "";
@@ -373,6 +437,7 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
                 target={external ? "_blank" : undefined}
                 rel={external ? "noreferrer noopener nofollow" : undefined}
                 title={citation?.title}
+                className="font-medium text-cyan-700 underline decoration-cyan-500/50 underline-offset-2 transition hover:text-cyan-900 dark:text-cyan-300 dark:hover:text-cyan-100"
               >
                 {children}
               </a>
@@ -409,23 +474,41 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
             return <CodeFence code={code} language={language} isChartSpec={isChartSpec} />;
           },
           table: ({ children }) => (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
-              <table className="w-full border-collapse text-sm">{children}</table>
+            <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/40">
+              <table className="w-full border-collapse text-sm leading-6">{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-slate-300 bg-slate-100 px-2 py-1.5 text-left font-semibold dark:border-slate-600 dark:bg-slate-800">
+            <th className="border border-slate-300 bg-slate-100 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-slate-300 px-2 py-1.5 align-top dark:border-slate-700">{children}</td>
+            <td className="border border-slate-300 px-3 py-2 align-top text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200">
+              {children}
+            </td>
+          ),
+          ul: ({ children }) => (
+            <ul className="mt-3 space-y-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-4 py-3 dark:border-slate-700/70 dark:bg-slate-900/35">
+              {children}
+            </ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="mt-3 list-decimal space-y-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-5 py-3 dark:border-slate-700/70 dark:bg-slate-900/35">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => (
+            <li className="ml-2 text-[15px] leading-7 text-slate-700 marker:text-slate-400 dark:text-slate-200">
+              {children}
+            </li>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-sky-400 bg-sky-50/60 px-3 py-2 text-slate-700 dark:bg-sky-950/20 dark:text-slate-200">
+            <blockquote className="mt-3 rounded-r-xl border-l-4 border-sky-400 bg-sky-50/70 px-3 py-2 text-[14px] leading-7 text-slate-700 dark:bg-sky-950/20 dark:text-slate-200">
               {children}
             </blockquote>
           ),
+          hr: () => <hr className="my-6 border-slate-200 dark:border-slate-700" />,
         }}
       >
         {normalized}

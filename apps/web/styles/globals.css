@@ -126,6 +126,31 @@
   }
 }
 
+.medical-markdown {
+  position: relative;
+  isolation: isolate;
+}
+
+.medical-markdown::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(28rem 12rem at 100% 0%, rgb(14 165 233 / 9%), transparent 72%),
+    radial-gradient(18rem 9rem at 0% 100%, rgb(16 185 129 / 7%), transparent 72%);
+}
+
+.medical-markdown table tbody tr:nth-child(odd) {
+  background: rgb(248 250 252 / 72%);
+}
+
+html.dark .medical-markdown table tbody tr:nth-child(odd) {
+  background: rgb(15 23 42 / 42%);
+}
+
 @media (min-width: 2160px) {
   :root {
     --workspace-gutter: 1.9rem;

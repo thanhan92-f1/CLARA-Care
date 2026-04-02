@@ -39,16 +39,19 @@ _REQUIRED_MARKDOWN_HEADINGS = (
     "## Kết luận nhanh",
     "## Phân tích chi tiết",
     "## Khuyến nghị an toàn",
+    "## Theo dõi & cảnh báo đỏ",
     "## Nguồn tham chiếu",
 )
 
 _REQUIRED_DEEP_MARKDOWN_HEADINGS = (
     "## Kết luận nhanh",
     "## Tóm tắt điều hành",
+    "## Bối cảnh lâm sàng áp dụng",
     "## Phân tích chi tiết",
     "## Bảng tổng hợp bằng chứng",
-    "## Rủi ro & giới hạn",
-    "## Khuyến nghị an toàn",
+    "## Ma trận quyết định an toàn",
+    "## Kế hoạch theo dõi sau tư vấn",
+    "## Cảnh báo pháp lý & giới hạn hệ thống",
     "## Nguồn tham chiếu",
 )
 
@@ -2000,11 +2003,54 @@ def _build_reasoning_digest(
 
 
 def _ensure_markdown_structure(
+    topic: str,
     answer: str,
     citations: list[Citation],
     *,
     research_mode: str,
 ) -> str:
+    def _estimate_medical_risk_band(text: str) -> tuple[str, str, str]:
+        normalized = _ascii_fold(text)
+        high_terms = (
+            "warfarin",
+            "xuất huyết",
+            "bleeding",
+            "shock",
+            "sốc",
+            "phản vệ",
+            "anaphylaxis",
+            "khó thở",
+            "đau ngực",
+            "ngất",
+        )
+        moderate_terms = (
+            "ddi",
+            "tương tác thuốc",
+            "ibuprofen",
+            "aspirin",
+            "kháng viêm",
+            "nsaid",
+            "suy thận",
+            "suy gan",
+            "đái tháo đường",
+            "tim mạch",
+        )
+        if any(term in normalized for term in high_terms):
+            return ("Cao", "Đỏ", "Cần xử trí sớm và đánh giá y tế trực tiếp.")
+        if any(term in normalized for term in moderate_terms):
+            return ("Trung bình", "Cam", "Cần theo dõi sát và xác minh với bác sĩ/dược sĩ.")
+        return ("Thấp", "Vàng", "Theo dõi định kỳ, tiếp tục kiểm chứng nguồn chính thống.")
+
+    def _build_decision_matrix_markdown(*, risk_level: str, risk_signal: str) -> str:
+        return (
+            "| Mục đánh giá | Mức hiện tại | Hành động khuyến nghị |\n"
+            "| --- | --- | --- |\n"
+            f"| Mức rủi ro tổng quát | {risk_level} ({risk_signal}) | Không tự điều chỉnh thuốc, xác minh với bác sĩ/dược sĩ. |\n"
+            "| Độ tin cậy bằng chứng | Trung bình - Cao (tùy nguồn) | Ưu tiên guideline, nhãn thuốc chính thức, và dữ liệu DDI có trích dẫn. |\n"
+            "| Quyết định tại nhà | Có điều kiện | Chỉ tiếp tục dùng thuốc khi không có dấu hiệu cảnh báo đỏ. |\n"
+            "| Cần chuyển tuyến ngay | Khi có red flag | Đau ngực, khó thở, ngất, xuất huyết, lú lẫn, phản vệ. |\n"
+        )
+
     cleaned = str(answer or "").strip()
     if not cleaned:
         cleaned = "Chưa có nội dung trả lời chuyên sâu."
@@ -2021,29 +2067,43 @@ def _ensure_markdown_structure(
     if "\n" not in analysis_block:
         analysis_block = f"- {analysis_block}"
 
+    topic_snippet = _compact_snippet(topic, max_len=210)
+    risk_level, risk_signal, risk_note = _estimate_medical_risk_band(f"{topic} {cleaned}")
     citations_block = "\n".join(_citation_markdown_lines(citations))
     if research_mode in {"deep", "deep_beta"}:
-        evidence_table = _evidence_table_markdown(citations, max_rows=8)
+        evidence_table = _evidence_table_markdown(citations, max_rows=10)
         executive_summary = _compact_snippet(cleaned, max_len=360)
+        matrix_table = _build_decision_matrix_markdown(
+            risk_level=risk_level,
+            risk_signal=risk_signal,
+        )
         return (
             "## Kết luận nhanh\n"
             f"{_compact_snippet(cleaned, max_len=320)}\n\n"
             "## Tóm tắt điều hành\n"
+            f"- Câu hỏi chính: {topic_snippet}\n"
             f"- Phạm vi nghiên cứu: {_compact_snippet(cleaned, max_len=180)}\n"
             f"- Mức độ bằng chứng hiện có: {len(citations)} nguồn tham chiếu.\n"
+            f"- Tín hiệu rủi ro lâm sàng: {risk_level} ({risk_signal}). {risk_note}\n"
             f"- Điểm chính: {executive_summary}\n\n"
+            "## Bối cảnh lâm sàng áp dụng\n"
+            "- Phù hợp cho mục đích hỗ trợ thông tin và sàng lọc rủi ro ban đầu.\n"
+            "- Không dùng để thay thế chẩn đoán, kê đơn hoặc chỉnh liều điều trị cá thể hóa.\n"
+            "- Cần diễn giải theo bệnh nền, thuốc đang dùng, tuổi và chức năng gan-thận của người bệnh.\n\n"
             "## Phân tích chi tiết\n"
             f"{analysis_block}\n\n"
             "## Bảng tổng hợp bằng chứng\n"
             f"{evidence_table}\n\n"
-            "## Rủi ro & giới hạn\n"
-            "- Chất lượng bằng chứng có thể không đồng nhất giữa các nguồn.\n"
-            "- Một số claim cần xác minh thêm bằng guideline cập nhật hoặc dữ liệu real-world.\n"
-            "- Kết luận không thay thế đánh giá lâm sàng trực tiếp theo từng bệnh nhân.\n\n"
-            "## Khuyến nghị an toàn\n"
-            "- Không tự ý kê đơn hoặc điều chỉnh liều nếu chưa có tư vấn chuyên môn.\n"
-            "- Ưu tiên xác minh lại thông tin với bác sĩ/dược sĩ khi có bệnh nền hoặc đa thuốc.\n"
-            "- Nếu có dấu hiệu nặng (xuất huyết, khó thở, đau ngực), cần chuyển tuyến cấp cứu ngay.\n\n"
+            "## Ma trận quyết định an toàn\n"
+            f"{matrix_table}\n\n"
+            "## Kế hoạch theo dõi sau tư vấn\n"
+            "- Theo dõi triệu chứng trong 24-72 giờ sau khi áp dụng khuyến nghị an toàn.\n"
+            "- Ghi lại thuốc đang dùng, thời điểm dùng, và phản ứng bất thường để đối chiếu với bác sĩ.\n"
+            "- Nếu có đa thuốc hoặc bệnh nền phức tạp, ưu tiên lịch tư vấn sớm với cơ sở y tế.\n\n"
+            "## Cảnh báo pháp lý & giới hạn hệ thống\n"
+            "- Hệ thống chỉ cung cấp thông tin tham khảo dựa trên bằng chứng truy xuất được.\n"
+            "- Có thể tồn tại sai lệch do nguồn dữ liệu chưa đầy đủ hoặc khác biệt theo bối cảnh lâm sàng.\n"
+            "- Quyết định điều trị cuối cùng phải do bác sĩ/dược sĩ có thẩm quyền xác nhận.\n\n"
             "## Nguồn tham chiếu\n"
             f"{citations_block}"
         )
@@ -2056,6 +2116,9 @@ def _ensure_markdown_structure(
         "## Khuyến nghị an toàn\n"
         "- Không tự ý kê đơn hoặc điều chỉnh liều nếu chưa có tư vấn chuyên môn.\n"
         "- Ưu tiên xác minh lại thông tin với bác sĩ/dược sĩ khi có bệnh nền hoặc đa thuốc.\n\n"
+        "## Theo dõi & cảnh báo đỏ\n"
+        "- Theo dõi thay đổi triệu chứng trong 24-48 giờ và ghi chú phản ứng bất thường.\n"
+        "- Cần đi khám/cấp cứu ngay khi có đau ngực, khó thở, ngất, xuất huyết hoặc phản vệ.\n\n"
         "## Nguồn tham chiếu\n"
         f"{citations_block}"
     )
@@ -2965,6 +3028,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         )
     )
     answer_markdown = _ensure_markdown_structure(
+        topic,
         rag_result.answer,
         citations,
         research_mode=research_mode,
