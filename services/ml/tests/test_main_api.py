@@ -438,6 +438,48 @@ def test_research_tier2_deep_mode_returns_multi_pass_telemetry():
     assert any(str(item.get("stage")) == "deep_research" for item in stage_spans)
 
 
+def test_research_tier2_deep_beta_mode_returns_runtime_contract():
+    response = client.post(
+        "/v1/research/tier2",
+        json={
+            "query": "Perform deep beta analysis for warfarin and ibuprofen safety profile.",
+            "research_mode": "deep_beta",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["research_mode"] == "deep_beta"
+    assert body["metadata"]["research_mode"] == "deep_beta"
+    assert body["metadata"]["pipeline"] == "p2-research-tier2-deep-beta-v1"
+    assert body["deep_pass_count"] >= 1
+
+    verification_matrix = body.get("verification_matrix", {})
+    assert isinstance(verification_matrix, dict)
+    assert verification_matrix.get("version") == "claim-v2-nli"
+    assert isinstance(verification_matrix.get("rows"), list)
+    assert isinstance(verification_matrix.get("summary"), dict)
+    assert "safety_override" in verification_matrix
+
+    flow_events = body.get("flow_events", [])
+    assert isinstance(flow_events, list)
+    assert any(str(item.get("stage")).startswith("deep_beta") for item in flow_events)
+    assert any(item.get("stage") == "verification_matrix" for item in flow_events)
+
+    telemetry = body.get("telemetry", {})
+    assert isinstance(telemetry, dict)
+    index_summary = telemetry.get("index_summary", {})
+    assert isinstance(index_summary, dict)
+    rerank = index_summary.get("rerank", {})
+    assert isinstance(rerank, dict)
+    assert "rerank_topn" in rerank
+    assert "rerank_latency_ms" in rerank
+
+    stage_spans = body["metadata"].get("stage_spans")
+    assert isinstance(stage_spans, list)
+    assert any(str(item.get("stage")).startswith("deep_beta") for item in stage_spans)
+
+
 def test_careguard_analyze_returns_risk_and_alerts():
     response = client.post(
         "/v1/careguard/analyze",

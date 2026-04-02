@@ -969,6 +969,115 @@ def test_research_tier2_forwards_deep_beta_mode_to_ml(
     assert forwarded["role"] == "researcher"
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_pipeline"),
+    [
+        ("deep", "p2-research-tier2-deep-v1"),
+        ("deep_beta", "p2-research-tier2-deep-beta-v1"),
+    ],
+)
+def test_research_tier2_integration_preserves_deep_runtime_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected_pipeline: str,
+) -> None:
+    token = _login("alice@research.clara")
+
+    upstream_payload = {
+        "answer": "runtime contract ok",
+        "research_mode": mode,
+        "deep_pass_count": 2 if mode == "deep" else 3,
+        "flow_events": [
+            {
+                "stage": "retrieval_orchestrator",
+                "status": "completed",
+            },
+            {
+                "stage": "verification_matrix",
+                "status": "completed",
+            },
+            {
+                "stage": (
+                    "deep_research"
+                    if mode == "deep"
+                    else "deep_beta_multi_pass_retrieval"
+                ),
+                "status": "completed",
+            },
+        ],
+        "metadata": {
+            "research_mode": mode,
+            "pipeline": expected_pipeline,
+            "deep_pass_count": 2 if mode == "deep" else 3,
+            "telemetry": {
+                "search_plan": {
+                    "query": "warfarin ibuprofen bleeding risk",
+                    "top_k": 6,
+                },
+                "verification_matrix": {
+                    "rows": [
+                        {
+                            "claim": "Warfarin + ibuprofen increases bleeding risk.",
+                            "support_status": "supported",
+                            "claim_type": "contraindication",
+                            "confidence": 0.97,
+                        }
+                    ],
+                    "summary": {
+                        "version": "claim-v2-nli",
+                        "support_ratio": 1.0,
+                        "total_claims": 1,
+                    },
+                },
+                "index_summary": {
+                    "retrieved_count": 12,
+                    "selected_count": 6,
+                    "rerank": {
+                        "rerank_latency_ms": 21.5,
+                        "rerank_topn": 6,
+                        "rerank_reason": "ok",
+                    },
+                },
+            },
+        },
+    }
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return upstream_payload
+
+    def _fake_post(_url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        _ = (json, timeout)
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "deep runtime integration", "research_mode": mode},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["research_mode"] == mode
+    assert payload["metadata"]["research_mode"] == mode
+    assert payload["metadata"]["pipeline"] == expected_pipeline
+    assert payload["deep_pass_count"] == (2 if mode == "deep" else 3)
+    assert payload["verification_matrix"]["summary"]["version"] == "claim-v2-nli"
+    assert payload["verification_matrix"]["rows"][0]["support_status"] == "supported"
+
+    telemetry = payload["telemetry"]
+    assert telemetry["search_plan"]["query"] == "warfarin ibuprofen bleeding risk"
+    assert telemetry["verification_matrix"]["summary"]["total_claims"] == 1
+    assert telemetry["index_summary"]["rerank"]["rerank_latency_ms"] == 21.5
+    assert telemetry["index_summary"]["rerank"]["rerank_topn"] == 6
+    assert telemetry["index_summary"]["rerank"]["rerank_reason"] == "ok"
+
+
 def test_research_tier2_forwards_full_retrieval_stack_mode_to_ml(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
