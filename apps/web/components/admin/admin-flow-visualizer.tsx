@@ -411,7 +411,7 @@ const NODES: FlowNodeDef[] = [
 const GRID_ORIGIN_X = 300;
 const GRID_ORIGIN_Y = 220;
 const GRID_COL_GAP = 520;
-const GRID_ROW_GAP = 280;
+const GRID_ROW_GAP = 340;
 
 const NODE_GRID_LAYOUT: Record<FlowNodeId, { col: number; row: number }> = {
   input_gateway: { col: 0, row: 0 },
