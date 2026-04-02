@@ -34,6 +34,8 @@ export type FlowNodeId =
   | "policy_gate"
   | "deepseek_fallback"
   | "responder"
+  | "flow_event_stream"
+  | "baseline_regression"
   | "evaluation_feedback";
 
 type FlowNodeStatus = "required" | "on" | "off";
@@ -367,6 +369,30 @@ const NODES: FlowNodeDef[] = [
     tone: "sky",
   },
   {
+    id: "flow_event_stream",
+    title: "Flow Event Stream",
+    subtitle: "research events + source-errors metadata",
+    description:
+      "Ghi flow events từ research job vào stream store: stage/status, source_errors, fallback_reason, verification_matrix.",
+    riskNote:
+      "Thiếu event stream thì hard-negative mining từ production sẽ mù dữ liệu và không phản ánh runtime thực tế.",
+    x: 3000,
+    y: 760,
+    tone: "teal",
+  },
+  {
+    id: "baseline_regression",
+    title: "Baseline Regression Compare",
+    subtitle: "current vs previous KPI report",
+    description:
+      "So sánh KPI run hiện tại với baseline run trước, phát hiện tụt chất lượng theo ngưỡng drop-rate/latency.",
+    riskNote:
+      "Không có regression compare sẽ khó phát hiện quality degrade trước khi merge/deploy.",
+    x: 3360,
+    y: 980,
+    tone: "indigo",
+  },
+  {
     id: "evaluation_feedback",
     title: "Eval + Feedback Loop",
     subtitle: "online KPIs + hard-negative mining",
@@ -418,7 +444,9 @@ const NODE_GRID_LAYOUT: Record<FlowNodeId, { col: number; row: number }> = {
   responder: { col: 6, row: 4 },
   policy_gate: { col: 6, row: 5 },
   deepseek_fallback: { col: 6, row: 6 },
-  evaluation_feedback: { col: 6, row: 7 },
+  flow_event_stream: { col: 7, row: 4 },
+  baseline_regression: { col: 7, row: 5 },
+  evaluation_feedback: { col: 7, row: 6 },
 };
 
 function intersects(a: FlowNodeDef, b: FlowNodeDef): boolean {
@@ -535,8 +563,10 @@ const EDGES: FlowEdgeDef[] = [
   { from: "verification_matrix", to: "policy_gate", bend: -120 },
   { from: "citation_selection", to: "responder", bend: 66 },
   { from: "policy_gate", to: "responder", bend: 10 },
-  { from: "responder", to: "evaluation_feedback", bend: 112, label: "online eval" },
-  { from: "evaluation_feedback", to: "planner", bend: -380, label: "offline tuning" },
+  { from: "responder", to: "flow_event_stream", bend: 64, label: "persist events" },
+  { from: "flow_event_stream", to: "evaluation_feedback", bend: 84, label: "mine negatives" },
+  { from: "evaluation_feedback", to: "baseline_regression", bend: -58, label: "compare runs" },
+  { from: "baseline_regression", to: "planner", bend: -520, label: "regression gate" },
   { from: "planner", to: "deepseek_fallback", fallback: true, bend: 320, label: "degraded path" },
   { from: "evidence_index", to: "deepseek_fallback", fallback: true, bend: 260 },
   { from: "policy_gate", to: "deepseek_fallback", fallback: true, bend: 146 },
