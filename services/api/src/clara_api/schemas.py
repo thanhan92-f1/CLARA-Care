@@ -346,6 +346,31 @@ class MobileSummaryResponse(BaseModel):
     last_updated: datetime
 
 
+class CouncilRunRequest(BaseModel):
+    symptoms: list[str] = Field(default_factory=list)
+    labs: dict[str, float | str] = Field(default_factory=dict)
+    medications: list[str] = Field(default_factory=list)
+    history: str | list[str] | dict[str, Any] = ""
+    specialist_count: int = Field(default=3, ge=2, le=5)
+    specialists: list[str] = Field(default_factory=list)
+
+
+class CouncilRunResponse(BaseModel):
+    requested_specialists: list[str] = Field(default_factory=list)
+    per_specialist_reasoning_logs: list[dict[str, Any]] = Field(default_factory=list)
+    conflict_list: list[dict[str, Any] | str] = Field(default_factory=list)
+    consensus_summary: str = ""
+    divergence_notes: list[str] = Field(default_factory=list)
+    final_recommendation: str = ""
+    estimated_duration_minutes: int = 0
+    emergency_escalation: dict[str, Any] = Field(default_factory=dict)
+    confidence: float | None = None
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+    uncertainty_notes: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    analysis_sections: dict[str, Any] = Field(default_factory=dict)
+
+
 class KnowledgeSourceCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=2000)

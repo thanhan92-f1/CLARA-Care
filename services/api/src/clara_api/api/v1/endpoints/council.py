@@ -7,16 +7,37 @@ from clara_api.api.v1.endpoints.ml_proxy import proxy_ml_post
 from clara_api.core.config import get_settings
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
+from clara_api.schemas import CouncilRunRequest
 
 router = APIRouter()
+
+_MAX_AUDIO_BYTES = 15 * 1024 * 1024
+_ALLOWED_AUDIO_TYPES = {
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/webm",
+    "audio/mp4",
+    "audio/x-m4a",
+    "application/octet-stream",
+}
 
 
 @router.post("/run")
 def council_run(
+    payload: CouncilRunRequest,
+    _token: TokenPayload = Depends(require_roles("doctor")),
+) -> dict[str, Any]:
+    return proxy_ml_post("/v1/council/run", payload.model_dump())
+
+
+@router.post("/consult")
+def council_consult(
     payload: dict[str, Any],
     _token: TokenPayload = Depends(require_roles("doctor")),
 ) -> dict[str, Any]:
-    return proxy_ml_post("/v1/council/run", payload)
+    return proxy_ml_post("/v1/council/consult", payload)
 
 
 @router.post("/intake")
@@ -33,9 +54,19 @@ async def council_intake(
     if audio_file is not None and audio_file.filename:
         uploaded_bytes = await audio_file.read()
         if uploaded_bytes:
+            if len(uploaded_bytes) > _MAX_AUDIO_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Audio file too large. Maximum size is 15MB.",
+                )
             audio_bytes = uploaded_bytes
             audio_filename = audio_file.filename or audio_filename
             audio_content_type = audio_file.content_type or audio_content_type
+            if audio_content_type not in _ALLOWED_AUDIO_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail=f"Unsupported audio content type: {audio_content_type}",
+                )
 
     if not transcript_text and not audio_bytes:
         raise HTTPException(
@@ -57,14 +88,13 @@ async def council_intake(
             )
         }
 
-    response: httpx.Response | None = None
     try:
-        response = httpx.post(
-            url,
-            data=data,
-            files=files,
-            timeout=settings.ml_service_timeout_seconds,
-        )
+        async with httpx.AsyncClient(timeout=settings.ml_service_timeout_seconds) as client:
+            response = await client.post(
+                url,
+                data=data,
+                files=files,
+            )
     except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

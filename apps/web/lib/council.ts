@@ -14,6 +14,16 @@ export type CouncilIntakeRequest = {
   audioFile?: File | null;
 };
 
+export type CouncilConsultRequest = {
+  transcript?: string;
+  symptoms?: string[];
+  labs?: Record<string, number | string>;
+  medications?: string[];
+  history?: string;
+  specialists?: string[];
+  specialistCount?: number;
+};
+
 export type CouncilIntakeResult = {
   transcript: string;
   symptomsInput: string;
@@ -22,6 +32,14 @@ export type CouncilIntakeResult = {
   historyInput: string;
   modelUsed: string;
   warnings: string[];
+  fieldConfidence?: Record<string, number>;
+  missingFields?: string[];
+  councilPayload?: {
+    symptoms: string[];
+    labs: Record<string, number>;
+    medications: string[];
+    history: string[];
+  };
 };
 
 export type CouncilReasoningLog = {
@@ -29,6 +47,14 @@ export type CouncilReasoningLog = {
   reasoning: string;
   recommendation?: string;
   confidence?: string;
+};
+
+export type CouncilCitation = {
+  source: string;
+  title: string;
+  url?: string;
+  summary?: string;
+  specialist?: string;
 };
 
 export type CouncilRunRawResponse = {
@@ -43,6 +69,18 @@ export type CouncilRunResult = {
   finalRecommendation: string;
   isEmergency: boolean;
   escalationReason: string;
+  confidenceScore: number | null;
+  dataQualityScore: number | null;
+  missingInfoQuestions: string[];
+  uncertaintyNotes: string[];
+  citations: CouncilCitation[];
+  analysisSections: {
+    analyze: string[];
+    details: string[];
+    research: string[];
+    deepdive: string[];
+    citations: string[];
+  };
 };
 
 export type CouncilCaseDraft = {
@@ -229,11 +267,48 @@ function parseBoolean(value: unknown): boolean {
   return ["true", "1", "yes", "y", "emergency", "urgent", "escalate", "escalated"].includes(normalized);
 }
 
+function parseNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function parseStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => asText(item))
     .filter((item): item is string => Boolean(item));
+}
+
+function parseCitationList(value: unknown): CouncilCitation[] {
+  if (!Array.isArray(value)) return [];
+  const citations: CouncilCitation[] = [];
+  for (const item of value) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const source = asText(row.source) ?? asText(row.journal) ?? asText(row.publisher) ?? "Clinical source";
+    const title = asText(row.title) ?? asText(row.label) ?? source;
+    const url = asText(row.url);
+    const summary = asText(row.summary) ?? asText(row.note);
+    const specialist = asText(row.specialist);
+    citations.push({
+      source,
+      title,
+      url,
+      summary,
+      specialist
+    });
+  }
+  return citations;
+}
+
+function parseAnalysisSection(value: unknown): string[] {
+  if (Array.isArray(value)) return parseStringArray(value);
+  const text = parseText(value);
+  return text ? [text] : [];
 }
 
 function formatLabsInput(value: unknown): string {
@@ -267,6 +342,19 @@ export async function runCouncil(payload: CouncilRunRequest): Promise<CouncilRun
     specialists: payload.specialists
   });
 
+  return response.data;
+}
+
+export async function runCouncilConsult(payload: CouncilConsultRequest): Promise<CouncilRunRawResponse> {
+  const response = await api.post<CouncilRunRawResponse>("/council/consult", {
+    transcript: payload.transcript,
+    symptoms: payload.symptoms,
+    labs: payload.labs,
+    medications: payload.medications,
+    history: payload.history,
+    specialists: payload.specialists,
+    specialist_count: payload.specialistCount
+  });
   return response.data;
 }
 
@@ -306,7 +394,10 @@ export async function extractCouncilIntake(payload: CouncilIntakeRequest): Promi
     medicationsInput,
     historyInput,
     modelUsed: asText(root.model_used) ?? "deepseek-v3.2",
-    warnings: parseStringArray(root.warnings)
+    warnings: parseStringArray(root.warnings),
+    fieldConfidence: asRecord(root.field_confidence) as Record<string, number> | undefined,
+    missingFields: parseStringArray(root.missing_fields),
+    councilPayload: asRecord(root.council_payload) as CouncilIntakeResult["councilPayload"] | undefined
   };
 }
 
@@ -384,6 +475,43 @@ export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilR
     parseTextList(emergencyRecord?.red_flags).join(", ") ||
     "";
 
+  const confidenceScore = parseNumber(
+    pickUnknown(candidates, ["confidence", "overall_confidence", "confidence_score"])
+  );
+
+  const dataQualityRecord = asRecord(pickUnknown(candidates, ["data_quality", "quality", "input_quality"]));
+  const dataQualityScore = parseNumber(
+    dataQualityRecord?.score ?? dataQualityRecord?.quality_score ?? pickUnknown(candidates, ["data_quality_score"])
+  );
+
+  const uncertaintyNotes = parseTextList(
+    pickUnknown(candidates, ["uncertainty_notes", "uncertainties", "uncertain_points"])
+  );
+
+  const missingInfoQuestions = parseTextList(
+    pickUnknown(candidates, [
+      "follow_up_questions",
+      "missing_information_questions",
+      "needs_more_info_questions",
+      "missing_info_questions"
+    ])
+  );
+
+  const citations = parseCitationList(
+    pickUnknown(candidates, ["citations", "evidence_citations", "references", "sources"])
+  );
+
+  const analysisSectionsRecord = asRecord(
+    pickUnknown(candidates, ["analysis_sections", "sections", "workspace_sections"])
+  );
+  const analysisSections = {
+    analyze: parseAnalysisSection(analysisSectionsRecord?.analyze),
+    details: parseAnalysisSection(analysisSectionsRecord?.details),
+    research: parseAnalysisSection(analysisSectionsRecord?.research),
+    deepdive: parseAnalysisSection(analysisSectionsRecord?.deepdive),
+    citations: parseAnalysisSection(analysisSectionsRecord?.citations)
+  };
+
   return {
     specialistReasoningLogs,
     conflicts,
@@ -391,7 +519,13 @@ export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilR
     divergence,
     finalRecommendation,
     isEmergency,
-    escalationReason
+    escalationReason,
+    confidenceScore,
+    dataQualityScore,
+    missingInfoQuestions,
+    uncertaintyNotes,
+    citations,
+    analysisSections
   };
 }
 

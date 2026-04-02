@@ -278,8 +278,8 @@ def test_mobile_summary_allows_admin_with_safe_defaults() -> None:
     payload = response.json()
     assert payload["role"] == "admin"
     assert payload["feature_flags"] == {
-        "research": False,
-        "careguard": False,
-        "council": False,
-        "system_monitor": False,
+        "research": True,
+        "careguard": True,
+        "council": True,
+        "system_monitor": True,
     }

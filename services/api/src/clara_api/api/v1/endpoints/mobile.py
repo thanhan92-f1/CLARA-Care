@@ -34,12 +34,18 @@ _FEATURE_FLAGS_BY_ROLE = {
         "council": True,
         "system_monitor": True,
     },
+    "admin": {
+        "research": True,
+        "careguard": True,
+        "council": True,
+        "system_monitor": True,
+    },
 }
 
 
 @router.get("/summary", response_model=MobileSummaryResponse)
 def mobile_summary(
-    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor")),
+    token: TokenPayload = Depends(require_roles("normal", "researcher", "doctor", "admin")),
 ) -> MobileSummaryResponse:
     role = token.role
     feature_flags = _FEATURE_FLAGS_BY_ROLE.get(

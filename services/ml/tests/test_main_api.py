@@ -518,6 +518,29 @@ def test_council_run_returns_expected_schema():
     assert body["estimated_duration_minutes"] > 0
     assert body["emergency_escalation"]["triggered"] is False
     assert body["emergency_escalation"]["action"] == "standard_multidisciplinary_pathway"
+    assert body["needs_more_info"] is False
+    assert isinstance(body["followup_questions"], list)
+    assert isinstance(body["confidence_score"], float)
+    assert 0.0 <= body["confidence_score"] <= 1.0
+    assert body["confidence_level"] in {"low", "medium", "high"}
+    assert isinstance(body["data_quality_score"], float)
+    assert 0.0 <= body["data_quality_score"] <= 1.0
+    assert body["data_quality_level"] in {"low", "medium", "high"}
+    assert isinstance(body["analyze"], dict)
+    assert isinstance(body["details"], dict)
+    assert isinstance(body["citations"], list)
+    assert len(body["citations"]) >= 1
+    assert isinstance(body["research"], dict)
+    assert isinstance(body["deepdive"], dict)
+    assert body["analyze"]["consensus_triage"] in {
+        "routine_follow_up",
+        "same_day_review",
+        "emergency_escalation",
+    }
+    assert body["analyze"]["needs_more_info"] is False
+    assert isinstance(body["details"]["specialist_assessments"], list)
+    assert isinstance(body["research"]["topics"], list)
+    assert isinstance(body["deepdive"]["specialist_sections"], list)
 
 
 def test_council_run_emergency_escalation_on_red_flags():
@@ -540,6 +563,82 @@ def test_council_run_emergency_escalation_on_red_flags():
     assert body["emergency_escalation"]["action"] == "immediate_emergency_referral"
     assert body["estimated_duration_minutes"] == 5
     assert "Emergency escalation triggered" in body["final_recommendation"]
+    assert body["needs_more_info"] is False
+    assert isinstance(body["emergency_escalation"]["negated_red_flags"], list)
+    assert body["analyze"]["emergency_triggered"] is True
+    assert body["confidence_level"] in {"medium", "high"}
+
+
+def test_council_run_negation_aware_and_insufficient_data_gate():
+    response = client.post(
+        "/v1/council/run",
+        json={
+            "symptoms": ["no chest pain", "denies shortness of breath"],
+            "labs": {},
+            "medications": [],
+            "history": [],
+            "specialists": ["cardiology", "neurology"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["emergency_escalation"]["triggered"] is False
+    assert body["emergency_escalation"]["red_flags"] == []
+    assert isinstance(body["emergency_escalation"]["negated_red_flags"], list)
+    assert len(body["emergency_escalation"]["negated_red_flags"]) >= 1
+    assert body["needs_more_info"] is True
+    assert isinstance(body["followup_questions"], list)
+    assert len(body["followup_questions"]) >= 1
+    assert body["analyze"]["needs_more_info"] is True
+    assert body["confidence_level"] == "low"
+    assert "insufficient" in body["final_recommendation"].lower()
+    assert isinstance(body["citations"], list)
+    assert any(item.get("evidence_type") == "negated_symptom" for item in body["citations"])
+
+
+def test_council_consult_with_transcript_and_overrides(monkeypatch: pytest.MonkeyPatch):
+    def _fake_run_council_intake(**_kwargs):
+        return {
+            "symptoms": ["fatigue"],
+            "labs": [],
+            "medications": ["metformin"],
+            "history": ["type 2 diabetes"],
+            "council_payload": {
+                "symptoms": ["fatigue"],
+                "labs": {"glucose": 210.0},
+                "medications": ["metformin"],
+                "history": ["type 2 diabetes"],
+            },
+            "model_used": "deepseek-v3.2",
+            "warnings": [],
+            "missing_fields": [],
+            "field_confidence": {"symptoms": 0.95},
+        }
+
+    monkeypatch.setattr("clara_ml.main.run_council_intake", _fake_run_council_intake)
+
+    response = client.post(
+        "/v1/council/consult",
+        json={
+            "transcript": "bn met moi, duong huyet cao",
+            "symptoms": ["palpitations"],
+            "specialists": ["cardiology", "endocrinology"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requested_specialists"] == ["cardiology", "endocrinology"]
+    assert isinstance(body["final_recommendation"], str)
+    assert body["intake"]["model_used"] == "deepseek-v3.2"
+    assert isinstance(body["intake"]["warnings"], list)
+
+
+def test_council_consult_missing_input_returns_400():
+    response = client.post("/v1/council/consult", json={})
+
+    assert response.status_code == 400
+    assert "Missing consult input" in response.json()["detail"]
 
 
 def test_council_intake_transcript_only_success(monkeypatch: pytest.MonkeyPatch):
@@ -561,6 +660,22 @@ def test_council_intake_transcript_only_success(monkeypatch: pytest.MonkeyPatch)
             },
             "warnings": [],
             "model_used": "deepseek-v3.2",
+            "needs_more_info": False,
+            "followup_questions": [],
+            "confidence_score": 0.93,
+            "confidence_level": "high",
+            "data_quality_score": 0.84,
+            "data_quality_level": "high",
+            "analyze": {
+                "needs_more_info": False,
+                "followup_questions": [],
+                "confidence": {"score": 0.93, "level": "high"},
+                "data_quality": {"score": 0.84, "level": "high"},
+            },
+            "details": {"section_counts": {"symptoms": 1, "labs": 0, "medications": 0, "history": 1}},
+            "citations": [{"source_id": "intake-symptom-1"}],
+            "research": {"mode": "intake_extraction_v2", "topics": []},
+            "deepdive": {"extraction": {"model_used": "deepseek-v3.2"}},
         }
 
     monkeypatch.setattr("clara_ml.main.run_council_intake", _fake_run_council_intake)
@@ -574,6 +689,14 @@ def test_council_intake_transcript_only_success(monkeypatch: pytest.MonkeyPatch)
     body = response.json()
     assert body["text_fields"]["symptoms_input"] == "đau đầu"
     assert body["model_used"] == "deepseek-v3.2"
+    assert body["needs_more_info"] is False
+    assert body["confidence_level"] == "high"
+    assert body["data_quality_level"] == "high"
+    assert isinstance(body["analyze"], dict)
+    assert isinstance(body["details"], dict)
+    assert isinstance(body["citations"], list)
+    assert isinstance(body["research"], dict)
+    assert isinstance(body["deepdive"], dict)
 
     assert captured["transcript"] == "bn đau đầu 2 ngày"
     assert captured["audio_bytes"] is None

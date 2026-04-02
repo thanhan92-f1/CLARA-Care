@@ -720,6 +720,24 @@ def routed_chat_infer(payload: dict) -> dict:
     )
 
 
+def _labs_rows_to_numeric_map(rows: object) -> dict[str, float]:
+    if not isinstance(rows, list):
+        return {}
+    normalized: dict[str, float] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip().lower()
+        value = str(item.get("value", "")).strip()
+        if not name or not value:
+            continue
+        try:
+            normalized[name] = float(value)
+        except ValueError:
+            continue
+    return normalized
+
+
 @app.post("/v1/research/tier2")
 def research_tier2(payload: dict) -> dict:
     query = str(payload.get("query", "")).strip()
@@ -770,6 +788,57 @@ def scribe_soap(payload: dict) -> dict:
 @app.post("/v1/council/run")
 def council_run(payload: dict) -> dict:
     return run_council(payload)
+
+
+@app.post("/v1/council/consult")
+def council_consult(payload: dict) -> dict:
+    transcript = str(payload.get("transcript", "")).strip()
+    specialists = payload.get("specialists")
+    specialist_count = payload.get("specialist_count")
+
+    merged_payload: dict[str, object] = {}
+    intake_summary: dict[str, object] | None = None
+
+    if transcript:
+        intake_summary = run_council_intake(transcript=transcript)
+        council_payload = intake_summary.get("council_payload")
+        if isinstance(council_payload, dict):
+            merged_payload.update(council_payload)
+        else:
+            merged_payload["symptoms"] = intake_summary.get("symptoms", [])
+            labs_value = intake_summary.get("labs", {})
+            if isinstance(labs_value, dict):
+                merged_payload["labs"] = labs_value
+            else:
+                merged_payload["labs"] = _labs_rows_to_numeric_map(labs_value)
+            merged_payload["medications"] = intake_summary.get("medications", [])
+            merged_payload["history"] = intake_summary.get("history", [])
+
+    # User-provided fields override extracted intake if present.
+    for key in ("symptoms", "labs", "medications", "history"):
+        if key in payload and payload.get(key) not in (None, "", []):
+            merged_payload[key] = payload.get(key)
+
+    if specialists is not None:
+        merged_payload["specialists"] = specialists
+    if specialist_count is not None:
+        merged_payload["specialist_count"] = specialist_count
+
+    if not merged_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing consult input. Provide transcript or structured clinical fields.",
+        )
+
+    result = run_council(merged_payload)
+    if intake_summary is not None:
+        result["intake"] = {
+            "model_used": intake_summary.get("model_used"),
+            "warnings": intake_summary.get("warnings", []),
+            "missing_fields": intake_summary.get("missing_fields", []),
+            "field_confidence": intake_summary.get("field_confidence", {}),
+        }
+    return result
 
 
 @app.get("/v1/prompts/{role}/{intent}")
