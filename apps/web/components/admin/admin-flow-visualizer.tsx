@@ -70,9 +70,12 @@ type AdminFlowVisualizerProps = {
   selectedNodeId?: FlowNodeId | null;
 };
 
-const SCENE_WIDTH = 3920;
-const SCENE_HEIGHT = 2280;
-const NODE_CARD_WIDTH = 248;
+const SCENE_WIDTH = 4280;
+const SCENE_HEIGHT = 2440;
+const NODE_CARD_WIDTH = 252;
+const NODE_CARD_HEIGHT = 216;
+const NODE_SAFE_GAP_X = 72;
+const NODE_SAFE_GAP_Y = 72;
 const EXPORT_SCALE = 3;
 
 const NODES: FlowNodeDef[] = [
@@ -375,48 +378,98 @@ const NODES: FlowNodeDef[] = [
   },
 ];
 
-const NODE_LAYOUT_OVERRIDES: Record<FlowNodeId, { x: number; y: number }> = {
-  input_gateway: { x: 260, y: 220 },
-  session_guard: { x: 260, y: 520 },
-  safety_ingress: { x: 260, y: 820 },
+const GRID_ORIGIN_X = 300;
+const GRID_ORIGIN_Y = 220;
+const GRID_COL_GAP = 520;
+const GRID_ROW_GAP = 280;
 
-  legal_guard: { x: 760, y: 220 },
-  role_router: { x: 760, y: 520 },
-  intent_router: { x: 760, y: 820 },
-  query_canonicalizer: { x: 760, y: 1120 },
+const NODE_GRID_LAYOUT: Record<FlowNodeId, { col: number; row: number }> = {
+  input_gateway: { col: 0, row: 0 },
+  session_guard: { col: 0, row: 1 },
+  safety_ingress: { col: 0, row: 2 },
 
-  planner: { x: 1260, y: 520 },
-  query_decomposition: { x: 1260, y: 820 },
-  retrieval_orchestrator: { x: 1260, y: 1120 },
+  legal_guard: { col: 1, row: 0 },
+  role_router: { col: 1, row: 1 },
+  intent_router: { col: 1, row: 2 },
+  query_canonicalizer: { col: 1, row: 3 },
 
-  deep_research: { x: 1760, y: 220 },
-  retrieval_internal: { x: 1760, y: 760 },
-  retrieval_scientific: { x: 1760, y: 1040 },
-  retrieval_web: { x: 1760, y: 1320 },
-  retrieval_file: { x: 1760, y: 1600 },
+  planner: { col: 2, row: 1 },
+  query_decomposition: { col: 2, row: 2 },
+  retrieval_orchestrator: { col: 2, row: 3 },
 
-  deep_beta_router: { x: 2260, y: 220 },
-  deep_beta_hypothesis: { x: 2260, y: 520 },
-  deep_beta_critic: { x: 2260, y: 820 },
-  deep_beta_consensus: { x: 2260, y: 1120 },
-  evidence_index: { x: 2260, y: 1420 },
-  contradiction_miner: { x: 2260, y: 1700 },
+  deep_research: { col: 3, row: 0 },
+  retrieval_internal: { col: 3, row: 2 },
+  retrieval_scientific: { col: 3, row: 3 },
+  retrieval_web: { col: 3, row: 4 },
+  retrieval_file: { col: 3, row: 5 },
 
-  citation_selection: { x: 2760, y: 980 },
-  verification: { x: 2760, y: 1220 },
-  synthesis: { x: 2760, y: 1480 },
-  verification_matrix: { x: 2760, y: 1740 },
+  deep_beta_router: { col: 4, row: 0 },
+  deep_beta_hypothesis: { col: 4, row: 1 },
+  deep_beta_critic: { col: 4, row: 2 },
+  deep_beta_consensus: { col: 4, row: 3 },
+  evidence_index: { col: 4, row: 4 },
+  contradiction_miner: { col: 4, row: 5 },
 
-  responder: { x: 3260, y: 1180 },
-  policy_gate: { x: 3260, y: 1460 },
-  deepseek_fallback: { x: 3260, y: 1760 },
-  evaluation_feedback: { x: 3260, y: 2040 },
+  citation_selection: { col: 5, row: 3 },
+  verification: { col: 5, row: 4 },
+  synthesis: { col: 5, row: 5 },
+  verification_matrix: { col: 5, row: 6 },
+
+  responder: { col: 6, row: 4 },
+  policy_gate: { col: 6, row: 5 },
+  deepseek_fallback: { col: 6, row: 6 },
+  evaluation_feedback: { col: 6, row: 7 },
 };
 
-const FLOW_NODES = NODES.map((node) => ({
-  ...node,
-  ...(NODE_LAYOUT_OVERRIDES[node.id] ?? {}),
-}));
+function intersects(a: FlowNodeDef, b: FlowNodeDef): boolean {
+  return (
+    Math.abs(a.x - b.x) < NODE_CARD_WIDTH + NODE_SAFE_GAP_X &&
+    Math.abs(a.y - b.y) < NODE_CARD_HEIGHT + NODE_SAFE_GAP_Y
+  );
+}
+
+function clampPosition(node: FlowNodeDef): FlowNodeDef {
+  const minX = NODE_CARD_WIDTH / 2 + 32;
+  const maxX = SCENE_WIDTH - NODE_CARD_WIDTH / 2 - 32;
+  const minY = NODE_CARD_HEIGHT / 2 + 32;
+  const maxY = SCENE_HEIGHT - NODE_CARD_HEIGHT / 2 - 32;
+  return {
+    ...node,
+    x: Math.max(minX, Math.min(maxX, node.x)),
+    y: Math.max(minY, Math.min(maxY, node.y)),
+  };
+}
+
+function resolveNonOverlappingNodes(nodes: FlowNodeDef[]): FlowNodeDef[] {
+  const seeded = nodes.map((node) => {
+    const slot = NODE_GRID_LAYOUT[node.id];
+    if (!slot) {
+      return clampPosition(node);
+    }
+    return clampPosition({
+      ...node,
+      x: GRID_ORIGIN_X + slot.col * GRID_COL_GAP,
+      y: GRID_ORIGIN_Y + slot.row * GRID_ROW_GAP,
+    });
+  });
+
+  const placed: FlowNodeDef[] = [];
+  for (const seed of seeded) {
+    let candidate = { ...seed };
+    let guard = 0;
+    while (placed.some((existing) => intersects(candidate, existing)) && guard < 80) {
+      candidate = clampPosition({
+        ...candidate,
+        y: candidate.y + NODE_CARD_HEIGHT + NODE_SAFE_GAP_Y / 2,
+      });
+      guard += 1;
+    }
+    placed.push(candidate);
+  }
+  return placed;
+}
+
+const FLOW_NODES = resolveNonOverlappingNodes(NODES);
 
 export const FLOW_NODE_INFOS: Record<FlowNodeId, FlowNodeInfo> = NODES.reduce(
   (acc, node) => {
@@ -629,8 +682,8 @@ export default function AdminFlowVisualizer({
   const lowContextThreshold = typeof ragFlow?.low_context_threshold === "number" ? ragFlow.low_context_threshold : 0;
 
   return (
-    <section className="relative overflow-hidden rounded-[32px] border border-cyan-200/45 bg-[radial-gradient(circle_at_12%_6%,rgba(34,211,238,0.26),transparent_30%),radial-gradient(circle_at_88%_90%,rgba(14,165,233,0.2),transparent_36%),linear-gradient(158deg,rgba(255,255,255,0.94),rgba(236,254,255,0.88)_44%,rgba(224,242,254,0.9))] p-5 shadow-[0_34px_96px_rgba(8,47,73,0.2)] dark:border-cyan-500/30 dark:bg-[radial-gradient(circle_at_12%_6%,rgba(34,211,238,0.2),transparent_34%),radial-gradient(circle_at_88%_90%,rgba(59,130,246,0.18),transparent_42%),linear-gradient(160deg,rgba(2,6,23,0.95),rgba(8,47,73,0.84)_48%,rgba(15,23,42,0.92))] dark:shadow-[0_40px_110px_rgba(2,6,23,0.84)]">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(8,145,178,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.14)_1px,transparent_1px)] bg-[size:26px_26px] dark:bg-[linear-gradient(to_right,rgba(8,145,178,0.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.22)_1px,transparent_1px)]" />
+    <section className="relative overflow-hidden rounded-[32px] border border-cyan-200/45 bg-[radial-gradient(circle_at_8%_4%,rgba(56,189,248,0.28),transparent_33%),radial-gradient(circle_at_86%_18%,rgba(34,211,238,0.18),transparent_36%),radial-gradient(circle_at_88%_92%,rgba(14,165,233,0.24),transparent_42%),linear-gradient(158deg,rgba(255,255,255,0.95),rgba(236,254,255,0.9)_42%,rgba(224,242,254,0.92))] p-5 shadow-[0_34px_96px_rgba(8,47,73,0.2)] dark:border-cyan-500/30 dark:bg-[radial-gradient(circle_at_12%_6%,rgba(34,211,238,0.22),transparent_36%),radial-gradient(circle_at_88%_12%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_88%_90%,rgba(59,130,246,0.2),transparent_44%),linear-gradient(160deg,rgba(2,6,23,0.96),rgba(8,47,73,0.86)_46%,rgba(15,23,42,0.94))] dark:shadow-[0_40px_110px_rgba(2,6,23,0.84)]">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(8,145,178,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.14)_1px,transparent_1px)] bg-[size:26px_26px] dark:bg-[linear-gradient(to_right,rgba(8,145,178,0.26)_1px,transparent_1px),linear-gradient(to_bottom,rgba(8,145,178,0.26)_1px,transparent_1px)]" />
       <div className="pointer-events-none absolute inset-x-8 top-0 h-36 rounded-b-[40px] bg-gradient-to-b from-cyan-300/30 to-transparent blur-2xl dark:from-cyan-400/25" />
 
       <div className="relative flex flex-wrap items-start justify-between gap-4">
