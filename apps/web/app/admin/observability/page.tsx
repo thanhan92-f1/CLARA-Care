@@ -6,7 +6,7 @@ export default function AdminObservabilityPage() {
     <AdminShell
       activeTab="observability"
       title="Observability"
-      description="Theo dõi health, dependency, latency từ control tower runtime và giám sát tập trung bằng Grafana."
+      description="Theo dõi health, dependency, latency và flow gates bằng signal board nội bộ (grafana-like) trong admin."
     >
       <AdminObservabilityPanel />
     </AdminShell>

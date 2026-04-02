@@ -62,18 +62,12 @@ const ADMIN_TABS: Array<{
     key: "observability",
     href: "/admin/observability",
     label: "Observability",
-    hint: "Health, metrics và Grafana",
+    hint: "Health, metrics và signal board",
     code: "A06"
   }
 ];
 
 export default function AdminShell({ activeTab, title, description, children }: AdminShellProps) {
-  const rawGrafanaBase = (process.env.NEXT_PUBLIC_GRAFANA_URL ?? "/grafana").trim();
-  const grafanaBase = rawGrafanaBase.endsWith("/")
-    ? rawGrafanaBase.slice(0, -1)
-    : rawGrafanaBase;
-  const grafanaOverviewUrl = `${grafanaBase}/d/clara-observability/clara-observability?orgId=1`;
-
   return (
     <div className="space-y-5">
       <section
@@ -104,17 +98,12 @@ export default function AdminShell({ activeTab, title, description, children }: 
             </div>
             <div className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-3">
               <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-[var(--text-muted)]">Operating Surface</p>
-              <p className="mt-1 text-sm font-mono text-[var(--text-primary)]">RAG · Flow · Runtime · Grafana</p>
+              <p className="mt-1 text-sm font-mono text-[var(--text-primary)]">RAG · Flow · Runtime Signals</p>
             </div>
-            <a
-              href={grafanaOverviewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-3 transition hover:border-[color:var(--shell-border-strong)]"
-            >
-              <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-[var(--text-muted)]">Grafana Board</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--text-brand)]">Mở dashboard giám sát ↗</p>
-            </a>
+            <div className="rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-[var(--text-muted)]">Signal Board</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--text-brand)]">Grafana-like monitoring in app</p>
+            </div>
           </div>
         </div>
       </section>

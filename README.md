@@ -31,7 +31,7 @@ Phạm vi trách nhiệm:
 - **API**: FastAPI (`services/api`) cổng `8000` (compose ánh xạ `127.0.0.1:8100`).
 - **ML**: FastAPI (`services/ml`) cổng `8010` (compose ánh xạ `127.0.0.1:8110`).
 - **Cổng tìm kiếm**: SearXNG (compose ánh xạ `127.0.0.1:8888`).
-- **Giám sát**: Prometheus (`127.0.0.1:9090`) + Grafana (`127.0.0.1:3001`, qua reverse proxy `/grafana/`).
+- **Giám sát**: Signal board grafana-like tích hợp trong Admin (`/admin/observability`) + API metrics endpoint.
 - **Hạ tầng dữ liệu cục bộ**: PostgreSQL, Redis, Milvus (+etcd+minio), Elasticsearch, Neo4j.
 
 ### 2.2 Luồng xử lý chính
@@ -177,7 +177,6 @@ curl -sS http://127.0.0.1:8100/api/v1/health
 curl -sS http://127.0.0.1:8110/health
 curl -sS http://127.0.0.1:8110/metrics | head -n 20
 curl -sS http://127.0.0.1:3100/
-curl -I http://127.0.0.1:3001/grafana/
 ```
 
 ## 6) Chạy từng dịch vụ ở môi trường cục bộ
