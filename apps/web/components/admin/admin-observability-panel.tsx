@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BarBlocks, Sparkline } from "@/components/admin/admin-visuals";
+import {
+  ConduitFlowLine,
+  MatrixHeatmapMini,
+  NeonAreaChart,
+  RadarPulseChart,
+  SegmentRingGauge,
+  TelemetryBars
+} from "@/components/dashboard/futuristic-charts";
 import {
   getApiHealth,
   getControlTowerConfig,
@@ -11,6 +18,16 @@ import {
   normalizeSystemDependencies,
   normalizeSystemMetrics
 } from "@/lib/system";
+
+type FlowFlags = {
+  roleRouter: boolean;
+  intentRouter: boolean;
+  verificationGate: boolean;
+  deepseekFallback: boolean;
+  scientificRetrieval: boolean;
+  webRetrieval: boolean;
+  fileRetrieval: boolean;
+};
 
 type ObservabilityState = {
   loading: boolean;
@@ -26,15 +43,7 @@ type ObservabilityState = {
   enabledSources: number;
   flowEnabledCount: number;
   lowContextThreshold: number;
-  flow: {
-    roleRouter: boolean;
-    intentRouter: boolean;
-    verificationGate: boolean;
-    deepseekFallback: boolean;
-    scientificRetrieval: boolean;
-    webRetrieval: boolean;
-    fileRetrieval: boolean;
-  };
+  flow: FlowFlags;
 };
 
 type TimelinePoint = {
@@ -42,6 +51,8 @@ type TimelinePoint = {
   requests: number;
   errors: number;
   latencyMs: number;
+  flowEnabledCount: number;
+  sourceCoverage: number;
 };
 
 type AlertLevel = "info" | "warn" | "critical";
@@ -50,6 +61,7 @@ type AlertItem = {
   level: AlertLevel;
   title: string;
   detail: string;
+  source: string;
 };
 
 const INITIAL_STATE: ObservabilityState = {
@@ -77,6 +89,11 @@ const INITIAL_STATE: ObservabilityState = {
   }
 };
 
+function clamp(value: number, min = 0, max = 100): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
 function toInt(value: number | null): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value ?? 0)) : 0;
 }
@@ -90,16 +107,34 @@ function formatPercent(value: number): string {
   return `${Math.max(0, value).toFixed(1)}%`;
 }
 
-function toneForStatus(status: string): "ok" | "warn" {
+function toneForStatus(status: string): "ok" | "warn" | "error" {
   const normalized = status.toLowerCase();
   if (normalized.includes("ok") || normalized.includes("healthy") || normalized.includes("reachable")) return "ok";
-  return "warn";
+  if (normalized.includes("warn") || normalized.includes("degraded")) return "warn";
+  return "error";
 }
 
-function pillClass(enabled: boolean): string {
-  return enabled
-    ? "border-emerald-300/80 bg-emerald-100/90 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-200"
-    : "border-amber-300/80 bg-amber-100/90 text-amber-800 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-200";
+function buildRiskMatrix(params: {
+  errors: number;
+  errorRate: number;
+  latencyMs: number;
+  sourceCoverage: number;
+  flowEnabled: number;
+}): number[][] {
+  const { errors, errorRate, latencyMs, sourceCoverage, flowEnabled } = params;
+  return [
+    [clamp(28 - errors), clamp(errorRate * 2), clamp(errorRate * 4), clamp(errorRate * 6)],
+    [clamp(40 - latencyMs / 20), clamp(latencyMs / 8), clamp(latencyMs / 5), clamp(latencyMs / 2.4)],
+    [clamp(sourceCoverage), clamp(100 - sourceCoverage), clamp((100 - sourceCoverage) * 1.3), clamp((100 - sourceCoverage) * 1.7)],
+    [clamp(flowEnabled * 12), clamp((7 - flowEnabled) * 14), clamp((7 - flowEnabled) * 18), clamp((7 - flowEnabled) * 22)]
+  ];
+}
+
+function computeFlowHealth(flow: FlowFlags): number {
+  const requiredKeys: Array<keyof FlowFlags> = ["roleRouter", "intentRouter", "verificationGate", "scientificRetrieval"];
+  const requiredOn = requiredKeys.filter((key) => flow[key]).length;
+  const optionalOn = [flow.deepseekFallback, flow.webRetrieval, flow.fileRetrieval].filter(Boolean).length;
+  return clamp(requiredOn * 20 + optionalOn * 13);
 }
 
 export default function AdminObservabilityPanel() {
@@ -136,6 +171,7 @@ export default function AdminObservabilityPanel() {
       };
 
       const flowEnabledCount = Object.values(flow).filter(Boolean).length;
+      const sourceCoverage = sources.length > 0 ? (enabledSources / sources.length) * 100 : 0;
 
       setState({
         loading: false,
@@ -159,10 +195,12 @@ export default function AdminObservabilityPanel() {
           at: Date.now(),
           requests: toInt(metrics.requestCount),
           errors: toInt(metrics.errorCount),
-          latencyMs: toInt(metrics.avgLatencyMs)
+          latencyMs: toInt(metrics.avgLatencyMs),
+          flowEnabledCount,
+          sourceCoverage: Math.round(sourceCoverage)
         };
         const next = [...prev, point];
-        return next.slice(-24);
+        return next.slice(-30);
       });
     } catch (cause) {
       setState((prev) => ({
@@ -185,123 +223,211 @@ export default function AdminObservabilityPanel() {
     return () => window.clearInterval(timer);
   }, [autoRefresh, load]);
 
-  const requestCount = toInt(state.requestCount);
-  const errorCount = toInt(state.errorCount);
-  const successCount = Math.max(0, requestCount - errorCount);
+  const requests = toInt(state.requestCount);
+  const errors = toInt(state.errorCount);
+  const success = Math.max(0, requests - errors);
   const latencyMs = toInt(state.avgLatencyMs);
-  const errorRate = requestCount > 0 ? (errorCount / requestCount) * 100 : 0;
+  const errorRate = requests > 0 ? (errors / requests) * 100 : 0;
   const sourceCoverage = state.totalSources > 0 ? (state.enabledSources / state.totalSources) * 100 : 0;
+  const flowHealth = computeFlowHealth(state.flow);
 
-  const requestSeries = useMemo(() => {
-    if (timeline.length === 0) return [Math.max(1, requestCount)];
-    return timeline.map((point) => Math.max(1, point.requests));
-  }, [timeline, requestCount]);
+  const apiTone = toneForStatus(state.apiStatus);
+  const mlTone = state.mlReachable === false ? "error" : toneForStatus(state.mlStatus);
+  const runtimeStability = clamp(100 - errorRate * 2.2 - latencyMs / 58 - (state.mlReachable === false ? 24 : 0));
+  const verificationStrength = clamp(flowHealth - state.lowContextThreshold * 28 + 12);
 
-  const latencySeries = useMemo(() => {
-    if (timeline.length === 0) return [Math.max(1, latencyMs)];
-    return timeline.map((point) => Math.max(1, point.latencyMs));
-  }, [timeline, latencyMs]);
+  const axisLabels = useMemo(() => {
+    if (timeline.length === 0) return ["t-5", "t-4", "t-3", "t-2", "t-1", "now"];
+    return timeline.map((item) => {
+      const date = new Date(item.at);
+      return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    });
+  }, [timeline]);
 
-  const loadShape = useMemo(() => {
-    const weightedFlow = Math.round(state.flowEnabledCount * 14);
-    const thresholdWeight = Math.round(state.lowContextThreshold * 100);
-    return [
-      Math.max(1, successCount),
-      Math.max(1, errorCount),
-      Math.max(1, latencyMs),
-      Math.max(1, weightedFlow),
-      Math.max(1, thresholdWeight)
-    ];
-  }, [successCount, errorCount, latencyMs, state.flowEnabledCount, state.lowContextThreshold]);
+  const trafficSeries = useMemo(
+    () => [
+      {
+        id: "requests",
+        label: "Requests",
+        color: "#22d3ee",
+        values: timeline.map((item) => item.requests)
+      },
+      {
+        id: "errors",
+        label: "Errors",
+        color: "#fb7185",
+        values: timeline.map((item) => item.errors)
+      }
+    ],
+    [timeline]
+  );
+
+  const performanceSeries = useMemo(
+    () => [
+      {
+        id: "latency",
+        label: "Latency",
+        color: "#60a5fa",
+        values: timeline.map((item) => item.latencyMs)
+      },
+      {
+        id: "sourceCoverage",
+        label: "Source coverage",
+        color: "#34d399",
+        values: timeline.map((item) => item.sourceCoverage)
+      }
+    ],
+    [timeline]
+  );
+
+  const radarAxes = useMemo(
+    () => [
+      { label: "Runtime", value: runtimeStability, max: 100 },
+      { label: "Verification", value: verificationStrength, max: 100 },
+      { label: "Source Coverage", value: sourceCoverage, max: 100 },
+      { label: "Flow Health", value: flowHealth, max: 100 },
+      { label: "API Health", value: apiTone === "ok" ? 95 : apiTone === "warn" ? 68 : 40, max: 100 }
+    ],
+    [apiTone, flowHealth, runtimeStability, sourceCoverage, verificationStrength]
+  );
+
+  const signalItems = useMemo<
+    Array<{ label: string; value: number; tone: "ok" | "warn" | "danger" }>
+  >(
+    () => [
+      { label: "Runtime Stability", value: Math.round(runtimeStability), tone: runtimeStability < 65 ? "warn" : "ok" },
+      { label: "Verification Strength", value: Math.round(verificationStrength), tone: verificationStrength < 70 ? "warn" : "ok" },
+      { label: "Flow Health", value: Math.round(flowHealth), tone: flowHealth < 60 ? "danger" : "ok" },
+      { label: "Source Coverage", value: Math.round(sourceCoverage), tone: sourceCoverage < 50 ? "warn" : "ok" }
+    ],
+    [flowHealth, runtimeStability, sourceCoverage, verificationStrength]
+  );
+
+  const pipelineStages = useMemo<
+    Array<{ label: string; status: "ok" | "warn" | "error" | "idle"; note: string }>
+  >(
+    () => [
+      { label: "Gateway", status: apiTone === "ok" ? "ok" : apiTone === "warn" ? "warn" : "error", note: state.apiStatus },
+      { label: "Role Router", status: state.flow.roleRouter ? "ok" : "warn", note: state.flow.roleRouter ? "ON" : "OFF" },
+      { label: "Intent Router", status: state.flow.intentRouter ? "ok" : "warn", note: state.flow.intentRouter ? "ON" : "OFF" },
+      { label: "Verification", status: state.flow.verificationGate ? "ok" : "error", note: state.flow.verificationGate ? "ON" : "OFF" },
+      { label: "ML Runtime", status: mlTone === "ok" ? "ok" : mlTone === "warn" ? "warn" : "error", note: state.mlReachable === false ? "offline" : "reachable" }
+    ],
+    [apiTone, mlTone, state.apiStatus, state.flow.intentRouter, state.flow.roleRouter, state.flow.verificationGate, state.mlReachable]
+  );
 
   const alerts = useMemo<AlertItem[]>(() => {
-    const items: AlertItem[] = [];
+    const rows: AlertItem[] = [];
 
-    const apiOk = toneForStatus(state.apiStatus) === "ok";
-    if (!apiOk) {
-      items.push({
-        level: "critical",
-        title: "API health degraded",
-        detail: state.apiMessage || "API status đang ở trạng thái không ổn định."
+    if (apiTone !== "ok") {
+      rows.push({
+        level: apiTone === "error" ? "critical" : "warn",
+        title: "API runtime degraded",
+        detail: state.apiMessage || "Gateway signals are unstable.",
+        source: "api"
       });
     }
 
     if (state.mlReachable === false) {
-      items.push({
+      rows.push({
         level: "critical",
         title: "ML dependency unreachable",
-        detail: state.mlStatus || "Không kết nối được dịch vụ ML."
+        detail: state.mlStatus || "No response from ML runtime.",
+        source: "ml"
       });
     }
 
     if (errorRate >= 15) {
-      items.push({
+      rows.push({
         level: "critical",
-        title: "Error rate cao",
-        detail: `Tỉ lệ lỗi hiện tại ${formatPercent(errorRate)} vượt ngưỡng cảnh báo.`
+        title: "Error rate exceeded threshold",
+        detail: `Current error-rate ${formatPercent(errorRate)} is above safety window.`,
+        source: "metrics"
       });
     } else if (errorRate >= 8) {
-      items.push({
+      rows.push({
         level: "warn",
-        title: "Error rate tăng",
-        detail: `Tỉ lệ lỗi ${formatPercent(errorRate)} cần theo dõi thêm.`
+        title: "Error rate trending up",
+        detail: `Current error-rate is ${formatPercent(errorRate)}.`,
+        source: "metrics"
       });
     }
 
     if (latencyMs >= 1200) {
-      items.push({
+      rows.push({
         level: "warn",
-        title: "Latency cao",
-        detail: `Độ trễ trung bình ${latencyMs}ms đang cao hơn mức vận hành bình thường.`
+        title: "Latency high",
+        detail: `Average latency ${latencyMs}ms is above nominal control band.`,
+        source: "metrics"
       });
     }
 
     if (sourceCoverage < 50 && state.totalSources > 0) {
-      items.push({
+      rows.push({
         level: "warn",
-        title: "Nguồn RAG enable thấp",
-        detail: `Mới bật ${state.enabledSources}/${state.totalSources} nguồn.`
+        title: "Low source coverage",
+        detail: `${state.enabledSources}/${state.totalSources} sources enabled.`,
+        source: "control-tower"
       });
     }
 
-    if (items.length === 0) {
-      items.push({
+    if (!state.flow.verificationGate) {
+      rows.push({
+        level: "critical",
+        title: "Verification gate disabled",
+        detail: "Safety guard is OFF and should be enabled for production-grade response control.",
+        source: "flow"
+      });
+    }
+
+    if (rows.length === 0) {
+      rows.push({
         level: "info",
-        title: "Runtime ổn định",
-        detail: "Chưa phát hiện tín hiệu bất thường từ health, dependency và metrics."
+        title: "Runtime stable",
+        detail: "No abnormal signals detected in current sampling window.",
+        source: "system"
       });
     }
 
-    return items;
-  }, [errorRate, latencyMs, sourceCoverage, state.apiMessage, state.apiStatus, state.enabledSources, state.mlReachable, state.mlStatus, state.totalSources]);
+    return rows;
+  }, [apiTone, errorRate, latencyMs, sourceCoverage, state.apiMessage, state.enabledSources, state.flow.verificationGate, state.mlReachable, state.mlStatus, state.totalSources]);
+
+  const riskMatrix = useMemo(
+    () =>
+      buildRiskMatrix({
+        errors,
+        errorRate,
+        latencyMs,
+        sourceCoverage,
+        flowEnabled: state.flowEnabledCount
+      }),
+    [errorRate, errors, latencyMs, sourceCoverage, state.flowEnabledCount]
+  );
 
   const flowRows: Array<{ label: string; enabled: boolean; detail: string }> = [
     { label: "Role Router", enabled: state.flow.roleRouter, detail: "Định tuyến theo vai trò người dùng." },
     { label: "Intent Router", enabled: state.flow.intentRouter, detail: "Tách ý định để chọn pipeline phù hợp." },
-    { label: "Verification Gate", enabled: state.flow.verificationGate, detail: "Chặn phản hồi thiếu căn cứ tài liệu." },
-    { label: "DeepSeek Fallback", enabled: state.flow.deepseekFallback, detail: "Dự phòng khi đường chính gặp sự cố." },
-    { label: "Scientific Retrieval", enabled: state.flow.scientificRetrieval, detail: "Ưu tiên nguồn nghiên cứu y khoa." },
-    { label: "Web Retrieval", enabled: state.flow.webRetrieval, detail: "Mở rộng tìm nguồn web khi cần." },
-    { label: "File Retrieval", enabled: state.flow.fileRetrieval, detail: "Truy xuất từ tài liệu nội bộ đã upload." }
+    { label: "Verification Gate", enabled: state.flow.verificationGate, detail: "Bắt buộc kiểm chứng trước phản hồi." },
+    { label: "DeepSeek Fallback", enabled: state.flow.deepseekFallback, detail: "Dự phòng đường suy luận khi degrade." },
+    { label: "Scientific Retrieval", enabled: state.flow.scientificRetrieval, detail: "Ưu tiên nguồn y khoa chuẩn." },
+    { label: "Web Retrieval", enabled: state.flow.webRetrieval, detail: "Bổ sung khi nguồn nội bộ thiếu ngữ cảnh." },
+    { label: "File Retrieval", enabled: state.flow.fileRetrieval, detail: "Truy xuất dữ liệu tài liệu đã upload." }
   ];
-
-  const healthTone = toneForStatus(state.apiStatus);
-  const mlTone = state.mlReachable === false ? "warn" : "ok";
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-cyan-300/45 bg-[linear-gradient(150deg,rgba(255,255,255,0.95),rgba(236,254,255,0.84))] p-4 shadow-[0_28px_62px_-44px_rgba(8,47,73,0.45)] dark:border-cyan-500/30 dark:bg-[linear-gradient(150deg,rgba(2,6,23,0.92),rgba(8,47,73,0.76))]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className="futura-panel rounded-[1.75rem] p-4">
+        <div className="relative z-[1] flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">In-App Monitoring</p>
-            <h3 className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100">Grafana-like Signal Board</h3>
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Giám sát tập trung ngay trong admin: health, dependency, latency, error-rate, coverage và flow gates.
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Admin Command Center</p>
+            <h3 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">Futuristic Observability Grid</h3>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+              Giám sát tập trung runtime, flow-gates, coverage và risk pressure trong một surface duy nhất.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300/70 bg-white/80 px-3 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+            <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-1.5 text-xs text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5"
@@ -321,122 +447,163 @@ export default function AdminObservabilityPanel() {
         </div>
 
         {state.error ? (
-          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/35 dark:text-rose-200">
+          <p className="relative z-[1] mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/35 dark:text-rose-200">
             {state.error}
           </p>
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <article className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-wider text-slate-500">API Health</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{state.apiStatus}</p>
-            <span className={["mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", healthTone === "ok" ? "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-200" : "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-200"].join(" ")}>
-              {healthTone === "ok" ? "Stable" : "Investigate"}
-            </span>
-          </article>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">API Health</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.apiStatus}</p>
+          <p className="text-xs text-[var(--text-secondary)]">{state.apiMessage || "No details"}</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">ML Runtime</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.mlReachable === false ? "offline" : "online"}</p>
+          <p className="text-xs text-[var(--text-secondary)]">{state.mlStatus}</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Requests / Errors</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">
+            {formatCount(state.requestCount)} <span className="text-sm text-rose-400">/ {formatCount(state.errorCount)}</span>
+          </p>
+          <p className="text-xs text-[var(--text-secondary)]">Error rate {formatPercent(errorRate)}</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Latency</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{latencyMs}ms</p>
+          <p className="text-xs text-[var(--text-secondary)]">Source coverage {formatPercent(sourceCoverage)}</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Runtime Stability</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{Math.round(runtimeStability)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Derived from errors + latency + dependency</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Verification Strength</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{Math.round(verificationStrength)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Low-context threshold {Math.round(state.lowContextThreshold * 100)}%</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Flow Enabled</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.flowEnabledCount}/7</p>
+          <p className="text-xs text-[var(--text-secondary)]">Flow health {Math.round(flowHealth)}</p>
+        </article>
+        <article className="futura-kpi rounded-xl p-3">
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Success</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{success}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Successful request count</p>
+        </article>
+      </section>
 
-          <article className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-wider text-slate-500">ML Dependency</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{state.mlReachable === false ? "unreachable" : "reachable"}</p>
-            <span className={["mt-1 inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", mlTone === "ok" ? "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-200" : "border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-700 dark:bg-rose-950/45 dark:text-rose-200"].join(" ")}>
-              {state.mlStatus}
-            </span>
-          </article>
-
-          <article className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Requests / Errors</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {formatCount(state.requestCount)} <span className="text-sm text-rose-600 dark:text-rose-400">/ {formatCount(state.errorCount)}</span>
-            </p>
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Error rate: {formatPercent(errorRate)}</p>
-          </article>
-
-          <article className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Latency & Coverage</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{latencyMs}ms</p>
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Sources: {state.enabledSources}/{state.totalSources} · Coverage {formatPercent(sourceCoverage)}
-            </p>
-          </article>
-        </div>
+      <section className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+        <article className="futura-card rounded-2xl p-4">
+          <NeonAreaChart
+            title="Traffic Pressure"
+            description="Requests vs errors across latest sampling window"
+            labels={axisLabels}
+            series={trafficSeries}
+            height={240}
+          />
+        </article>
+        <article className="futura-card rounded-2xl p-4">
+          <NeonAreaChart
+            title="Performance Envelope"
+            description="Latency vs source coverage trajectory"
+            labels={axisLabels}
+            series={performanceSeries}
+            height={240}
+          />
+        </article>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Traffic Trend</h3>
-            <span className="text-xs text-slate-500">24 snapshots</span>
+        <article className="futura-card rounded-2xl p-4">
+          <div className="grid grid-cols-2 gap-3">
+            <SegmentRingGauge label="Stability" value={Math.round(runtimeStability)} tone="cyan" />
+            <SegmentRingGauge label="Verification" value={Math.round(verificationStrength)} tone="emerald" />
+            <SegmentRingGauge label="Coverage" value={Math.round(sourceCoverage)} tone="violet" />
+            <SegmentRingGauge label="Flow" value={Math.round(flowHealth)} tone="amber" />
           </div>
-          <div className="mt-3">
-            {state.loading ? <div className="h-14 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" /> : <Sparkline points={requestSeries} />}
-          </div>
-          <p className="mt-2 text-xs text-slate-500">Theo dõi xu hướng request theo chu kỳ refresh.</p>
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Latency Trend</h3>
-            <span className="text-xs text-slate-500">ms</span>
-          </div>
-          <div className="mt-3">
-            {state.loading ? <div className="h-14 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" /> : <Sparkline points={latencySeries} stroke="#d97706" />}
-          </div>
-          <p className="mt-2 text-xs text-slate-500">Độ trễ trung bình để phát hiện phase chậm bất thường.</p>
+        <article className="futura-card rounded-2xl p-4">
+          <RadarPulseChart
+            title="Control Radar"
+            description="Runtime resilience across 5 reliability dimensions"
+            axes={radarAxes}
+            size={260}
+          />
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Load Blocks</h3>
-            <span className="text-xs text-slate-500">success/error/latency/flow/threshold</span>
-          </div>
-          <div className="mt-3">
-            {state.loading ? <div className="h-16 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" /> : <BarBlocks values={loadShape} />}
-          </div>
-          <p className="mt-2 text-xs text-slate-500">Block chart tóm tắt áp lực vận hành hiện tại.</p>
+        <article className="futura-card rounded-2xl p-4">
+          <TelemetryBars title="Signal Stack" description="Realtime health score per subsystem" items={signalItems} />
         </article>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Flow Gate Matrix</h3>
-          <p className="mt-1 text-xs text-slate-500">Kiểm soát các công tắc pipeline để giữ độ chính xác và an toàn.</p>
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr_1fr]">
+        <article className="futura-card rounded-2xl p-4">
+          <ConduitFlowLine
+            title="Inference Pipeline"
+            description="Gateway -> routing -> verification -> ML service"
+            stages={pipelineStages}
+          />
 
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {flowRows.map((row) => (
-              <div key={row.label} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
+              <div key={row.label} className="rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{row.label}</p>
-                  <span className={["inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold", pillClass(row.enabled)].join(" ")}>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">{row.label}</p>
+                  <span
+                    className={[
+                      "inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold",
+                      row.enabled
+                        ? "border-emerald-300/80 bg-emerald-100/90 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-200"
+                        : "border-amber-300/80 bg-amber-100/90 text-amber-800 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-200"
+                    ].join(" ")}
+                  >
                     {row.enabled ? "ON" : "OFF"}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{row.detail}</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">{row.detail}</p>
               </div>
             ))}
           </div>
-
-          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
-            Flow enabled: <span className="font-semibold text-slate-900 dark:text-slate-100">{state.flowEnabledCount}/7</span> · Low context threshold: <span className="font-semibold text-slate-900 dark:text-slate-100">{Math.round(state.lowContextThreshold * 100)}%</span>
-          </div>
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Active Alerts</h3>
-          <p className="mt-1 text-xs text-slate-500">Danh sách cảnh báo sinh từ snapshot runtime hiện tại.</p>
+        <article className="futura-card rounded-2xl p-4">
+          <MatrixHeatmapMini
+            title="Risk Pressure Matrix"
+            description="Error, latency, coverage và flow risk intensity"
+            rows={["Errors", "Latency", "Coverage", "Flow"]}
+            columns={["Low", "Medium", "High", "Critical"]}
+            values={riskMatrix}
+            minLabel="Lower pressure"
+            maxLabel="Higher pressure"
+          />
+        </article>
+
+        <article className="futura-card rounded-2xl p-4">
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Alert Triage</h3>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Ưu tiên xử lý theo severity và nguồn phát sinh.</p>
 
           <div className="mt-3 space-y-2">
             {alerts.map((alert, index) => {
-              const toneClass = alert.level === "critical"
-                ? "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
-                : alert.level === "warn"
-                  ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-                  : "border-cyan-300 bg-cyan-50 text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200";
+              const toneClass =
+                alert.level === "critical"
+                  ? "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+                  : alert.level === "warn"
+                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                    : "border-cyan-300 bg-cyan-50 text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200";
 
               return (
                 <div key={`${alert.title}-${index}`} className={["rounded-lg border p-3", toneClass].join(" ")}>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em]">{alert.level}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em]">{alert.level}</p>
+                    <span className="rounded-full border border-current/30 px-2 py-0.5 text-[10px] uppercase">{alert.source}</span>
+                  </div>
                   <p className="mt-1 text-sm font-semibold">{alert.title}</p>
                   <p className="mt-1 text-xs opacity-90">{alert.detail}</p>
                 </div>

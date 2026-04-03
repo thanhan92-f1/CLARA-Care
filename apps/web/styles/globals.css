@@ -688,6 +688,78 @@ html[data-theme="dark"] .text-slate-500 {
     0 2px 12px rgba(2, 6, 23, 0.58);
 }
 
+/* Futuristic dashboard utilities */
+.futura-panel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--shell-border) 64%, #22d3ee 36%);
+  background:
+    radial-gradient(120% 84% at 100% 0%, rgb(56 189 248 / 16%), transparent 54%),
+    radial-gradient(120% 84% at 0% 100%, rgb(16 185 129 / 10%), transparent 58%),
+    linear-gradient(165deg, color-mix(in srgb, var(--surface-panel) 88%, transparent), color-mix(in srgb, var(--surface-muted) 72%, transparent));
+  backdrop-filter: blur(14px) saturate(135%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 20px 44px -34px rgb(2 132 199 / 62%);
+}
+
+.futura-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgb(125 211 252 / 7%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(125 211 252 / 7%) 1px, transparent 1px);
+  background-size: 18px 18px;
+  mask-image: radial-gradient(80% 65% at 50% 15%, #000 30%, transparent 100%);
+}
+
+.futura-card {
+  border: 1px solid color-mix(in srgb, var(--shell-border) 68%, #38bdf8 32%);
+  background:
+    radial-gradient(110% 90% at 100% 0%, rgb(34 211 238 / 12%), transparent 58%),
+    linear-gradient(170deg, color-mix(in srgb, var(--surface-panel) 92%, transparent), color-mix(in srgb, var(--surface-muted) 78%, transparent));
+  box-shadow: 0 16px 38px -30px rgb(2 132 199 / 56%);
+}
+
+.futura-kpi {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid color-mix(in srgb, var(--shell-border) 66%, #38bdf8 34%);
+  background:
+    radial-gradient(120% 85% at 100% 0%, rgb(59 130 246 / 16%), transparent 56%),
+    linear-gradient(165deg, color-mix(in srgb, var(--surface-panel) 95%, transparent), color-mix(in srgb, var(--surface-muted) 82%, transparent));
+  box-shadow: 0 14px 36px -30px rgb(2 132 199 / 58%);
+}
+
+.futura-chip {
+  border: 1px solid color-mix(in srgb, var(--shell-border) 68%, #22d3ee 32%);
+  background: color-mix(in srgb, var(--surface-muted) 84%, transparent);
+}
+
+html.dark .futura-panel,
+html[data-theme="dark"] .futura-panel {
+  background:
+    radial-gradient(120% 84% at 100% 0%, rgb(34 211 238 / 16%), transparent 54%),
+    radial-gradient(120% 84% at 0% 100%, rgb(59 130 246 / 14%), transparent 58%),
+    linear-gradient(165deg, rgb(5 12 28 / 90%), rgb(3 9 22 / 92%));
+}
+
+@media (hover: hover) {
+  .futura-card:hover,
+  .futura-kpi:hover,
+  .futura-panel:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 20%),
+      0 24px 48px -30px rgb(14 165 233 / 60%),
+      0 0 18px rgb(34 211 238 / 26%);
+  }
+}
+
 .clara-copy-rhythm {
   font-size: clamp(1rem, 0.45vw + 0.93rem, 1.16rem);
   line-height: clamp(1.78rem, 0.75vw + 1.6rem, 2.12rem);

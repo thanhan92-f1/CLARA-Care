@@ -2,6 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ConduitFlowLine,
+  MatrixHeatmapMini,
+  NeonAreaChart,
+  RadarPulseChart,
+  SegmentRingGauge,
+  TelemetryBars
+} from "@/components/dashboard/futuristic-charts";
 import PageShell from "@/components/ui/page-shell";
 import { UserRole, getRole } from "@/lib/auth-store";
 import api from "@/lib/http-client";
@@ -9,6 +17,7 @@ import { listResearchConversations } from "@/lib/research";
 import { getCabinet } from "@/lib/selfmed";
 import {
   getApiHealth,
+  getControlTowerConfig,
   getSystemDependencies,
   getSystemMetrics,
   normalizeApiHealth,
@@ -38,6 +47,15 @@ type TodayTask = {
 };
 
 type StatusTone = "ok" | "warn" | "error" | "neutral";
+
+type TimelinePoint = {
+  at: number;
+  requests: number;
+  errors: number;
+  latencyMs: number;
+  cabinetCount: number;
+  reliability: number;
+};
 
 const ROLE_LABELS: Record<UserRole, string> = {
   normal: "Người dùng cá nhân",
@@ -91,31 +109,35 @@ function formatDateTime(value: number): string {
   });
 }
 
+function formatPercent(value: number): string {
+  return `${Math.max(0, value).toFixed(1)}%`;
+}
+
 function getGreeting(now: Date): { title: string; subtitle: string } {
   const hour = now.getHours();
   if (hour < 12) {
     return {
       title: "Good morning",
-      subtitle: "Bắt đầu ngày mới: rà soát thuốc và ưu tiên an toàn trước khi dùng."
+      subtitle: "Bắt đầu ngày mới bằng checklist an toàn thuốc và readiness của hệ thống."
     };
   }
   if (hour < 18) {
     return {
       title: "Good afternoon",
-      subtitle: "Giữ điều trị ổn định: kiểm tra tương tác và cập nhật tủ thuốc hôm nay."
+      subtitle: "Theo dõi telemetry realtime để giữ điều trị ổn định suốt ngày."
     };
   }
   return {
     title: "Good evening",
-    subtitle: "Tổng kết cuối ngày: xác nhận thuốc đã dùng và kế hoạch ngày mai."
+    subtitle: "Tổng kết operational snapshot và ưu tiên action cho ngày mai."
   };
 }
 
 function toneFromStatus(status: string): StatusTone {
   const normalized = status.toLowerCase();
-  if (["ok", "healthy", "up", "pass", "ready"].some((token) => normalized.includes(token))) return "ok";
+  if (["ok", "healthy", "up", "pass", "ready", "reachable"].some((token) => normalized.includes(token))) return "ok";
   if (["warn", "warning", "degraded", "slow", "unstable"].some((token) => normalized.includes(token))) return "warn";
-  if (["down", "fail", "error", "critical", "unhealthy"].some((token) => normalized.includes(token))) return "error";
+  if (["down", "fail", "error", "critical", "unhealthy", "offline"].some((token) => normalized.includes(token))) return "error";
   return "neutral";
 }
 
@@ -148,6 +170,19 @@ function taskToneLabel(tone: TodayTask["tone"]): string {
   return "Bình thường";
 }
 
+function reliabilityScore(params: {
+  healthTone: StatusTone;
+  mlTone: StatusTone;
+  errorRate: number;
+  latencyMs: number;
+}): number {
+  const healthPart = params.healthTone === "ok" ? 34 : params.healthTone === "warn" ? 20 : 8;
+  const mlPart = params.mlTone === "ok" ? 28 : params.mlTone === "warn" ? 16 : 6;
+  const errorPart = Math.max(0, 24 - params.errorRate * 1.5);
+  const latencyPart = Math.max(0, 14 - Math.max(0, params.latencyMs - 280) / 90);
+  return Math.max(0, Math.min(100, healthPart + mlPart + errorPart + latencyPart));
+}
+
 export default function DashboardPage() {
   const [role, setRole] = useState<UserRole>("normal");
   const [displayName, setDisplayName] = useState("bạn");
@@ -167,10 +202,25 @@ export default function DashboardPage() {
   const [expiredCount, setExpiredCount] = useState<number | null>(null);
   const [missingDosageCount, setMissingDosageCount] = useState<number | null>(null);
 
+  const [enabledSources, setEnabledSources] = useState(0);
+  const [totalSources, setTotalSources] = useState(0);
+  const [flowEnabledCount, setFlowEnabledCount] = useState(0);
+  const [lowContextThreshold, setLowContextThreshold] = useState(0);
+  const [flowFlags, setFlowFlags] = useState({
+    roleRouter: false,
+    intentRouter: false,
+    verificationGate: false,
+    deepseekFallback: false,
+    scientificRetrieval: false,
+    webRetrieval: false,
+    fileRetrieval: false
+  });
+
   const [recentQueries, setRecentQueries] = useState<Array<{ id: string; query: string; createdAt: number }>>([]);
   const [alerts, setAlerts] = useState<string[]>([]);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
 
   const roleLabel = useMemo(() => ROLE_LABELS[role] ?? ROLE_LABELS.normal, [role]);
   const greeting = useMemo(() => getGreeting(new Date()), []);
@@ -245,14 +295,20 @@ export default function DashboardPage() {
     setIsRefreshing(true);
     const nextAlerts: string[] = [];
 
+    let nextRequestCount = requestCount ?? 0;
+    let nextErrorCount = errorCount ?? 0;
+    let nextLatencyMs = Math.round(avgLatencyMs ?? 0);
+    let nextCabinetCount = cabinetCount ?? 0;
+
     try {
-      const [healthResult, metricsResult, dependenciesResult, cabinetResult, meResult, conversationsResult] = await Promise.allSettled([
+      const [healthResult, metricsResult, dependenciesResult, cabinetResult, meResult, conversationsResult, controlTowerResult] = await Promise.allSettled([
         getApiHealth(),
         getSystemMetrics(),
         getSystemDependencies(),
         getCabinet(),
         api.get<AuthMePayload>("/auth/me"),
-        listResearchConversations(5)
+        listResearchConversations(5),
+        getControlTowerConfig()
       ]);
 
       if (healthResult.status === "fulfilled") {
@@ -268,6 +324,9 @@ export default function DashboardPage() {
         setRequestCount(metrics.requestCount);
         setErrorCount(metrics.errorCount);
         setAvgLatencyMs(metrics.avgLatencyMs);
+        nextRequestCount = Math.max(0, Math.trunc(metrics.requestCount ?? 0));
+        nextErrorCount = Math.max(0, Math.trunc(metrics.errorCount ?? 0));
+        nextLatencyMs = Math.max(0, Math.round(metrics.avgLatencyMs ?? 0));
       } else {
         nextAlerts.push("Không thể lấy số liệu hệ thống.");
       }
@@ -308,8 +367,33 @@ export default function DashboardPage() {
         setExpiringSoonCount(soon);
         setExpiredCount(expired);
         setMissingDosageCount(missingDosage);
+        nextCabinetCount = items.length;
       } else {
         nextAlerts.push("Không thể tải dữ liệu tủ thuốc.");
+      }
+
+      if (controlTowerResult.status === "fulfilled") {
+        const config = controlTowerResult.value;
+        const sources = Array.isArray(config.rag_sources) ? config.rag_sources : [];
+        const enabled = sources.filter((source) => source.enabled).length;
+        setEnabledSources(enabled);
+        setTotalSources(sources.length);
+
+        const flow = {
+          roleRouter: Boolean(config.rag_flow.role_router_enabled),
+          intentRouter: Boolean(config.rag_flow.intent_router_enabled),
+          verificationGate: Boolean(config.rag_flow.verification_enabled),
+          deepseekFallback: Boolean(config.rag_flow.deepseek_fallback_enabled),
+          scientificRetrieval: Boolean(config.rag_flow.scientific_retrieval_enabled),
+          webRetrieval: Boolean(config.rag_flow.web_retrieval_enabled),
+          fileRetrieval: Boolean(config.rag_flow.file_retrieval_enabled)
+        };
+
+        setFlowFlags(flow);
+        setFlowEnabledCount(Object.values(flow).filter(Boolean).length);
+        setLowContextThreshold(config.rag_flow.low_context_threshold);
+      } else {
+        nextAlerts.push("Không thể tải control tower config.");
       }
 
       if (meResult.status === "fulfilled") {
@@ -337,12 +421,36 @@ export default function DashboardPage() {
         nextAlerts.push("Không thể tải lịch sử research gần đây.");
       }
 
+      const healthTone = toneFromStatus(healthResult.status === "fulfilled" ? normalizeApiHealth(healthResult.value).status : healthStatus);
+      const mlTone = toneFromStatus(dependenciesResult.status === "fulfilled"
+        ? (normalizeSystemDependencies(dependenciesResult.value).mlReachable === false ? "offline" : "reachable")
+        : mlStatus);
+      const nextErrorRate = nextRequestCount > 0 ? (nextErrorCount / nextRequestCount) * 100 : 0;
+      const nextReliability = reliabilityScore({
+        healthTone,
+        mlTone,
+        errorRate: nextErrorRate,
+        latencyMs: nextLatencyMs
+      });
+
+      setTimeline((prev) => {
+        const point: TimelinePoint = {
+          at: Date.now(),
+          requests: nextRequestCount,
+          errors: nextErrorCount,
+          latencyMs: nextLatencyMs,
+          cabinetCount: nextCabinetCount,
+          reliability: nextReliability
+        };
+        return [...prev, point].slice(-36);
+      });
+
       setAlerts(nextAlerts);
       setCheckedAt(new Date().toLocaleString("vi-VN"));
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [avgLatencyMs, cabinetCount, errorCount, healthStatus, mlStatus, requestCount]);
 
   useEffect(() => {
     setRole(getRole());
@@ -353,6 +461,65 @@ export default function DashboardPage() {
   const mlTone = toneFromStatus(
     mlReachable === true ? "ok" : mlReachable === false ? "error" : mlStatus
   );
+
+  const requestSafe = Math.max(0, Math.trunc(requestCount ?? 0));
+  const errorSafe = Math.max(0, Math.trunc(errorCount ?? 0));
+  const latencySafe = Math.max(0, Math.round(avgLatencyMs ?? 0));
+  const sourceCoverage = totalSources > 0 ? (enabledSources / totalSources) * 100 : 0;
+  const errorRate = requestSafe > 0 ? (errorSafe / requestSafe) * 100 : 0;
+  const reliability = reliabilityScore({
+    healthTone,
+    mlTone,
+    errorRate,
+    latencyMs: latencySafe
+  });
+
+  const trendThroughput = timeline.length > 1
+    ? Math.round((timeline[timeline.length - 1].requests - timeline[0].requests) / (timeline.length - 1))
+    : requestSafe;
+
+  const graphLabels = timeline.map((point, index) => `T${index + 1}`);
+  const requestsSeries = timeline.map((point) => point.requests);
+  const errorsSeries = timeline.map((point) => point.errors);
+  const latencySeries = timeline.map((point) => point.latencyMs);
+  const reliabilitySeries = timeline.map((point) => point.reliability);
+  const cabinetSeries = timeline.map((point) => point.cabinetCount);
+
+  const radarAxes = [
+    { label: "API", value: healthTone === "ok" ? 90 : healthTone === "warn" ? 55 : 26 },
+    { label: "ML", value: mlTone === "ok" ? 88 : mlTone === "warn" ? 52 : 24 },
+    { label: "DDI", value: (cabinetCount ?? 0) > 1 ? 82 : 46 },
+    { label: "RAG", value: Math.round(sourceCoverage) },
+    { label: "Verify", value: flowFlags.verificationGate ? 92 : 30 },
+    { label: "Latency", value: latencySafe < 800 ? 84 : latencySafe < 1200 ? 56 : 28 },
+    { label: "Error", value: errorRate < 5 ? 86 : errorRate < 10 ? 52 : 22 }
+  ];
+
+  const matrixRows = ["Safety", "Operations", "Knowledge", "Flow", "Delivery"];
+  const matrixColumns = ["Stability", "Latency", "Errors", "Coverage", "Confidence"];
+  const matrixValues = [
+    [reliability, latencySafe < 850 ? 82 : 48, errorRate < 6 ? 83 : 34, Math.round(sourceCoverage), flowFlags.verificationGate ? 92 : 40],
+    [healthTone === "ok" ? 90 : 45, latencySafe < 900 ? 80 : 44, errorRate < 8 ? 78 : 38, 74, reliability],
+    [flowFlags.scientificRetrieval ? 88 : 42, 72, errorRate < 10 ? 74 : 36, Math.round(sourceCoverage), flowFlags.fileRetrieval ? 84 : 38],
+    [flowEnabledCount * 14, latencySafe < 850 ? 78 : 46, errorRate < 9 ? 72 : 34, flowEnabledCount * 12, flowFlags.intentRouter ? 86 : 40],
+    [reliability, latencySafe < 800 ? 84 : 44, errorRate < 7 ? 80 : 36, 70, reliabilitySeries.length > 0 ? reliabilitySeries[reliabilitySeries.length - 1] : reliability]
+  ];
+
+  const telemetryBars = [
+    { label: "Throughput", value: trendThroughput, target: Math.max(1, trendThroughput + 10), tone: "ok" as const },
+    { label: "Error load", value: errorSafe, target: Math.max(2, Math.round(requestSafe * 0.08)), tone: errorRate >= 8 ? "error" as const : "warn" as const },
+    { label: "Latency(ms)", value: latencySafe, target: 900, tone: latencySafe > 1000 ? "error" as const : "warn" as const },
+    { label: "Reliability", value: Math.round(reliability), target: 82, tone: reliability >= 82 ? "ok" as const : "warn" as const }
+  ];
+
+  const flowStages = [
+    { label: "Ingress", status: healthTone === "error" ? "error" as const : healthTone === "warn" ? "warn" as const : "ok" as const, detail: healthStatus },
+    { label: "Route", status: flowFlags.roleRouter && flowFlags.intentRouter ? "ok" as const : "warn" as const, detail: `${flowEnabledCount}/7` },
+    { label: "Retrieve", status: sourceCoverage >= 55 ? "ok" as const : "warn" as const, detail: `${enabledSources}/${totalSources}` },
+    { label: "Analyze", status: mlTone === "error" ? "error" as const : mlTone === "warn" ? "warn" as const : "ok" as const, detail: mlStatus },
+    { label: "Verify", status: flowFlags.verificationGate ? "ok" as const : "warn" as const, detail: flowFlags.verificationGate ? "on" : "off" },
+    { label: "Deliver", status: reliability >= 70 ? "ok" as const : reliability >= 50 ? "warn" as const : "error" as const, detail: `${Math.round(reliability)}%` }
+  ];
 
   const medicationCards = [
     {
@@ -377,20 +544,31 @@ export default function DashboardPage() {
     }
   ];
 
+  const kpis = [
+    { label: "Reliability", value: `${Math.round(reliability)}%`, detail: "Composite operational score" },
+    { label: "Throughput", value: formatCount(trendThroughput), detail: "Request delta/snapshot" },
+    { label: "Error rate", value: formatPercent(errorRate), detail: `${formatCount(errorSafe)} lỗi` },
+    { label: "Latency", value: `${latencySafe} ms`, detail: "Avg response" },
+    { label: "RAG coverage", value: `${enabledSources}/${totalSources}`, detail: formatPercent(sourceCoverage) },
+    { label: "Flow gates", value: `${flowEnabledCount}/7`, detail: `Threshold ${Math.round(lowContextThreshold * 100)}%` },
+    { label: "DDI risk", value: ddiRiskLabel, detail: `${formatCount(cabinetCount)} thuốc` },
+    { label: "Pending", value: formatCount(pendingActions), detail: "Action queue" }
+  ];
+
   return (
     <PageShell
       title="Dashboard"
-      description="Trung tâm điều phối hàng ngày cho CLARA: tủ thuốc, cảnh báo tương tác và tác vụ ưu tiên."
+      description="Futuristic command center cho CLARA: theo dõi telemetry, rủi ro thuốc, flow integrity và action ưu tiên trong một màn hình."
       variant="plain"
     >
       <div className="space-y-4 sm:space-y-5">
-        <section className="relative overflow-hidden rounded-[1.75rem] border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4 shadow-soft sm:p-5 lg:p-6">
+        <section className="relative overflow-hidden rounded-[1.75rem] border border-[color:var(--shell-border)] bg-[linear-gradient(145deg,rgba(255,255,255,0.92),rgba(224,242,254,0.7))] p-4 shadow-soft sm:p-5 lg:p-6 dark:bg-[linear-gradient(145deg,rgba(2,6,23,0.92),rgba(8,47,73,0.72))]">
           <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl dark:bg-cyan-500/12" />
           <div className="pointer-events-none absolute -left-20 bottom-0 h-44 w-44 rounded-full bg-sky-300/20 blur-3xl dark:bg-sky-500/12" />
 
           <div className="relative flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-3xl space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--text-muted)]">Personal Command Center</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--text-muted)]">Neural Mission Console</p>
               <h2 className="text-2xl font-semibold text-[var(--text-primary)] sm:text-3xl">
                 {greeting.title}, {displayName}
               </h2>
@@ -417,6 +595,7 @@ export default function DashboardPage() {
 
           <div className="mt-4 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Vai trò: {roleLabel}</span>
+            <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Reliability: {Math.round(reliability)}%</span>
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">DDI risk: {ddiRiskLabel}</span>
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">
               Pending actions: {formatCount(pendingActions)}
@@ -429,6 +608,56 @@ export default function DashboardPage() {
                 {userSubject}
               </span>
             ) : null}
+          </div>
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {kpis.map((kpi) => (
+            <article key={kpi.label} className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-3">
+              <p className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">{kpi.label}</p>
+              <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{kpi.value}</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">{kpi.detail}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
+          <NeonAreaChart
+            title="Live Telemetry (Requests / Errors / Latency / Cabinet)"
+            labels={graphLabels}
+            series={[
+              { id: "req", label: "Requests", color: "#22d3ee", values: requestsSeries.length > 0 ? requestsSeries : [requestSafe] },
+              { id: "err", label: "Errors", color: "#f43f5e", values: errorsSeries.length > 0 ? errorsSeries : [errorSafe] },
+              { id: "lat", label: "Latency", color: "#f59e0b", values: latencySeries.length > 0 ? latencySeries : [latencySafe] },
+              { id: "cab", label: "Cabinet", color: "#14b8a6", values: cabinetSeries.length > 0 ? cabinetSeries : [Math.max(0, cabinetCount ?? 0)] }
+            ]}
+            className="min-h-[22rem]"
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+            <SegmentRingGauge
+              label="Reliability Core"
+              value={Math.round(reliability)}
+              max={100}
+              subLabel="API + ML + Error + Latency"
+              color="#38bdf8"
+            />
+            <SegmentRingGauge
+              label="RAG Coverage"
+              value={Math.round(sourceCoverage)}
+              max={100}
+              subLabel={`${enabledSources}/${totalSources} sources enabled`}
+              color="#14b8a6"
+            />
+          </div>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-[1fr_1fr_1.1fr]">
+          <RadarPulseChart title="System Radar" axes={radarAxes} />
+          <MatrixHeatmapMini title="Operational Matrix" rows={matrixRows} columns={matrixColumns} values={matrixValues} />
+          <div className="space-y-4">
+            <TelemetryBars title="Budget Tracking" items={telemetryBars} />
+            <ConduitFlowLine title="Flow Conduit" stages={flowStages} />
           </div>
         </section>
 
