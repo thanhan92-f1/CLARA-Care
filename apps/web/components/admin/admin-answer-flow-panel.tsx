@@ -56,8 +56,8 @@ export default function AdminAnswerFlowPanel() {
 
   const flowHealthLabel = useMemo(() => {
     if (!config) return "n/a";
-    if (enabledFlowCount >= 6) return "ổn định";
-    if (enabledFlowCount >= 4) return "trung bình";
+    if (enabledFlowCount >= 8) return "ổn định";
+    if (enabledFlowCount >= 5) return "trung bình";
     return "cần kiểm tra";
   }, [config, enabledFlowCount]);
 
@@ -70,8 +70,13 @@ export default function AdminAnswerFlowPanel() {
 
   const councilNeedsMoreInfo =
     typeof lowContextThreshold === "number" ? debugLowContextScore >= lowContextThreshold : false;
+  const verificationGateEnabled = Boolean(
+    config?.rag_flow.rule_verification_enabled ?? config?.rag_flow.verification_enabled
+  );
   const councilHasCitations =
-    Boolean(config?.rag_flow.verification_enabled) &&
+    verificationGateEnabled &&
+    Boolean(config?.rag_flow.nli_model_enabled) &&
+    Boolean(config?.rag_flow.rag_nli_enabled) &&
     Boolean(
       config?.rag_flow.scientific_retrieval_enabled ||
       config?.rag_flow.web_retrieval_enabled ||

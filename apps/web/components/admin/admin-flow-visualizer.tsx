@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ControlTowerRagFlow } from "@/lib/system";
-
-export type FlowToggleKey = Exclude<keyof ControlTowerRagFlow, "low_context_threshold">;
+import type { FlowToggleKey } from "@/components/admin/use-control-tower-config";
 
 export type FlowNodeId =
   | "input_gateway"
@@ -74,7 +73,13 @@ type FlowEdgeDef = {
   bend?: number;
   fallback?: boolean;
   label?: string;
+  fromAnchor?: FlowAnchor;
+  toAnchor?: FlowAnchor;
+  labelOffsetX?: number;
+  labelOffsetY?: number;
 };
+
+type FlowAnchor = "left" | "right" | "top" | "bottom";
 
 type AdminFlowVisualizerProps = {
   ragFlow?: ControlTowerRagFlow | null;
@@ -259,6 +264,7 @@ const NODES: FlowNodeDef[] = [
     x: 1640,
     y: 470,
     tone: "indigo",
+    toggleKey: "rag_graphrag_enabled",
   },
   {
     id: "deep_beta_critic",
@@ -334,6 +340,7 @@ const NODES: FlowNodeDef[] = [
     x: 1640,
     y: 700,
     tone: "teal",
+    toggleKey: "rag_reranker_enabled",
   },
   {
     id: "contradiction_miner",
@@ -344,6 +351,7 @@ const NODES: FlowNodeDef[] = [
     x: 1780,
     y: 1320,
     tone: "indigo",
+    toggleKey: "nli_model_enabled",
   },
   {
     id: "synthesis",
@@ -364,7 +372,7 @@ const NODES: FlowNodeDef[] = [
     x: 2000,
     y: 560,
     tone: "indigo",
-    toggleKey: "verification_enabled",
+    toggleKey: "rule_verification_enabled",
   },
   {
     id: "verification_matrix",
@@ -377,6 +385,7 @@ const NODES: FlowNodeDef[] = [
     x: 2220,
     y: 1220,
     tone: "indigo",
+    toggleKey: "rag_nli_enabled",
   },
   {
     id: "citation_selection",
@@ -587,24 +596,24 @@ const NODE_GRID_LAYOUT: Record<FlowNodeId, { col: number; row: number }> = {
   evidence_index: { col: 4, row: 4 },
   contradiction_miner: { col: 4, row: 5 },
 
-  citation_selection: { col: 5, row: 3 },
+  citation_selection: { col: 5, row: 2 },
   api_contract_passthrough: { col: 6, row: 3 },
-  verification: { col: 5, row: 4 },
-  synthesis: { col: 5, row: 5 },
-  verification_matrix: { col: 5, row: 6 },
+  verification: { col: 5, row: 3 },
+  synthesis: { col: 5, row: 4 },
+  verification_matrix: { col: 5, row: 5 },
 
   research_ui_telemetry: { col: 7, row: 3 },
   responder: { col: 6, row: 4 },
   policy_gate: { col: 6, row: 5 },
   deepseek_fallback: { col: 6, row: 6 },
   flow_event_stream: { col: 7, row: 4 },
-  active_eval_scheduler: { col: 8, row: 3 },
-  active_eval_baseline: { col: 8, row: 4 },
-  active_eval_mine: { col: 8, row: 5 },
-  active_eval_rerun: { col: 8, row: 6 },
-  active_eval_compare: { col: 8, row: 7 },
-  active_eval_strict_gate: { col: 8, row: 8 },
-  baseline_regression: { col: 7, row: 5 },
+  active_eval_scheduler: { col: 8, row: 4 },
+  active_eval_baseline: { col: 8, row: 5 },
+  active_eval_mine: { col: 8, row: 6 },
+  active_eval_rerun: { col: 9, row: 6 },
+  active_eval_compare: { col: 9, row: 5 },
+  active_eval_strict_gate: { col: 9, row: 3 },
+  baseline_regression: { col: 9, row: 4 },
   evaluation_feedback: { col: 7, row: 6 },
 };
 
@@ -719,35 +728,101 @@ const EDGES: FlowEdgeDef[] = [
   { from: "retrieval_scientific", to: "evidence_index" },
   { from: "retrieval_web", to: "evidence_index", bend: 28 },
   { from: "retrieval_file", to: "evidence_index", bend: 84 },
-  { from: "evidence_index", to: "contradiction_miner", bend: 180, label: "counter evidence" },
-  { from: "evidence_index", to: "synthesis", bend: -12 },
-  { from: "contradiction_miner", to: "verification_matrix", bend: 36 },
-  { from: "synthesis", to: "verification", bend: -100 },
-  { from: "synthesis", to: "verification_matrix", bend: 180 },
-  { from: "verification", to: "citation_selection", bend: -42 },
-  { from: "verification_matrix", to: "api_contract_passthrough", bend: -64, label: "matrix pass-through" },
-  { from: "verification", to: "policy_gate", bend: 20 },
-  { from: "verification_matrix", to: "policy_gate", bend: -120 },
-  { from: "citation_selection", to: "api_contract_passthrough", bend: 26 },
+  {
+    from: "evidence_index",
+    to: "contradiction_miner",
+    fromAnchor: "bottom",
+    toAnchor: "top",
+    bend: 24,
+    label: "counter evidence",
+    labelOffsetX: -12,
+    labelOffsetY: 18,
+  },
+  { from: "evidence_index", to: "synthesis", fromAnchor: "right", toAnchor: "left", bend: -26 },
+  { from: "contradiction_miner", to: "verification_matrix", fromAnchor: "right", toAnchor: "left", bend: 20 },
+  { from: "synthesis", to: "verification", fromAnchor: "top", toAnchor: "bottom", bend: -42 },
+  { from: "synthesis", to: "verification_matrix", fromAnchor: "bottom", toAnchor: "top", bend: 52 },
+  { from: "verification", to: "citation_selection", fromAnchor: "top", toAnchor: "bottom", bend: -28 },
+  {
+    from: "verification_matrix",
+    to: "api_contract_passthrough",
+    fromAnchor: "right",
+    toAnchor: "left",
+    bend: -86,
+    label: "matrix pass-through",
+    labelOffsetY: -8,
+  },
+  { from: "verification", to: "policy_gate", fromAnchor: "right", toAnchor: "left", bend: 24 },
+  { from: "verification_matrix", to: "policy_gate", fromAnchor: "right", toAnchor: "left", bend: 14 },
+  { from: "citation_selection", to: "api_contract_passthrough", fromAnchor: "right", toAnchor: "top", bend: -22 },
   { from: "api_contract_passthrough", to: "research_ui_telemetry", bend: 12, label: "ui payload" },
   { from: "research_ui_telemetry", to: "flow_event_stream", bend: 20, label: "render telemetry" },
-  { from: "citation_selection", to: "responder", bend: 66 },
-  { from: "policy_gate", to: "responder", bend: 10 },
+  { from: "citation_selection", to: "responder", fromAnchor: "right", toAnchor: "top", bend: 54 },
+  { from: "policy_gate", to: "responder", fromAnchor: "top", toAnchor: "bottom", bend: -20 },
   { from: "responder", to: "flow_event_stream", bend: 64, label: "persist events" },
-  { from: "flow_event_stream", to: "active_eval_scheduler", bend: 62, label: "schedule + dispatch" },
-  { from: "active_eval_scheduler", to: "active_eval_baseline", bend: 28, label: "stage 1/4" },
-  { from: "active_eval_baseline", to: "evaluation_feedback", bend: 116, label: "baseline artifacts" },
-  { from: "evaluation_feedback", to: "active_eval_mine", bend: -56, label: "stage 2/4 mine" },
-  { from: "active_eval_mine", to: "active_eval_rerun", bend: -10, label: "stage 3/4 rerun" },
-  { from: "active_eval_rerun", to: "active_eval_compare", bend: -10, label: "stage 4/4 compare" },
-  { from: "active_eval_compare", to: "baseline_regression", bend: 126, label: "compare_go" },
-  { from: "baseline_regression", to: "active_eval_strict_gate", bend: -74, label: "gate inputs" },
-  { from: "active_eval_strict_gate", to: "planner", bend: -690, label: "strict gate feedback" },
-  { from: "active_eval_strict_gate", to: "responder", bend: -280, label: "surface verdict" },
-  { from: "planner", to: "deepseek_fallback", fallback: true, bend: 320, label: "degraded path" },
-  { from: "evidence_index", to: "deepseek_fallback", fallback: true, bend: 260 },
-  { from: "policy_gate", to: "deepseek_fallback", fallback: true, bend: 146 },
-  { from: "deepseek_fallback", to: "responder", fallback: true, bend: -210, label: "fallback response" },
+  {
+    from: "flow_event_stream",
+    to: "active_eval_scheduler",
+    fromAnchor: "right",
+    toAnchor: "left",
+    bend: 16,
+    label: "schedule + dispatch",
+  },
+  { from: "active_eval_scheduler", to: "active_eval_baseline", fromAnchor: "bottom", toAnchor: "top", bend: 24, label: "stage 1/4" },
+  {
+    from: "active_eval_baseline",
+    to: "evaluation_feedback",
+    fromAnchor: "left",
+    toAnchor: "top",
+    bend: 54,
+    label: "baseline artifacts",
+    labelOffsetY: 10,
+  },
+  { from: "evaluation_feedback", to: "active_eval_mine", fromAnchor: "right", toAnchor: "left", bend: -22, label: "stage 2/4 mine" },
+  { from: "active_eval_mine", to: "active_eval_rerun", fromAnchor: "right", toAnchor: "left", bend: 12, label: "stage 3/4 rerun" },
+  { from: "active_eval_rerun", to: "active_eval_compare", fromAnchor: "top", toAnchor: "bottom", bend: -32, label: "stage 4/4 compare" },
+  { from: "active_eval_compare", to: "baseline_regression", fromAnchor: "top", toAnchor: "bottom", bend: -24, label: "compare_go" },
+  { from: "baseline_regression", to: "active_eval_strict_gate", fromAnchor: "top", toAnchor: "bottom", bend: -22, label: "gate inputs" },
+  {
+    from: "active_eval_strict_gate",
+    to: "planner",
+    fromAnchor: "left",
+    toAnchor: "right",
+    bend: -420,
+    label: "strict gate feedback",
+    labelOffsetY: -14,
+  },
+  {
+    from: "active_eval_strict_gate",
+    to: "responder",
+    fromAnchor: "left",
+    toAnchor: "right",
+    bend: 100,
+    label: "surface verdict",
+    labelOffsetY: 6,
+  },
+  {
+    from: "planner",
+    to: "deepseek_fallback",
+    fallback: true,
+    fromAnchor: "bottom",
+    toAnchor: "left",
+    bend: 188,
+    label: "degraded path",
+    labelOffsetX: 10,
+  },
+  { from: "evidence_index", to: "deepseek_fallback", fallback: true, fromAnchor: "bottom", toAnchor: "top", bend: 136 },
+  { from: "policy_gate", to: "deepseek_fallback", fallback: true, fromAnchor: "bottom", toAnchor: "top", bend: 44 },
+  {
+    from: "deepseek_fallback",
+    to: "responder",
+    fallback: true,
+    fromAnchor: "top",
+    toAnchor: "bottom",
+    bend: -80,
+    label: "fallback response",
+    labelOffsetY: -6,
+  },
 ];
 
 const STATUS_META: Record<
@@ -820,10 +895,66 @@ function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
 
-function buildPath(from: FlowNodeDef, to: FlowNodeDef, bend = 0): string {
-  const midX = (from.x + to.x) / 2;
-  const midY = (from.y + to.y) / 2 + bend;
-  return `M ${from.x} ${from.y} Q ${midX} ${midY} ${to.x} ${to.y}`;
+function anchorPoint(node: FlowNodeDef, anchor: FlowAnchor): { x: number; y: number } {
+  const insetX = NODE_CARD_WIDTH / 2 - 14;
+  const insetY = NODE_CARD_HEIGHT / 2 - 14;
+  if (anchor === "left") return { x: node.x - insetX, y: node.y };
+  if (anchor === "right") return { x: node.x + insetX, y: node.y };
+  if (anchor === "top") return { x: node.x, y: node.y - insetY };
+  return { x: node.x, y: node.y + insetY };
+}
+
+function pickAutoAnchor(from: FlowNodeDef, to: FlowNodeDef, endpoint: "from" | "to"): FlowAnchor {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const isHorizontal = Math.abs(dx) >= Math.abs(dy) * 1.08;
+  if (isHorizontal) {
+    if (endpoint === "from") {
+      return dx >= 0 ? "right" : "left";
+    }
+    return dx >= 0 ? "left" : "right";
+  }
+  if (endpoint === "from") {
+    return dy >= 0 ? "bottom" : "top";
+  }
+  return dy >= 0 ? "top" : "bottom";
+}
+
+function buildPath(
+  edge: FlowEdgeDef,
+  from: FlowNodeDef,
+  to: FlowNodeDef,
+): {
+  d: string;
+  start: { x: number; y: number };
+  control: { x: number; y: number };
+  end: { x: number; y: number };
+} {
+  const start = anchorPoint(from, edge.fromAnchor ?? pickAutoAnchor(from, to, "from"));
+  const end = anchorPoint(to, edge.toAnchor ?? pickAutoAnchor(from, to, "to"));
+  const control = {
+    x: (start.x + end.x) / 2,
+    y: (start.y + end.y) / 2 + (edge.bend ?? 0),
+  };
+  return {
+    d: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+    start,
+    control,
+    end,
+  };
+}
+
+function quadraticPointAt(
+  start: { x: number; y: number },
+  control: { x: number; y: number },
+  end: { x: number; y: number },
+  t: number,
+): { x: number; y: number } {
+  const oneMinusT = 1 - t;
+  return {
+    x: oneMinusT * oneMinusT * start.x + 2 * oneMinusT * t * control.x + t * t * end.x,
+    y: oneMinusT * oneMinusT * start.y + 2 * oneMinusT * t * control.y + t * t * end.y,
+  };
 }
 
 function isActive(status: FlowNodeStatus): boolean {
@@ -1001,7 +1132,7 @@ export default function AdminFlowVisualizer({
         </span>
       </div>
 
-      <div className="relative mt-5 overflow-x-auto rounded-[24px] border border-cyan-200/50 bg-slate-950/[0.04] p-3 dark:border-cyan-700/30 dark:bg-slate-950/30">
+      <div className="relative mt-5 overflow-auto rounded-[24px] border border-cyan-200/50 bg-slate-950/[0.04] p-3 dark:border-cyan-700/30 dark:bg-slate-950/30">
         <div
           ref={sceneRef}
           className="relative overflow-hidden rounded-[22px] border border-cyan-200/50 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.22),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_34%),linear-gradient(180deg,_rgba(248,250,252,0.78),_rgba(241,245,249,0.88))] dark:border-cyan-700/30 dark:bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.2),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.16),_transparent_42%),linear-gradient(180deg,_rgba(2,6,23,0.74),_rgba(15,23,42,0.9))]"
@@ -1039,7 +1170,7 @@ export default function AdminFlowVisualizer({
               const toStatus = statusByNode[edge.to];
               const edgeActive = isActive(fromStatus) && isActive(toStatus);
               const fallbackEnabled = edge.fallback ? Boolean(ragFlow?.deepseek_fallback_enabled) : false;
-              const path = buildPath(from, to, edge.bend);
+              const pathDef = buildPath(edge, from, to);
               const stroke = edge.fallback
                 ? fallbackEnabled
                   ? edgePalette.fallback
@@ -1054,14 +1185,16 @@ export default function AdminFlowVisualizer({
                 : edgeActive
                   ? "url(#flow-arrow-live)"
                   : "url(#flow-arrow-muted)";
-              const labelX = (from.x + to.x) / 2;
-              const labelY = (from.y + to.y) / 2 + (edge.bend ?? 0) - 12;
+              const labelPoint = quadraticPointAt(pathDef.start, pathDef.control, pathDef.end, 0.5);
+              const labelX = labelPoint.x + (edge.labelOffsetX ?? 0);
+              const labelY = labelPoint.y - 12 + (edge.labelOffsetY ?? 0);
 
               const showGlow = !isExporting && (edgeActive || fallbackEnabled);
+              const labelWidth = edge.label ? Math.round(edge.label.length * 6.1 + 16) : 0;
               return (
                 <g key={`${edge.from}-${edge.to}`}>
                   <path
-                    d={path}
+                    d={pathDef.d}
                     fill="none"
                     stroke={stroke}
                     strokeWidth={edge.fallback ? 3 : 2.4}
@@ -1072,15 +1205,26 @@ export default function AdminFlowVisualizer({
                     filter={showGlow ? "url(#flow-glow)" : undefined}
                   />
                   {edge.label ? (
-                    <text
-                      x={labelX}
-                      y={labelY}
-                      textAnchor="middle"
-                      className="text-[11px] font-semibold tracking-[0.08em]"
-                      style={{ fill: edgePalette.label }}
-                    >
-                      {edge.label}
-                    </text>
+                    <g>
+                      <rect
+                        x={labelX - labelWidth / 2}
+                        y={labelY - 10}
+                        width={labelWidth}
+                        height={18}
+                        rx={9}
+                        fill={isDarkMode ? "rgba(15,23,42,0.76)" : "rgba(241,245,249,0.92)"}
+                        stroke={isDarkMode ? "rgba(148,163,184,0.28)" : "rgba(100,116,139,0.28)"}
+                      />
+                      <text
+                        x={labelX}
+                        y={labelY + 2}
+                        textAnchor="middle"
+                        className="text-[11px] font-semibold tracking-[0.08em]"
+                        style={{ fill: edgePalette.label }}
+                      >
+                        {edge.label}
+                      </text>
+                    </g>
                   ) : null}
                 </g>
               );

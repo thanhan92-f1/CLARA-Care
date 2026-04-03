@@ -99,11 +99,6 @@ function formatCompact(value: number): string {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function chartPoint(index: number, count: number, width: number, padding: number): number {
-  if (count <= 1) return padding;
-  return padding + (index / (count - 1)) * (width - padding * 2);
-}
-
 function colorForHeat(value: number): string {
   const alpha = clamp(value, 0, 100) / 100;
   if (alpha > 0.75) return `rgba(244,63,94,${0.24 + alpha * 0.54})`;
@@ -118,11 +113,39 @@ function toneToColor(tone: TelemetryBarItem["tone"]): string {
   return "#60a5fa";
 }
 
+function toneLabel(tone: TelemetryBarItem["tone"]): string {
+  if (tone === "ok") return "Healthy";
+  if (tone === "warn") return "Warning";
+  if (tone === "danger" || tone === "error") return "Critical";
+  return "Normal";
+}
+
+function toneTexture(tone: TelemetryBarItem["tone"], color: string): string {
+  if (tone === "warn" || tone === "danger" || tone === "error") {
+    return `repeating-linear-gradient(135deg, ${color}, ${color} 8px, rgba(255,255,255,0.22) 8px, rgba(255,255,255,0.22) 12px)`;
+  }
+  return `linear-gradient(90deg, ${color}, ${color})`;
+}
+
 function stageTone(stage: ConduitStage["status"]): string {
-  if (stage === "ok") return "border-emerald-400/70 bg-emerald-500/20 text-emerald-100";
-  if (stage === "warn") return "border-amber-400/70 bg-amber-500/20 text-amber-100";
-  if (stage === "error") return "border-rose-400/70 bg-rose-500/20 text-rose-100";
-  return "border-slate-400/60 bg-slate-500/20 text-slate-100";
+  if (stage === "ok") return "border-emerald-500/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-400/70 dark:bg-emerald-500/20 dark:text-emerald-100";
+  if (stage === "warn") return "border-amber-500/45 bg-amber-500/15 text-amber-700 dark:border-amber-400/70 dark:bg-amber-500/20 dark:text-amber-100";
+  if (stage === "error") return "border-rose-500/45 bg-rose-500/15 text-rose-700 dark:border-rose-400/70 dark:bg-rose-500/20 dark:text-rose-100";
+  return "border-slate-500/40 bg-slate-500/10 text-slate-700 dark:border-slate-400/60 dark:bg-slate-500/20 dark:text-slate-100";
+}
+
+function stageStatusLabel(stage: ConduitStage["status"]): string {
+  if (stage === "ok") return "OK";
+  if (stage === "warn") return "Warn";
+  if (stage === "error") return "Error";
+  return "Idle";
+}
+
+function stageStatusSymbol(stage: ConduitStage["status"]): string {
+  if (stage === "ok") return "O";
+  if (stage === "warn") return "!";
+  if (stage === "error") return "X";
+  return "-";
 }
 
 function ChartFrame({ title, description, children, footer }: ChartFrameProps) {
@@ -145,39 +168,59 @@ export function NeonAreaChart({ title, description, labels, series, height = 220
 
   const prepared = useMemo(() => {
     const width = 760;
-    const padding = 28;
+    const leftPadding = 46;
+    const rightPadding = 18;
+    const topPadding = 16;
+    const bottomPadding = 36;
+    const chartHeight = Math.max(height, 190);
     const values = toValueList(series);
-    const safeMax = values.length > 0 ? Math.max(...values, 1) : 1;
+    const rawMax = values.length > 0 ? Math.max(...values, 1) : 1;
+    const safeMax = rawMax * 1.08;
+    const plotWidth = width - leftPadding - rightPadding;
+    const plotHeight = chartHeight - topPadding - bottomPadding;
 
     const mapped = series.map((item) => {
       const points = item.values.map((value, index) => {
-        const x = chartPoint(index, Math.max(item.values.length, 2), width, padding);
-        const y = height - padding - (clamp(value, 0, safeMax) / safeMax) * (height - padding * 2);
+        const x = leftPadding + (index / Math.max(item.values.length - 1, 1)) * plotWidth;
+        const y = chartHeight - bottomPadding - (clamp(value, 0, safeMax) / safeMax) * plotHeight;
         return `${x},${y}`;
       });
 
       const area = [
-        `${padding},${height - padding}`,
+        `${leftPadding},${chartHeight - bottomPadding}`,
         ...points,
-        `${width - padding},${height - padding}`
+        `${width - rightPadding},${chartHeight - bottomPadding}`
       ].join(" ");
 
       return {
         ...item,
         points: points.join(" "),
         area,
+        latestPoint: points[points.length - 1],
         latest: item.values[item.values.length - 1] ?? 0
       };
     });
 
     const axisY = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-      const y = height - padding - ratio * (height - padding * 2);
+      const y = chartHeight - bottomPadding - ratio * plotHeight;
       const value = Math.round(ratio * safeMax);
       return { y, value };
     });
 
-    return { width, padding, mapped, axisY, safeMax };
-  }, [height, series]);
+    const xLabelStep = labels.length > 10 ? Math.ceil(labels.length / 5) : labels.length > 6 ? 2 : 1;
+
+    return {
+      width,
+      chartHeight,
+      leftPadding,
+      rightPadding,
+      topPadding,
+      bottomPadding,
+      mapped,
+      axisY,
+      xLabelStep
+    };
+  }, [height, labels, series]);
 
   if (series.length === 0 || !series.some((item) => item.values.length > 0)) {
     return (
@@ -197,7 +240,10 @@ export function NeonAreaChart({ title, description, labels, series, height = 220
       footer={
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-secondary)]">
           {prepared.mapped.map((item) => (
-            <span key={item.id} className="inline-flex items-center gap-1 rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2 py-0.5">
+            <span
+              key={item.id}
+              className="inline-flex items-center gap-1 rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2 py-0.5"
+            >
               <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />
               {item.label}: {formatCompact(item.latest)}
             </span>
@@ -205,18 +251,34 @@ export function NeonAreaChart({ title, description, labels, series, height = 220
         </div>
       }
       >
-        <div className="rounded-xl border border-[color:var(--shell-border)] bg-[linear-gradient(180deg,rgba(15,23,42,0.08),transparent)] p-2">
+        <div className="rounded-xl border border-[color:var(--shell-border)] bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.16),transparent_52%),linear-gradient(180deg,rgba(148,163,184,0.08),transparent)] p-2">
         <svg
-          viewBox={`0 0 ${prepared.width} ${height}`}
-          className="h-[220px] w-full"
+          viewBox={`0 0 ${prepared.width} ${prepared.chartHeight}`}
+          className="w-full"
+          style={{ height: prepared.chartHeight }}
           role="img"
           aria-label={title || "area chart"}
         >
           <defs>
+            <clipPath id={`${gradientId}-plot`}>
+              <rect
+                x={prepared.leftPadding}
+                y={prepared.topPadding}
+                width={prepared.width - prepared.leftPadding - prepared.rightPadding}
+                height={prepared.chartHeight - prepared.topPadding - prepared.bottomPadding}
+              />
+            </clipPath>
+            <filter id={`${gradientId}-line-glow`} x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="2.1" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
             {prepared.mapped.map((item) => (
               <linearGradient key={`${item.id}-gradient`} id={`${gradientId}-${item.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={item.color} stopOpacity="0.42" />
-                <stop offset="100%" stopColor={item.color} stopOpacity="0.02" />
+                <stop offset="0%" stopColor={item.color} stopOpacity="0.34" />
+                <stop offset="100%" stopColor={item.color} stopOpacity="0.01" />
               </linearGradient>
             ))}
           </defs>
@@ -224,41 +286,61 @@ export function NeonAreaChart({ title, description, labels, series, height = 220
           {prepared.axisY.map((tick) => (
             <g key={`y-${tick.y}`}>
               <line
-                x1={prepared.padding}
+                x1={prepared.leftPadding}
                 y1={tick.y}
-                x2={prepared.width - prepared.padding}
+                x2={prepared.width - prepared.rightPadding}
                 y2={tick.y}
-                stroke="rgba(148,163,184,0.28)"
+                stroke="rgba(100,116,139,0.34)"
                 strokeDasharray="4 6"
               />
-              <text x={6} y={tick.y + 4} fontSize="10" fill="currentColor" opacity="0.7">
+              <text x={10} y={tick.y + 4} fontSize="10" fill="var(--text-muted)">
                 {tick.value}
               </text>
             </g>
           ))}
 
-          {prepared.mapped.map((item) => (
-            <g key={item.id}>
-              <polygon points={item.area} fill={`url(#${gradientId}-${item.id})`} />
-              <polyline
-                points={item.points}
-                fill="none"
-                stroke={item.color}
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </g>
-          ))}
+          <g clipPath={`url(#${gradientId}-plot)`}>
+            {prepared.mapped.map((item) => (
+              <g key={item.id}>
+                <polygon points={item.area} fill={`url(#${gradientId}-${item.id})`} />
+                <polyline
+                  points={item.points}
+                  fill="none"
+                  stroke={item.color}
+                  strokeWidth="2.35"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  filter={`url(#${gradientId}-line-glow)`}
+                />
+              </g>
+            ))}
+          </g>
+
+          {prepared.mapped.map((item) => {
+            if (!item.latestPoint) return null;
+            const [x, y] = item.latestPoint.split(",").map((segment) => Number(segment));
+            return (
+              <g key={`${item.id}-latest`}>
+                <circle cx={x} cy={y} r="5" fill={item.color} fillOpacity="0.22" />
+                <circle cx={x} cy={y} r="3" fill={item.color} stroke="white" strokeOpacity="0.8" strokeWidth="1" />
+              </g>
+            );
+          })}
 
           {labels.length > 0
             ? labels.map((label, index) => {
-                if (index % Math.ceil(labels.length / 6) !== 0 && index !== labels.length - 1) return null;
-                const x = chartPoint(index, Math.max(labels.length, 2), prepared.width, prepared.padding);
+                if (index % prepared.xLabelStep !== 0 && index !== labels.length - 1) return null;
+                const x =
+                  prepared.leftPadding +
+                  (index / Math.max(labels.length - 1, 1)) * (prepared.width - prepared.leftPadding - prepared.rightPadding);
                 return (
-                  <text key={`${label}-${index}`} x={x} y={height - 6} fontSize="10" textAnchor="middle" fill="currentColor" opacity="0.7">
-                    {label}
-                  </text>
+                  <g key={`${label}-${index}`}>
+                    <title>{label}</title>
+                    <line x1={x} y1={prepared.topPadding} x2={x} y2={prepared.chartHeight - prepared.bottomPadding} stroke="rgba(100,116,139,0.12)" />
+                    <text x={x} y={prepared.chartHeight - 8} fontSize="10" textAnchor="middle" fill="var(--text-muted)">
+                      {label.length > 10 ? `${label.slice(0, 9)}...` : label}
+                    </text>
+                  </g>
                 );
               })
             : null}
@@ -279,9 +361,10 @@ export function SegmentRingGauge({
   color,
   size = 132
 }: SegmentRingGaugeProps) {
+  const gaugeId = useId().replace(/:/g, "");
   const safeValue = clamp(value, 0, max);
   const ratio = max > 0 ? safeValue / max : 0;
-  const radius = size * 0.34;
+  const radius = size * 0.33;
   const center = size / 2;
   const circumference = 2 * Math.PI * radius;
   const dash = `${ratio * circumference} ${circumference}`;
@@ -299,22 +382,48 @@ export function SegmentRingGauge({
             : "#22d3ee");
 
   return (
-    <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-2.5" role="group" aria-label={`${label} gauge`}>
+    <div
+      className="rounded-xl border border-[color:var(--shell-border)] bg-[radial-gradient(circle_at_30%_10%,rgba(56,189,248,0.15),transparent_58%),var(--surface-muted)] p-2.5"
+      role="meter"
+      aria-label={`${label} gauge`}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(safeValue)}
+    >
       <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto h-[110px] w-[110px]">
-        <circle cx={center} cy={center} r={radius} stroke="rgba(148,163,184,0.25)" strokeWidth="12" fill="none" />
+        <defs>
+          <linearGradient id={`${gaugeId}-ring`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={toneColor} stopOpacity="0.5" />
+            <stop offset="100%" stopColor={toneColor} stopOpacity="1" />
+          </linearGradient>
+          <filter id={`${gaugeId}-glow`} x="-35%" y="-35%" width="170%" height="170%">
+            <feGaussianBlur stdDeviation="2.8" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <circle cx={center} cy={center} r={radius} stroke="rgba(100,116,139,0.28)" strokeWidth="12" fill="none" />
+        <circle cx={center} cy={center} r={radius} stroke="rgba(100,116,139,0.22)" strokeWidth="1.5" strokeDasharray="3 8" fill="none" />
         <circle
           cx={center}
           cy={center}
           r={radius}
-          stroke={toneColor}
+          stroke={`url(#${gaugeId}-ring)`}
           strokeWidth="12"
           strokeDasharray={dash}
           strokeLinecap="round"
           fill="none"
           transform={`rotate(-90 ${center} ${center})`}
+          filter={`url(#${gaugeId}-glow)`}
         />
+        <circle cx={center} cy={center} r={size * 0.2} fill="rgba(15,23,42,0.06)" />
       </svg>
-      <p className="-mt-16 text-center font-mono text-xl font-semibold text-[var(--text-primary)]">{Math.round(safeValue)}</p>
+      <p className="-mt-16 text-center font-mono text-xl font-semibold text-[var(--text-primary)]">
+        {Math.round(safeValue)}
+        <span className="text-xs text-[var(--text-muted)]">/{Math.round(max)}</span>
+      </p>
       <p className="mt-8 text-center text-xs font-semibold text-[var(--text-secondary)]">{label}</p>
       {subLabel ? <p className="mt-1 text-center text-[11px] text-[var(--text-muted)]">{subLabel}</p> : null}
       {note ? <p className="mt-1 text-center text-[11px] text-[var(--text-muted)]">{note}</p> : null}
@@ -323,9 +432,12 @@ export function SegmentRingGauge({
 }
 
 export function RadarPulseChart({ title, description, axes, size = 280 }: RadarPulseChartProps) {
+  const radarId = useId().replace(/:/g, "");
+  const canvasPadding = 26;
+  const canvas = size + canvasPadding * 2;
   const count = Math.max(axes.length, 3);
-  const center = size / 2;
-  const radius = size * 0.32;
+  const center = canvas / 2;
+  const radius = size * 0.28;
 
   const points = axes.map((axis, index) => {
     const angle = (Math.PI * 2 * index) / count - Math.PI / 2;
@@ -333,17 +445,26 @@ export function RadarPulseChart({ title, description, axes, size = 280 }: RadarP
     const ratio = clamp(axis.value, 0, max) / max;
     const x = center + Math.cos(angle) * radius * ratio;
     const y = center + Math.sin(angle) * radius * ratio;
-    const labelX = center + Math.cos(angle) * (radius + 26);
-    const labelY = center + Math.sin(angle) * (radius + 26);
-    return { x, y, labelX, labelY, label: axis.label };
+    const labelX = center + Math.cos(angle) * (radius + 32);
+    const labelY = center + Math.sin(angle) * (radius + 32);
+    return { x, y, labelX, labelY, label: axis.label, value: axis.value };
   });
 
   const polygon = points.map((point) => `${point.x},${point.y}`).join(" ");
 
   return (
     <ChartFrame title={title} description={description}>
-      <div className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-2">
-        <svg viewBox={`0 0 ${size} ${size}`} className="h-[260px] w-full" role="img" aria-label={title || "radar chart"}>
+      <div className="rounded-xl border border-[color:var(--shell-border)] bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.12),transparent_62%),var(--surface-muted)] p-2">
+        <svg viewBox={`0 0 ${canvas} ${canvas}`} className="h-[260px] w-full" role="img" aria-label={title || "radar chart"}>
+          <defs>
+            <filter id={`${radarId}-glow`} x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
           {[1, 0.75, 0.5, 0.25].map((step) => {
             const ring = axes
               .map((_, index) => {
@@ -353,19 +474,20 @@ export function RadarPulseChart({ title, description, axes, size = 280 }: RadarP
                 return `${x},${y}`;
               })
               .join(" ");
-            return <polygon key={step} points={ring} fill="none" stroke="rgba(148,163,184,0.24)" strokeWidth="1" />;
+            return <polygon key={step} points={ring} fill="none" stroke="rgba(100,116,139,0.28)" strokeWidth="1" />;
           })}
 
           {points.map((point, index) => (
-            <line key={`axis-${index}`} x1={center} y1={center} x2={point.labelX} y2={point.labelY} stroke="rgba(148,163,184,0.24)" />
+            <line key={`axis-${index}`} x1={center} y1={center} x2={point.labelX} y2={point.labelY} stroke="rgba(100,116,139,0.24)" />
           ))}
 
-          <polygon points={polygon} fill="rgba(34,211,238,0.28)" stroke="#22d3ee" strokeWidth="2" />
+          <polygon points={polygon} fill="rgba(34,211,238,0.24)" stroke="#22d3ee" strokeWidth="2.1" filter={`url(#${radarId}-glow)`} />
           {points.map((point, index) => (
             <g key={`point-${index}`}>
-              <circle cx={point.x} cy={point.y} r="4" fill="#22d3ee" />
-              <text x={point.labelX} y={point.labelY} textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.86">
-                {point.label}
+              <circle cx={point.x} cy={point.y} r="4.2" fill="#22d3ee" />
+              <text x={point.labelX} y={point.labelY} textAnchor="middle" fontSize="11" fill="var(--text-secondary)">
+                {point.label.length > 11 ? `${point.label.slice(0, 10)}...` : point.label}
+                <title>{`${point.label}: ${Math.round(point.value)}`}</title>
               </text>
             </g>
           ))}
@@ -414,7 +536,9 @@ export function MatrixHeatmapMini({
               <th className="px-2 py-1 text-left font-medium text-[var(--text-muted)]" />
               {columns.map((column) => (
                 <th key={column} className="px-2 py-1 text-left font-medium text-[var(--text-muted)]">
-                  {column}
+                  <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5">
+                    {column}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -428,7 +552,7 @@ export function MatrixHeatmapMini({
                   return (
                     <td key={`${row}-${column}`}>
                       <div
-                        className="rounded-md border border-white/10 px-2 py-1 text-right font-mono text-[var(--text-primary)]"
+                        className="rounded-md border border-white/15 px-2 py-1 text-right font-mono text-[var(--text-primary)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]"
                         style={{ backgroundColor: colorForHeat(value) }}
                         aria-label={`${row} ${column} ${Math.round(value)}`}
                       >
@@ -469,24 +593,34 @@ export function TelemetryBars({ title, description, items }: TelemetryBarsProps)
           const ratio = clamp(item.value, 0, max) / max;
           const targetRatio = clamp(item.target ?? 0, 0, max) / max;
           const color = toneToColor(item.tone);
+          const status = toneLabel(item.tone);
           return (
             <div key={item.label} className="space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[var(--text-secondary)]">{item.label}</span>
+                <span className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                  {item.label}
+                  <span className="rounded border border-[color:var(--shell-border)] px-1.5 py-0 text-[10px] text-[var(--text-muted)]">{status}</span>
+                </span>
                 <span className="font-mono text-[var(--text-primary)]">
                   {Math.round(item.value)}
                   {item.target !== undefined ? <span className="text-[var(--text-muted)]"> / {Math.round(item.target)}</span> : null}
                 </span>
               </div>
-              <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/45 dark:bg-slate-700/40">
+              <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-200/55 dark:bg-slate-700/40">
                 {item.target !== undefined ? (
                   <span
-                    className="absolute inset-y-0 w-px bg-white/70 dark:bg-slate-100/80"
+                    className="absolute inset-y-0 w-px bg-white/75 dark:bg-slate-100/80"
                     style={{ left: `${targetRatio * 100}%` }}
                     aria-hidden="true"
                   />
                 ) : null}
-                <div className="h-full rounded-full" style={{ width: `${ratio * 100}%`, background: color }} />
+                <div
+                  className="h-full rounded-full shadow-[0_0_12px_rgba(56,189,248,0.25)]"
+                  style={{
+                    width: `${ratio * 100}%`,
+                    background: toneTexture(item.tone, color)
+                  }}
+                />
               </div>
             </div>
           );
@@ -513,13 +647,17 @@ export function ConduitFlowLine({ title, description, stages }: ConduitFlowLineP
         <div className="flex flex-wrap items-center gap-2">
           {stages.map((stage, index) => (
             <div key={`${stage.label}-${index}`} className="flex items-center gap-2">
-              <div className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${stageTone(stage.status)}`}>
-                <p>{stage.label}</p>
+              <div className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${stageTone(stage.status)}`} role="status" aria-label={`${stage.label} ${stageStatusLabel(stage.status)}`}>
+                <p className="flex items-center gap-1.5">
+                  <span aria-hidden="true">{stageStatusSymbol(stage.status)}</span>
+                  {stage.label}
+                </p>
+                <p className="mt-0.5 text-[10px] opacity-90">{stageStatusLabel(stage.status)}</p>
                 {stage.note || stage.detail ? <p className="mt-0.5 text-[10px] opacity-85">{stage.note ?? stage.detail}</p> : null}
               </div>
               {index < stages.length - 1 ? (
-                <div className="relative h-[2px] w-7 overflow-hidden rounded bg-cyan-400/25">
-                  <span className="absolute inset-y-0 left-0 w-1/2 animate-pulse bg-cyan-300/80" />
+                <div className="relative h-[2px] w-7 overflow-hidden rounded bg-cyan-400/30">
+                  <span className="absolute inset-y-0 left-0 w-1/2 animate-pulse bg-cyan-300/90" />
                 </div>
               ) : null}
             </div>
