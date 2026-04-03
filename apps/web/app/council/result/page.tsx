@@ -17,6 +17,14 @@ export default function CouncilResultPage() {
   }, []);
 
   const view = useMemo(() => (snapshot ? buildCouncilView(snapshot) : null), [snapshot]);
+  const fmtPercent = (value: number | null): string => {
+    if (value == null || Number.isNaN(value)) return "-";
+    return `${Math.round(value * 100)}%`;
+  };
+  const fmtStrength = (value: number | null): string => {
+    if (value == null || Number.isNaN(value)) return "-";
+    return value.toFixed(2);
+  };
 
   return (
     <PageShell
@@ -35,11 +43,56 @@ export default function CouncilResultPage() {
         ) : (
           <>
             <CouncilSection eyebrow="Summary" title="Tóm tắt kết quả">
-              <div className="grid gap-3 md:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-6">
                 <CouncilMetricCard label="Thời gian" value={view.createdAtLabel} />
                 <CouncilMetricCard label="Độ khẩn" value={view.urgencyLabel} />
                 <CouncilMetricCard label="Chuyên khoa" value={String(view.requestSummary.specialists.length)} hint={view.requestSummary.specialists.join(", ")} />
                 <CouncilMetricCard label="Conflict" value={String(view.summary.conflicts.length)} />
+                <CouncilMetricCard label="Support Ratio" value={fmtPercent(view.quality.supportRatio)} />
+                <CouncilMetricCard label="Disagreement" value={fmtPercent(view.quality.disagreementIndex)} />
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <CouncilMetricCard
+                  label="Escalation Priority"
+                  value={view.quality.escalationPriority || "routine"}
+                  hint={
+                    view.quality.recommendedSlaMinutes != null
+                      ? `SLA ${view.quality.recommendedSlaMinutes} phút`
+                      : undefined
+                  }
+                />
+                <CouncilMetricCard
+                  label="Citation Quality"
+                  value={fmtStrength(view.quality.citationAverageStrength)}
+                  hint={
+                    view.quality.citationTotal != null
+                      ? `${view.quality.citationTotal} citation(s)`
+                      : undefined
+                  }
+                />
+                <CouncilMetricCard
+                  label="Strongest Dissent"
+                  value={view.quality.strongestDissent || "-"}
+                  hint={
+                    view.quality.strongestDissentVotes != null
+                      ? `${view.quality.strongestDissentVotes} vote`
+                      : undefined
+                  }
+                />
+                <CouncilMetricCard
+                  label="Neural Risk (Shadow)"
+                  value={
+                    view.quality.neuralEnabled
+                      ? `${fmtPercent(view.quality.neuralProbability)} (${view.quality.neuralBand || "-"})`
+                      : "disabled"
+                  }
+                  hint={
+                    view.quality.neuralRecommendedTriage
+                      ? `Recommended: ${view.quality.neuralRecommendedTriage}`
+                      : undefined
+                  }
+                />
               </div>
 
               {view.summary.escalationReason ? (
@@ -63,6 +116,26 @@ export default function CouncilResultPage() {
                   </p>
                 </article>
               </div>
+            </CouncilSection>
+
+            <CouncilSection eyebrow="Reasoning Timeline" title="Luồng suy luận hội chẩn">
+              {view.timeline.steps.length ? (
+                <ol className="space-y-2">
+                  {view.timeline.steps.map((step) => (
+                    <li
+                      key={`${step.sequence}-${step.step}`}
+                      className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-3"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-[0.13em] text-[var(--text-muted)]">
+                        Step {step.sequence}: {step.step}
+                      </p>
+                      <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">{step.detail}</p>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-sm text-[var(--text-secondary)]">Chưa có reasoning timeline trong snapshot này.</p>
+              )}
             </CouncilSection>
 
             <CouncilSection eyebrow="Risk Notes" title="Điểm cần lưu ý">

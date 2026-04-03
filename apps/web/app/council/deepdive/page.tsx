@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import CouncilWorkspaceScreen from "@/components/council/council-workspace-screen";
 
-export default function CouncilDeepDivePage() {
-  redirect("/council/result");
+export default function CouncilDeepdivePage() {
+  return <CouncilWorkspaceScreen tab="deepdive" />;
 }

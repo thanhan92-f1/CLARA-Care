@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import CouncilWorkspaceScreen from "@/components/council/council-workspace-screen";
 
 export default function CouncilDetailsPage() {
-  redirect("/council/result");
+  return <CouncilWorkspaceScreen tab="details" />;
 }

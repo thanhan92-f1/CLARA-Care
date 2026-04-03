@@ -34,6 +34,22 @@ export type CouncilViewModel = {
     divergence: string[];
     escalationReason: string;
   };
+  quality: {
+    supportRatio: number | null;
+    disagreementIndex: number | null;
+    conflictCount: number | null;
+    strongestDissent: string;
+    strongestDissentVotes: number | null;
+    escalationPriority: string;
+    recommendedSlaMinutes: number | null;
+    requiresHumanHandoff: boolean;
+    citationAverageStrength: number | null;
+    citationTotal: number | null;
+    neuralEnabled: boolean;
+    neuralProbability: number | null;
+    neuralBand: string;
+    neuralRecommendedTriage: string;
+  };
   analyze: {
     keySignals: string[];
     riskDrivers: string[];
@@ -51,6 +67,13 @@ export type CouncilViewModel = {
   deepDive: {
     sections: CouncilDeepDiveSection[];
     rawPreview: string;
+  };
+  timeline: {
+    steps: Array<{
+      sequence: number;
+      step: string;
+      detail: string;
+    }>;
   };
 };
 
@@ -441,6 +464,22 @@ export function buildCouncilView(snapshot: CouncilRunSnapshot): CouncilViewModel
       divergence: snapshot.result.divergence,
       escalationReason: snapshot.result.escalationReason,
     },
+    quality: {
+      supportRatio: snapshot.result.consensusMetadata?.supportRatio ?? null,
+      disagreementIndex: snapshot.result.consensusMetadata?.disagreementIndex ?? null,
+      conflictCount: snapshot.result.consensusMetadata?.conflictCount ?? null,
+      strongestDissent: snapshot.result.consensusMetadata?.strongestDissent ?? "",
+      strongestDissentVotes: snapshot.result.consensusMetadata?.strongestDissentVotes ?? null,
+      escalationPriority: snapshot.result.escalationMetadata?.priority ?? "",
+      recommendedSlaMinutes: snapshot.result.escalationMetadata?.recommendedSlaMinutes ?? null,
+      requiresHumanHandoff: snapshot.result.escalationMetadata?.requiresHumanHandoff ?? false,
+      citationAverageStrength: snapshot.result.citationQuality?.averageEvidenceStrength ?? null,
+      citationTotal: snapshot.result.citationQuality?.totalCitations ?? null,
+      neuralEnabled: snapshot.result.neuralRisk?.enabled ?? false,
+      neuralProbability: snapshot.result.neuralRisk?.riskProbability ?? null,
+      neuralBand: snapshot.result.neuralRisk?.riskBand ?? "",
+      neuralRecommendedTriage: snapshot.result.neuralRisk?.recommendedTriage ?? "",
+    },
     analyze: {
       keySignals,
       riskDrivers,
@@ -458,6 +497,13 @@ export function buildCouncilView(snapshot: CouncilRunSnapshot): CouncilViewModel
     deepDive: {
       sections: buildDeepDiveSections(candidates, snapshot),
       rawPreview: stringifyRawPreview(snapshot.raw),
+    },
+    timeline: {
+      steps: snapshot.result.reasoningTimeline.map((item) => ({
+        sequence: item.sequence,
+        step: item.step,
+        detail: item.detail,
+      })),
     },
   };
 }

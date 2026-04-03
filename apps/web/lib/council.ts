@@ -57,6 +57,53 @@ export type CouncilCitation = {
   specialist?: string;
 };
 
+export type CouncilConsensusMetadata = {
+  winningTriage: string;
+  voteBreakdown: Record<string, number>;
+  supportRatio: number | null;
+  disagreementIndex: number | null;
+  conflictCount: number | null;
+  strongestDissent: string;
+  strongestDissentVotes: number | null;
+};
+
+export type CouncilEscalationMetadata = {
+  priority: string;
+  recommendedSlaMinutes: number | null;
+  requiresHumanHandoff: boolean;
+  generatedAtUtc?: string;
+};
+
+export type CouncilCitationQuality = {
+  totalCitations: number | null;
+  averageEvidenceStrength: number | null;
+  highSignalCount: number | null;
+  supportingSignalCount: number | null;
+  contextOnlyCount: number | null;
+  negatedContextCount: number | null;
+};
+
+export type CouncilReasoningTimelineStep = {
+  sequence: number;
+  step: string;
+  detail: string;
+  metadata: Record<string, unknown>;
+};
+
+export type CouncilNeuralRisk = {
+  enabled: boolean;
+  shadowMode: boolean;
+  modelVersion: string;
+  riskProbability: number | null;
+  riskBand: string;
+  recommendedTriage: string;
+  topContributors: Array<{
+    feature: string;
+    impact: number | null;
+    direction: string;
+  }>;
+};
+
 export type CouncilRunRawResponse = {
   [key: string]: unknown;
 };
@@ -74,6 +121,11 @@ export type CouncilRunResult = {
   missingInfoQuestions: string[];
   uncertaintyNotes: string[];
   citations: CouncilCitation[];
+  consensusMetadata: CouncilConsensusMetadata | null;
+  escalationMetadata: CouncilEscalationMetadata | null;
+  citationQuality: CouncilCitationQuality | null;
+  reasoningTimeline: CouncilReasoningTimelineStep[];
+  neuralRisk: CouncilNeuralRisk | null;
   analysisSections: {
     analyze: string[];
     details: string[];
@@ -311,6 +363,103 @@ function parseAnalysisSection(value: unknown): string[] {
   return text ? [text] : [];
 }
 
+function parseConsensusMetadata(value: unknown): CouncilConsensusMetadata | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const voteBreakdownRaw = asRecord(record.vote_breakdown) ?? asRecord(record.voteBreakdown) ?? {};
+  const voteBreakdown: Record<string, number> = {};
+  for (const [key, item] of Object.entries(voteBreakdownRaw)) {
+    const parsed = parseNumber(item);
+    voteBreakdown[key] = parsed ?? 0;
+  }
+
+  return {
+    winningTriage: asText(record.winning_triage) ?? asText(record.winningTriage) ?? "",
+    voteBreakdown,
+    supportRatio: parseNumber(record.support_ratio ?? record.supportRatio),
+    disagreementIndex: parseNumber(record.disagreement_index ?? record.disagreementIndex),
+    conflictCount: parseNumber(record.conflict_count ?? record.conflictCount),
+    strongestDissent: asText(record.strongest_dissent) ?? asText(record.strongestDissent) ?? "",
+    strongestDissentVotes: parseNumber(record.strongest_dissent_votes ?? record.strongestDissentVotes)
+  };
+}
+
+function parseEscalationMetadata(value: unknown): CouncilEscalationMetadata | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  return {
+    priority: asText(record.priority) ?? "",
+    recommendedSlaMinutes: parseNumber(record.recommended_sla_minutes ?? record.recommendedSlaMinutes),
+    requiresHumanHandoff: parseBoolean(record.requires_human_handoff ?? record.requiresHumanHandoff),
+    generatedAtUtc: asText(record.generated_at_utc) ?? asText(record.generatedAtUtc)
+  };
+}
+
+function parseCitationQuality(value: unknown): CouncilCitationQuality | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  return {
+    totalCitations: parseNumber(record.total_citations ?? record.totalCitations),
+    averageEvidenceStrength: parseNumber(record.average_evidence_strength ?? record.averageEvidenceStrength),
+    highSignalCount: parseNumber(record.high_signal_count ?? record.highSignalCount),
+    supportingSignalCount: parseNumber(record.supporting_signal_count ?? record.supportingSignalCount),
+    contextOnlyCount: parseNumber(record.context_only_count ?? record.contextOnlyCount),
+    negatedContextCount: parseNumber(record.negated_context_count ?? record.negatedContextCount),
+  };
+}
+
+function parseReasoningTimeline(value: unknown): CouncilReasoningTimelineStep[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) return null;
+      const sequence = parseNumber(record.sequence) ?? 0;
+      const step = asText(record.step) ?? "";
+      const detail = asText(record.detail) ?? "";
+      const metadata = asRecord(record.metadata) ?? {};
+      if (!step && !detail) return null;
+      return {
+        sequence,
+        step,
+        detail,
+        metadata
+      } satisfies CouncilReasoningTimelineStep;
+    })
+    .filter((item): item is CouncilReasoningTimelineStep => Boolean(item))
+    .sort((a, b) => a.sequence - b.sequence);
+}
+
+function parseNeuralRisk(value: unknown): CouncilNeuralRisk | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const contributorsRaw = Array.isArray(record.top_contributors) ? record.top_contributors : [];
+  const topContributors = contributorsRaw
+    .map((item) => {
+      const row = asRecord(item);
+      if (!row) return null;
+      return {
+        feature: asText(row.feature) ?? "",
+        impact: parseNumber(row.impact),
+        direction: asText(row.direction) ?? "",
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return {
+    enabled: parseBoolean(record.enabled),
+    shadowMode: parseBoolean(record.shadow_mode ?? record.shadowMode),
+    modelVersion: asText(record.model_version) ?? asText(record.modelVersion) ?? "",
+    riskProbability: parseNumber(record.risk_probability ?? record.riskProbability),
+    riskBand: asText(record.risk_band) ?? asText(record.riskBand) ?? "",
+    recommendedTriage:
+      asText(record.recommended_triage) ?? asText(record.recommendedTriage) ?? "",
+    topContributors,
+  };
+}
+
 function formatLabsInput(value: unknown): string {
   const rows = Array.isArray(value) ? value : [];
   const formattedRows = rows
@@ -452,6 +601,17 @@ export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilR
     ) || "";
 
   const emergencyRecord = asRecord(pickUnknown(candidates, ["emergency_escalation", "emergency"]));
+  const detailsRecord = asRecord(pickUnknown(candidates, ["details"]));
+  const consensusMetadata =
+    parseConsensusMetadata(pickUnknown(candidates, ["council_consensus", "consensus_metadata"])) ??
+    parseConsensusMetadata(detailsRecord?.consensus);
+  const escalationMetadata = parseEscalationMetadata(
+    emergencyRecord?.metadata ?? pickUnknown(candidates, ["escalation_metadata"])
+  );
+  const citationQuality = parseCitationQuality(pickUnknown(candidates, ["citation_quality"]));
+  const reasoningTimeline = parseReasoningTimeline(pickUnknown(candidates, ["reasoning_timeline"]));
+  const neuralRisk = parseNeuralRisk(pickUnknown(candidates, ["neural_risk"]));
+
   const policyAction = parseText(pickUnknown(candidates, ["policy_action", "action"])).toLowerCase();
   const explicitEmergencyFlag = parseBoolean(
     pickUnknown(candidates, ["is_emergency", "escalated", "needs_escalation", "should_escalate"])
@@ -525,6 +685,11 @@ export function normalizeCouncilRunResult(data: CouncilRunRawResponse): CouncilR
     missingInfoQuestions,
     uncertaintyNotes,
     citations,
+    consensusMetadata,
+    escalationMetadata,
+    citationQuality,
+    reasoningTimeline,
+    neuralRisk,
     analysisSections
   };
 }
