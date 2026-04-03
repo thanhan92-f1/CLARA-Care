@@ -130,6 +130,122 @@ def test_routed_chat_infer_returns_routing_and_answer():
     assert "factcheck" in body
 
 
+def test_routed_chat_infer_rule_verification_flag_overrides_legacy(monkeypatch: pytest.MonkeyPatch):
+    from clara_ml.main import rag_pipeline
+    from clara_ml.rag.pipeline import RagResult
+
+    original_run = rag_pipeline.run
+
+    def _fake_run(*args, **kwargs):  # noqa: ARG001
+        return RagResult(
+            query="query",
+            retrieved_ids=["doc-1"],
+            answer="answer",
+            model_used="local-synth-v1",
+            retrieved_context=[],
+            context_debug={},
+            flow_events=[],
+        )
+
+    def _should_not_verify(**kwargs):  # noqa: ARG001
+        raise AssertionError("run_fides_lite must be skipped when rule_verification_enabled=false")
+
+    monkeypatch.setattr(rag_pipeline, "run", _fake_run)
+    monkeypatch.setattr("clara_ml.main.run_fides_lite", _should_not_verify)
+    try:
+        response = client.post(
+            "/v1/chat/routed",
+            json={
+                "query": "Toi can tu van tuong tac warfarin.",
+                "rag_flow": {
+                    "verification_enabled": True,
+                    "rule_verification_enabled": False,
+                },
+            },
+        )
+    finally:
+        monkeypatch.setattr(rag_pipeline, "run", original_run)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("factcheck") is None
+    assert body["flow_applied"]["verification_enabled"] is False
+    assert body["flow_applied"]["rule_verification_enabled"] is False
+    assert not any(event.get("stage") == "verification" for event in body.get("flow_events", []))
+
+
+def test_routed_chat_infer_propagates_rag_runtime_flags_to_pipeline_and_verifier(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from clara_ml.factcheck.fides_lite import FactCheckResult
+    from clara_ml.main import rag_pipeline
+    from clara_ml.rag.pipeline import RagResult
+
+    original_run = rag_pipeline.run
+    captured: dict[str, object] = {}
+
+    def _fake_run(*args, **kwargs):  # noqa: ARG001
+        captured["pipeline_kwargs"] = dict(kwargs)
+        return RagResult(
+            query="query",
+            retrieved_ids=["doc-1"],
+            answer="answer",
+            model_used="local-synth-v1",
+            retrieved_context=[{"id": "doc-1", "text": "context"}],
+            context_debug={},
+            flow_events=[],
+        )
+
+    def _fake_verify(*, answer, retrieved_context, nli_enabled=None, mode="lite"):  # noqa: ARG001
+        captured["nli_enabled"] = nli_enabled
+        return FactCheckResult(
+            enabled=True,
+            stage="fides-lite-v1.2",
+            verdict="pass",
+            confidence=0.8,
+            supported_claims=1,
+            total_claims=1,
+            unsupported_claims=[],
+            evidence_count=1,
+            severity="low",
+            note="ok",
+            fide_report={},
+            verification_matrix=[],
+            contradiction_summary={},
+        )
+
+    monkeypatch.setattr(rag_pipeline, "run", _fake_run)
+    monkeypatch.setattr("clara_ml.main.run_fides_lite", _fake_verify)
+    try:
+        response = client.post(
+            "/v1/chat/routed",
+            json={
+                "query": "Toi can tu van tuong tac warfarin.",
+                "rag_flow": {
+                    "rule_verification_enabled": True,
+                    "rag_reranker_enabled": True,
+                    "nli_model_enabled": False,
+                    "rag_nli_enabled": True,
+                    "rag_graphrag_enabled": False,
+                },
+            },
+        )
+    finally:
+        monkeypatch.setattr(rag_pipeline, "run", original_run)
+
+    assert response.status_code == 200
+    body = response.json()
+    pipeline_kwargs = body and captured.get("pipeline_kwargs")
+    assert isinstance(pipeline_kwargs, dict)
+    assert pipeline_kwargs.get("rag_reranker_enabled") is True
+    assert pipeline_kwargs.get("rag_graphrag_enabled") is False
+    assert captured.get("nli_enabled") is False
+    assert body["flow_applied"]["nli_model_enabled"] is False
+    assert body["flow_applied"]["rag_reranker_enabled"] is True
+    assert body["flow_applied"]["rag_nli_enabled"] is False
+    assert body["flow_applied"]["rag_graphrag_enabled"] is False
+
+
 def test_routed_chat_infer_uses_smalltalk_fastpath_for_greeting():
     response = client.post("/v1/chat/routed", json={"query": "hi"})
     assert response.status_code == 200
@@ -244,6 +360,32 @@ def test_research_tier2_returns_progressive_schema():
     assert body["metadata"]["verification_status"]["verdict"] in {"pass", "warn", "fail"}
     assert any(event.get("stage") == "evidence_search" for event in body["flow_events"])
     assert any(event.get("stage") == "evidence_index" for event in body["flow_events"])
+
+
+def test_research_tier2_honors_rule_verification_flag_in_rag_flow():
+    response = client.post(
+        "/v1/research/tier2",
+        json={
+            "query": "Evaluate DDI evidence for warfarin and NSAID co-prescribing.",
+            "rag_flow": {
+                "verification_enabled": True,
+                "rule_verification_enabled": False,
+                "rag_nli_enabled": False,
+            },
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    flow_events = body.get("flow_events", [])
+    assert any(
+        event.get("stage") == "verification" and event.get("status") == "skipped"
+        for event in flow_events
+    )
+    metadata = body.get("metadata", {})
+    flow_flags = metadata.get("flow_flags", {})
+    assert flow_flags.get("verification_enabled") is True
+    assert flow_flags.get("rule_verification_enabled") is False
+    assert flow_flags.get("rag_nli_enabled") is False
 
 
 def test_research_tier2_blocks_prescription_and_dosage_requests():

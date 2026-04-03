@@ -64,6 +64,48 @@ def test_reranker_enabled_applies_topn_and_sets_doc_fields() -> None:
     assert result.metadata["rerank_cache_hit"] is False
 
 
+def test_reranker_embedding_cosine_scoring_reorders_candidates() -> None:
+    class _DeterministicEmbedder:
+        def embed_batch(self, texts):
+            assert len(texts) == 3
+            return [
+                [1.0, 0.0],  # query
+                [1.0, 0.0],  # doc-1 aligned
+                [0.0, 1.0],  # doc-2 orthogonal
+            ]
+
+    docs = [
+        Document(id="doc-1", text="alpha", metadata={"score": 0.0, "source": "internal"}),
+        Document(id="doc-2", text="beta", metadata={"score": 0.0, "source": "internal"}),
+    ]
+    reranker = NeuralReranker(enabled=True, top_n=2, timeout_ms=200, embedder=_DeterministicEmbedder())
+
+    result = reranker.rerank("query", docs)
+
+    assert [doc.id for doc in result.documents[:2]] == ["doc-1", "doc-2"]
+    assert result.metadata["rerank_reason"] == "ok"
+    assert result.metadata["rerank_applied_count"] == 2
+
+
+def test_reranker_embedding_error_uses_safe_fallback() -> None:
+    class _FailingEmbedder:
+        def embed_batch(self, texts):  # noqa: ARG002
+            raise RuntimeError("embedding_unavailable")
+
+    docs = [
+        Document(id="doc-1", text="warfarin", metadata={"source": "pubmed", "score": 0.8}),
+        Document(id="doc-2", text="ibuprofen", metadata={"source": "openfda", "score": 0.7}),
+    ]
+    reranker = NeuralReranker(enabled=True, top_n=2, timeout_ms=200, embedder=_FailingEmbedder())
+
+    result = reranker.rerank("warfarin ibuprofen", docs, top_k=2)
+
+    assert [doc.id for doc in result.documents] == ["doc-1", "doc-2"]
+    assert result.metadata["rerank_reason"] == "error_fallback"
+    assert result.metadata["rerank_applied_count"] == 0
+    assert result.metadata["rerank_topn"] == 0
+
+
 def test_reranker_handles_non_positive_top_k() -> None:
     reranker = NeuralReranker(enabled=True, top_n=5)
     result = reranker.rerank(

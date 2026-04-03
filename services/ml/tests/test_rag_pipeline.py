@@ -185,6 +185,23 @@ def test_rag_pipeline_context_debug_includes_retrieval_trace():
     assert isinstance(result.trace.get("retrieval"), dict)
 
 
+def test_rag_pipeline_exposes_reasoning_event_summary_for_api_consumers():
+    pipe = RagPipelineP0(deepseek_api_key="")
+    result = pipe.run("tuong tac warfarin va ibuprofen")
+
+    reasoning_events = result.context_debug.get("reasoning_events")
+    assert isinstance(reasoning_events, list)
+    assert len(reasoning_events) > 0
+    assert all(
+        "stage" in event and "status" in event
+        for event in reasoning_events
+        if isinstance(event, dict)
+    )
+    reasoning_trace = result.trace.get("reasoning", {})
+    assert isinstance(reasoning_trace, dict)
+    assert int(reasoning_trace.get("event_count") or 0) == len(reasoning_events)
+
+
 def test_rag_pipeline_emits_retrieval_orchestrator_events():
     pipe = RagPipelineP0(deepseek_api_key="")
     result = pipe.run(

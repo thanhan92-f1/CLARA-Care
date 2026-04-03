@@ -54,6 +54,7 @@ from clara_api.schemas import (
     KnowledgeSourceCreateRequest,
     KnowledgeSourceResponse,
     KnowledgeSourceUpdateRequest,
+    RagFlowConfig,
     ResearchConversationCreateRequest,
     ResearchConversationListResponse,
     ResearchConversationMessageResponse,
@@ -1591,9 +1592,22 @@ def _build_tier2_upstream_payload(
 
     incoming_rag_flow = upstream_payload.get("rag_flow")
     if isinstance(incoming_rag_flow, dict):
-        upstream_payload["rag_flow"] = {**runtime_rag_flow, **incoming_rag_flow}
+        normalized_incoming_rag_flow = dict(incoming_rag_flow)
+        if (
+            "rule_verification_enabled" not in normalized_incoming_rag_flow
+            and "verification_enabled" in normalized_incoming_rag_flow
+        ):
+            normalized_incoming_rag_flow["rule_verification_enabled"] = (
+                normalized_incoming_rag_flow.get("verification_enabled")
+            )
+        merged_rag_flow = {**runtime_rag_flow, **normalized_incoming_rag_flow}
     else:
-        upstream_payload["rag_flow"] = runtime_rag_flow
+        merged_rag_flow = runtime_rag_flow
+
+    try:
+        upstream_payload["rag_flow"] = RagFlowConfig.model_validate(merged_rag_flow).model_dump()
+    except Exception:
+        upstream_payload["rag_flow"] = RagFlowConfig.model_validate(runtime_rag_flow).model_dump()
 
     incoming_rag_sources = upstream_payload.get("rag_sources")
     if not isinstance(incoming_rag_sources, list):
@@ -1627,6 +1641,7 @@ def _empty_job_progress() -> dict[str, Any]:
         "flow_events": [],
         "flow_stages": [],
         "active_stage": "",
+        "active_status": "",
         "status_note": "",
         "reasoning_steps": [],
     }
@@ -1651,6 +1666,93 @@ def _stage_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             item["detail"] = event["note"]
         stage_map[stage] = item
     return list(stage_map.values())
+
+
+def _extract_stage_status_note(value: Any) -> tuple[str, str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    stage = str(
+        value.get("stage") or value.get("phase") or value.get("active_stage") or ""
+    ).strip()
+    if not stage:
+        return None
+    status_text = str(
+        value.get("status") or value.get("state") or value.get("active_status") or ""
+    ).strip()
+    note_raw = (
+        value.get("note")
+        or value.get("detail")
+        or value.get("message")
+        or value.get("status_note")
+        or ""
+    )
+    note = str(note_raw).strip() if note_raw is not None else ""
+    return stage, status_text.lower() or "in_progress", note
+
+
+def _latest_stage_status_note(events: Any) -> tuple[str, str, str] | None:
+    if not isinstance(events, list):
+        return None
+    for raw_event in reversed(events):
+        signal = _extract_stage_status_note(raw_event)
+        if signal is not None:
+            return signal
+    return None
+
+
+def _extract_ml_progress_signal(payload: dict[str, Any]) -> tuple[str, str, str] | None:
+    signal = _latest_stage_status_note(payload.get("flow_events"))
+    if signal is not None:
+        return signal
+
+    metadata_obj = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None
+    if metadata_obj is not None:
+        signal = _latest_stage_status_note(metadata_obj.get("flow_events"))
+        if signal is not None:
+            return signal
+
+    telemetry_obj = (
+        metadata_obj.get("telemetry")
+        if metadata_obj is not None and isinstance(metadata_obj.get("telemetry"), dict)
+        else None
+    )
+    context_debug_obj = (
+        payload.get("context_debug") if isinstance(payload.get("context_debug"), dict) else None
+    )
+
+    for candidate in (payload, metadata_obj, telemetry_obj, context_debug_obj):
+        signal = _extract_stage_status_note(candidate)
+        if signal is not None:
+            return signal
+    return None
+
+
+def _merge_progress_with_ml_flow_events(
+    *,
+    progress: dict[str, Any],
+    ml_flow_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    history_events = progress.get("flow_events")
+    if not isinstance(history_events, list):
+        history_events = []
+    else:
+        history_events = [item for item in history_events if isinstance(item, dict)]
+
+    clean_ml_events = [item for item in ml_flow_events if isinstance(item, dict)]
+    merged_events = [*history_events, *clean_ml_events][-120:]
+    progress["flow_events"] = merged_events
+    progress["flow_stages"] = _stage_from_events(merged_events)
+
+    signal = _latest_stage_status_note(clean_ml_events)
+    if signal is None:
+        signal = _latest_stage_status_note(merged_events)
+    if signal is not None:
+        stage, status_text, note = signal
+        progress["active_stage"] = stage
+        progress["active_status"] = status_text
+        if note:
+            progress["status_note"] = note
+    return progress
 
 
 def _append_job_event(
@@ -1685,6 +1787,7 @@ def _append_job_event(
     progress["flow_events"] = list(events[-80:])
     progress["flow_stages"] = _stage_from_events(progress["flow_events"])
     progress["active_stage"] = stage
+    progress["active_status"] = status_text
     progress["status_note"] = note
     reasoning_steps = progress.get("reasoning_steps")
     if not isinstance(reasoning_steps, list):
@@ -1789,7 +1892,7 @@ def _invoke_ml_tier2_with_progress(
     *,
     ml_payload: dict[str, Any],
     fail_soft_payload: dict[str, Any] | None,
-    heartbeat: Callable[[float], None],
+    heartbeat: Callable[[float, dict[str, Any] | None], None],
 ) -> dict[str, Any]:
     settings = get_settings()
     url = f"{settings.ml_service_url.rstrip('/')}/v1/research/tier2"
@@ -1804,7 +1907,7 @@ def _invoke_ml_tier2_with_progress(
                 break
             except FutureTimeoutError:
                 elapsed = (datetime.now(tz=UTC) - started).total_seconds()
-                heartbeat(elapsed)
+                heartbeat(elapsed, None)
                 continue
     if response.status_code >= 500:
         if fail_soft_payload is not None:
@@ -1832,6 +1935,20 @@ def _invoke_ml_tier2_with_progress(
                 fail_soft_payload, "UnexpectedPayloadFormat"
             )
         raise RuntimeError("ml_unexpected_payload_format")
+
+    elapsed_seconds = (datetime.now(tz=UTC) - started).total_seconds()
+    ml_signal = _extract_ml_progress_signal(data)
+    if ml_signal is not None:
+        stage, status_text, note = ml_signal
+        heartbeat(
+            elapsed_seconds,
+            {
+                "stage": stage,
+                "status": status_text,
+                "note": note,
+                "source": "ml_event",
+            },
+        )
     return data
 
 
@@ -1858,8 +1975,26 @@ def _run_research_job(job_id: str) -> None:
         request_payload = job.request_payload if isinstance(job.request_payload, dict) else {}
         last_heartbeat_bucket = -1
 
-        def _heartbeat(elapsed_seconds: float) -> None:
+        def _heartbeat(elapsed_seconds: float, ml_event: dict[str, Any] | None) -> None:
             nonlocal last_heartbeat_bucket
+            ml_signal = _extract_stage_status_note(ml_event)
+            if ml_signal is not None:
+                stage, status_text, note = ml_signal
+                _append_job_event(
+                    db,
+                    job=job,
+                    stage=stage,
+                    status_text=status_text,
+                    note=note or "ML đang cập nhật tiến trình reasoning.",
+                    payload={
+                        "elapsed_seconds": round(elapsed_seconds, 1),
+                        "source": "ml_event",
+                        "research_mode": _coerce_research_mode(request_payload),
+                        "source_mode": str(request_payload.get("source_mode") or "hybrid"),
+                    },
+                )
+                return
+
             # Emit heartbeat every ~10s and avoid duplicate messages in same 10s bucket.
             bucket = int(elapsed_seconds // 10)
             if bucket <= 0 or bucket == last_heartbeat_bucket:
@@ -1928,14 +2063,12 @@ def _run_research_job(job_id: str) -> None:
                 progress = dict(job.progress_json)
             else:
                 progress = _empty_job_progress()
-            history_events = progress.get("flow_events")
-            if not isinstance(history_events, list):
-                history_events = []
-            merged = [*history_events, *[item for item in flow_events if isinstance(item, dict)]]
-            progress["flow_events"] = merged[-120:]
-            progress["flow_stages"] = _stage_from_events(progress["flow_events"])
-            progress["active_stage"] = "final_response"
-            progress["status_note"] = "Đã nhận flow events đầy đủ từ ML."
+            progress = _merge_progress_with_ml_flow_events(
+                progress=progress,
+                ml_flow_events=[item for item in flow_events if isinstance(item, dict)],
+            )
+            if not str(progress.get("status_note") or "").strip():
+                progress["status_note"] = "Đã nhận flow events đầy đủ từ ML."
             job.progress_json = json.loads(json.dumps(progress, ensure_ascii=False))
             db.add(job)
             db.commit()

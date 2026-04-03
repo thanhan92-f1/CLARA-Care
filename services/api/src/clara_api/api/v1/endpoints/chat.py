@@ -208,7 +208,11 @@ def _safe_mode_payload(
     base_flow = rag_flow.model_dump()
     base_flow.update(
         {
-            "verification_enabled": False,
+            "rule_verification_enabled": False,
+            "nli_model_enabled": False,
+            "rag_reranker_enabled": False,
+            "rag_nli_enabled": False,
+            "rag_graphrag_enabled": False,
             "deepseek_fallback_enabled": True,
             "scientific_retrieval_enabled": False,
             "web_retrieval_enabled": False,

@@ -86,6 +86,21 @@ class InMemoryRetriever:
             errors.setdefault(source, []).append(error_name)
         return errors
 
+    def _resolve_neural_reranker(self, *, enabled_override: bool | None) -> NeuralReranker:
+        if not isinstance(enabled_override, bool):
+            return self.reranker
+        if bool(self.reranker.enabled) == enabled_override:
+            return self.reranker
+        return NeuralReranker(
+            enabled=enabled_override,
+            model_name=self.reranker.model_name,
+            top_n=self.reranker.top_n,
+            timeout_ms=self.reranker.timeout_ms,
+            cache_enabled=self.reranker.cache_enabled,
+            cache_ttl_seconds=self.reranker.cache_ttl_seconds,
+            cache_max_entries=self.reranker.cache_max_entries,
+        )
+
     def _collect_internal_candidates(
         self,
         *,
@@ -116,6 +131,7 @@ class InMemoryRetriever:
         candidates: list[Document],
         top_k: int,
         rag_sources: object,
+        rag_reranker_enabled: bool | None = None,
     ) -> tuple[list[Document], dict[str, Any]]:
         started = perf_counter()
         deduped = dedupe_documents(candidates)
@@ -127,7 +143,10 @@ class InMemoryRetriever:
             source_policies=self.builder.parse_source_policies(rag_sources),
             score_trace=score_trace,
         )
-        rerank_result = self.reranker.rerank(query, ranked, top_k=top_k)
+        neural_reranker = self._resolve_neural_reranker(
+            enabled_override=rag_reranker_enabled,
+        )
+        rerank_result = neural_reranker.rerank(query, ranked, top_k=top_k)
         ranked = rerank_result.documents
         neural_rerank = rerank_result.metadata if isinstance(rerank_result.metadata, dict) else {}
         biomedical_rerank = {
@@ -167,6 +186,7 @@ class InMemoryRetriever:
         rag_sources: object = None,
         allowed_providers: set[str] | None = None,
         provider_query_overrides: dict[str, str] | None = None,
+        rag_reranker_enabled: bool | None = None,
     ) -> list[Document]:
         started = perf_counter()
         gateway_trace: dict[str, Any] = {}
@@ -183,6 +203,7 @@ class InMemoryRetriever:
             candidates=docs,
             top_k=max(top_k, 1),
             rag_sources=rag_sources,
+            rag_reranker_enabled=rag_reranker_enabled,
         )
         provider_events = (
             gateway_trace.get("provider_events")
@@ -238,6 +259,7 @@ class InMemoryRetriever:
         file_retrieval_enabled: bool = True,
         rag_sources: object = None,
         uploaded_documents: object = None,
+        rag_reranker_enabled: bool | None = None,
     ) -> list[Document]:
         started = perf_counter()
         if top_k <= 0:
@@ -291,6 +313,7 @@ class InMemoryRetriever:
             candidates=candidates,
             top_k=top_k,
             rag_sources=rag_sources,
+            rag_reranker_enabled=rag_reranker_enabled,
         )
         counts["total_after_dedupe"] = int(index_phase["after_dedupe_count"])
         self.last_trace = {
@@ -336,6 +359,7 @@ class InMemoryRetriever:
         uploaded_documents: object = None,
         provider_query_overrides: dict[str, str] | None = None,
         web_query_override: str | None = None,
+        rag_reranker_enabled: bool | None = None,
     ) -> list[Document]:
         started = perf_counter()
         if top_k <= 0:
@@ -514,6 +538,7 @@ class InMemoryRetriever:
             candidates=staged_docs,
             top_k=top_k,
             rag_sources=rag_sources,
+            rag_reranker_enabled=rag_reranker_enabled,
         )
         candidate_counts = {
             "after_internal": internal_counts["total_before_dedupe"],

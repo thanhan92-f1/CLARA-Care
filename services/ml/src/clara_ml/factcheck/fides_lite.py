@@ -340,10 +340,12 @@ def run_fides_lite(
     answer: str,
     retrieved_context: list[dict[str, Any]],
     mode: str = "lite",
+    nli_enabled: bool | None = None,
 ) -> FactCheckResult:
     normalized_mode = mode.strip().lower() if isinstance(mode, str) else "lite"
     if normalized_mode not in {"lite", "strict"}:
         normalized_mode = "lite"
+    nli_runtime_enabled = bool(settings.rag_nli_enabled if nli_enabled is None else nli_enabled)
 
     evidence_rows = _build_evidence_rows(retrieved_context)
     context_ids = [str(item.get("id", "")) for item in retrieved_context if item.get("id")]
@@ -385,7 +387,12 @@ def run_fides_lite(
 
     if not evidence_rows:
         verdict_rows = verify_claims(claims=claims, evidence_rows=evidence_rows)
-        verification_matrix = _apply_nli_confidence_gate([item.as_dict() for item in verdict_rows])
+        raw_verification_rows = [item.as_dict() for item in verdict_rows]
+        verification_matrix = (
+            _apply_nli_confidence_gate(raw_verification_rows)
+            if nli_runtime_enabled
+            else raw_verification_rows
+        )
         verification_matrix_summary = summarize_nli_matrix(
             rows=verification_matrix,
             total_claims=len(claims),
@@ -422,7 +429,12 @@ def run_fides_lite(
         )
 
     verdict_rows = verify_claims(claims=claims, evidence_rows=evidence_rows)
-    verification_matrix = _apply_nli_confidence_gate([item.as_dict() for item in verdict_rows])
+    raw_verification_rows = [item.as_dict() for item in verdict_rows]
+    verification_matrix = (
+        _apply_nli_confidence_gate(raw_verification_rows)
+        if nli_runtime_enabled
+        else raw_verification_rows
+    )
     verification_matrix_summary = summarize_nli_matrix(
         rows=verification_matrix,
         total_claims=len(claims),

@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha1
+import math
 from threading import Lock
 from time import perf_counter
 from typing import Any, Sequence
 import re
 
 from clara_ml.config import settings
+from clara_ml.rag.embedder import HttpEmbeddingClient
 
 from .domain import Document
 
@@ -20,11 +22,7 @@ class RerankResult:
 
 
 class NeuralReranker:
-    """Phase-1 reranker skeleton for retrieval candidates.
-
-    This implementation intentionally stays lightweight: it exposes a stable
-    contract and telemetry shape before wiring a model-backed reranker.
-    """
+    """Neural reranker using embedding cosine similarity with safe fallbacks."""
 
     _CACHE_LOCK = Lock()
     _CACHE: OrderedDict[str, tuple[float, list[Document], dict[str, Any]]] = OrderedDict()
@@ -39,6 +37,7 @@ class NeuralReranker:
         cache_enabled: bool | None = None,
         cache_ttl_seconds: int | None = None,
         cache_max_entries: int | None = None,
+        embedder: HttpEmbeddingClient | None = None,
     ) -> None:
         self.enabled = bool(settings.rag_reranker_enabled if enabled is None else enabled)
         self.model_name = str(model_name or settings.rag_reranker_model)
@@ -64,6 +63,10 @@ class NeuralReranker:
                 if cache_max_entries is None
                 else cache_max_entries
             ),
+        )
+        timeout_seconds = max(float(self.timeout_ms) / 1000.0, 0.05)
+        self._embedder = embedder or HttpEmbeddingClient(
+            timeout_seconds=min(float(settings.embedding_timeout_seconds), timeout_seconds),
         )
 
     def rerank(
@@ -130,13 +133,12 @@ class NeuralReranker:
         error_name = ""
 
         try:
-            scored_pool: list[tuple[float, int, Document]] = []
-            for original_index, doc in enumerate(rerank_pool):
-                if (perf_counter() - started) > timeout_seconds:
-                    timed_out = True
-                    raise TimeoutError("reranker_timeout")
-                score = self._placeholder_score(query, doc)
-                scored_pool.append((score, original_index, doc))
+            scored_pool = self._score_documents(
+                query=query,
+                documents=rerank_pool,
+                started=started,
+                timeout_seconds=timeout_seconds,
+            )
             scored_pool.sort(key=lambda row: (float(row[0]), -int(row[1])), reverse=True)
 
             reranked: list[Document] = []
@@ -285,6 +287,69 @@ class NeuralReranker:
     @staticmethod
     def _copy_document(doc: Document) -> Document:
         return Document(id=doc.id, text=doc.text, metadata=dict(doc.metadata or {}))
+
+    def _score_documents(
+        self,
+        *,
+        query: str,
+        documents: Sequence[Document],
+        started: float,
+        timeout_seconds: float,
+    ) -> list[tuple[float, int, Document]]:
+        self._ensure_not_timed_out(started=started, timeout_seconds=timeout_seconds)
+        vectors = self._embedder.embed_batch([query, *[doc.text for doc in documents]])
+        self._ensure_not_timed_out(started=started, timeout_seconds=timeout_seconds)
+        if len(vectors) != len(documents) + 1:
+            raise ValueError("reranker_embedding_size_mismatch")
+        query_vector = vectors[0]
+        scored: list[tuple[float, int, Document]] = []
+        for original_index, (doc, doc_vector) in enumerate(zip(documents, vectors[1:])):
+            self._ensure_not_timed_out(started=started, timeout_seconds=timeout_seconds)
+            score = self._embedding_score(
+                query=query,
+                query_vector=query_vector,
+                doc=doc,
+                doc_vector=doc_vector,
+            )
+            scored.append((float(score), original_index, doc))
+        return scored
+
+    @staticmethod
+    def _ensure_not_timed_out(*, started: float, timeout_seconds: float) -> None:
+        if (perf_counter() - started) > max(timeout_seconds, 0.001):
+            raise TimeoutError("reranker_timeout")
+
+    @classmethod
+    def _embedding_score(
+        cls,
+        *,
+        query: str,
+        query_vector: Sequence[float],
+        doc: Document,
+        doc_vector: Sequence[float],
+    ) -> float:
+        semantic = cls._cosine_similarity(query_vector, doc_vector)
+        heuristic = cls._squash_score(cls._placeholder_score(query, doc))
+        return (0.82 * semantic) + (0.18 * heuristic)
+
+    @staticmethod
+    def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+        dim = min(len(left), len(right))
+        if dim <= 0:
+            return 0.0
+        left_values = [float(value) for value in left[:dim]]
+        right_values = [float(value) for value in right[:dim]]
+        dot = sum(a * b for a, b in zip(left_values, right_values))
+        left_norm = math.sqrt(sum(a * a for a in left_values))
+        right_norm = math.sqrt(sum(b * b for b in right_values))
+        if left_norm <= 1e-12 or right_norm <= 1e-12:
+            return 0.0
+        cosine = max(-1.0, min(1.0, dot / (left_norm * right_norm)))
+        return max(0.0, min(1.0, (cosine + 1.0) * 0.5))
+
+    @staticmethod
+    def _squash_score(value: float) -> float:
+        return max(0.0, min(1.0, 0.5 + (0.5 * math.tanh(float(value)))))
 
     @classmethod
     def _placeholder_score(cls, query: str, doc: Document) -> float:

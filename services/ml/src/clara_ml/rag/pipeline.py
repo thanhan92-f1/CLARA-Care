@@ -1297,6 +1297,8 @@ class RagPipelineP1:
         planner_hints: dict[str, Any] | None = None,
         generation_enabled: bool = True,
         strict_deepseek_required: bool = False,
+        rag_reranker_enabled: bool | None = None,
+        rag_graphrag_enabled: bool | None = None,
     ) -> RagResult:
         run_started = perf_counter()
         planner_active = isinstance(planner_hints, dict) and bool(planner_hints)
@@ -1307,8 +1309,13 @@ class RagPipelineP1:
             else "auto"
         )
         graphrag_enabled_override = normalized_hints.get("graphrag_enabled_override")
+        rag_reranker_runtime = bool(
+            settings.rag_reranker_enabled if rag_reranker_enabled is None else rag_reranker_enabled
+        )
         graphrag_enabled_runtime = bool(settings.rag_graphrag_enabled)
-        if isinstance(graphrag_enabled_override, bool):
+        if isinstance(rag_graphrag_enabled, bool):
+            graphrag_enabled_runtime = rag_graphrag_enabled
+        elif isinstance(graphrag_enabled_override, bool):
             graphrag_enabled_runtime = graphrag_enabled_override
         elif requested_stack_mode == "full":
             graphrag_enabled_runtime = True
@@ -1380,6 +1387,8 @@ class RagPipelineP1:
                         "web_retrieval_enabled": bool(web_retrieval_enabled),
                         "file_retrieval_enabled": bool(file_retrieval_enabled),
                         "graphrag_enabled_override": graphrag_enabled_override,
+                        "rag_graphrag_enabled": rag_graphrag_enabled,
+                        "rag_reranker_enabled": rag_reranker_enabled,
                     },
                 },
             )
@@ -1477,6 +1486,12 @@ class RagPipelineP1:
             "graphrag_expansion_count": 0,
             "graphrag_node_count": 0,
             "graphrag_edge_count": 0,
+            "runtime_flags": {
+                "rag_reranker_enabled_requested": rag_reranker_enabled,
+                "rag_reranker_enabled": rag_reranker_runtime,
+                "rag_graphrag_enabled_requested": rag_graphrag_enabled,
+                "rag_graphrag_enabled": bool(graphrag_enabled_runtime),
+            },
             "stack_mode_requested": requested_stack_mode,
             "stack_mode_effective": "auto",
             "stack_mode_reason_codes": [],
@@ -1514,13 +1529,25 @@ class RagPipelineP1:
         )
         docs: List[Document] = []
         try:
-            docs = self.retriever.retrieve_internal(
-                internal_query,
-                top_k=internal_top_k,
-                file_retrieval_enabled=file_retrieval_enabled,
-                rag_sources=rag_sources,
-                uploaded_documents=uploaded_documents,
-            )
+            try:
+                docs = self.retriever.retrieve_internal(
+                    internal_query,
+                    top_k=internal_top_k,
+                    file_retrieval_enabled=file_retrieval_enabled,
+                    rag_sources=rag_sources,
+                    uploaded_documents=uploaded_documents,
+                    rag_reranker_enabled=rag_reranker_enabled,
+                )
+            except TypeError as type_exc:
+                if "unexpected keyword argument" not in str(type_exc):
+                    raise
+                docs = self.retriever.retrieve_internal(
+                    internal_query,
+                    top_k=internal_top_k,
+                    file_retrieval_enabled=file_retrieval_enabled,
+                    rag_sources=rag_sources,
+                    uploaded_documents=uploaded_documents,
+                )
         except Exception as exc:
             retrieval_trace["internal_error"] = exc.__class__.__name__
             retrieval_trace["source_errors"] = {"internal_retrieval": [exc.__class__.__name__]}
@@ -1701,28 +1728,33 @@ class RagPipelineP1:
             )
             try:
                 try:
+                    retrieve_kwargs: dict[str, Any] = {
+                        "top_k": hybrid_top_k,
+                        "scientific_retrieval_enabled": True,
+                        "web_retrieval_enabled": web_retrieval_enabled,
+                        "file_retrieval_enabled": file_retrieval_enabled,
+                        "rag_sources": rag_sources,
+                        "uploaded_documents": uploaded_documents,
+                        "provider_query_overrides": scientific_provider_query_overrides,
+                        "web_query_override": web_query_override,
+                        "rag_reranker_enabled": rag_reranker_enabled,
+                    }
                     docs = self.retriever.retrieve(
                         scientific_query,
-                        top_k=hybrid_top_k,
-                        scientific_retrieval_enabled=True,
-                        web_retrieval_enabled=web_retrieval_enabled,
-                        file_retrieval_enabled=file_retrieval_enabled,
-                        rag_sources=rag_sources,
-                        uploaded_documents=uploaded_documents,
-                        provider_query_overrides=scientific_provider_query_overrides,
-                        web_query_override=web_query_override,
+                        **retrieve_kwargs,
                     )
                 except TypeError as type_exc:
                     if "unexpected keyword argument" not in str(type_exc):
                         raise
+                    retrieve_kwargs = {
+                        key: value
+                        for key, value in retrieve_kwargs.items()
+                        if key
+                        not in {"provider_query_overrides", "web_query_override", "rag_reranker_enabled"}
+                    }
                     docs = self.retriever.retrieve(
                         scientific_query,
-                        top_k=hybrid_top_k,
-                        scientific_retrieval_enabled=True,
-                        web_retrieval_enabled=web_retrieval_enabled,
-                        file_retrieval_enabled=file_retrieval_enabled,
-                        rag_sources=rag_sources,
-                        uploaded_documents=uploaded_documents,
+                        **retrieve_kwargs,
                     )
                 retrieval_trace["hybrid"] = self._extract_retriever_trace(self.retriever)
                 hybrid_trace = (
@@ -2135,6 +2167,19 @@ class RagPipelineP1:
                 (perf_counter() - run_started) * 1000.0, 3
             )
             context_debug["fallback_reason"] = fallback_reason or None
+            reasoning_events = [
+                {
+                    "event_id": str(event.get("event_id") or ""),
+                    "stage": str(event.get("stage") or ""),
+                    "status": str(event.get("status") or ""),
+                    "component": str(event.get("component") or ""),
+                    "timestamp": str(event.get("timestamp") or ""),
+                }
+                for event in flow_events
+                if isinstance(event, dict)
+            ]
+            context_debug["reasoning_events"] = reasoning_events
+            context_debug["reasoning_event_count"] = len(reasoning_events)
             trace = {
                 "planner": {
                     "query_focus": normalized_hints.get("query_focus"),
@@ -2145,6 +2190,10 @@ class RagPipelineP1:
                 "orchestrator": orchestrator_plan,
                 "retrieval": retrieval_trace,
                 "generation": generation_trace,
+                "reasoning": {
+                    "events": reasoning_events,
+                    "event_count": len(reasoning_events),
+                },
             }
             return RagResult(
                 query=query,

@@ -74,7 +74,11 @@ def test_chat_success_proxies_request_and_role(monkeypatch) -> None:
     assert isinstance(rag_flow, dict)
     assert rag_flow["role_router_enabled"] is True
     assert rag_flow["intent_router_enabled"] is True
-    assert rag_flow["verification_enabled"] is True
+    assert rag_flow["rule_verification_enabled"] is True
+    assert rag_flow["nli_model_enabled"] is True
+    assert rag_flow["rag_reranker_enabled"] is False
+    assert rag_flow["rag_nli_enabled"] is True
+    assert rag_flow["rag_graphrag_enabled"] is False
     assert rag_flow["deepseek_fallback_enabled"] is True
     assert rag_flow["low_context_threshold"] == 0.2
     assert rag_flow["scientific_retrieval_enabled"] is True
@@ -245,7 +249,11 @@ def test_chat_recovers_with_safe_mode_retry_when_primary_5xx(monkeypatch) -> Non
 
     second_payload = captured_payloads[1]
     second_flow = second_payload["rag_flow"]
-    assert second_flow["verification_enabled"] is False
+    assert second_flow["rule_verification_enabled"] is False
+    assert second_flow["nli_model_enabled"] is False
+    assert second_flow["rag_reranker_enabled"] is False
+    assert second_flow["rag_nli_enabled"] is False
+    assert second_flow["rag_graphrag_enabled"] is False
     assert second_flow["scientific_retrieval_enabled"] is False
     assert second_flow["web_retrieval_enabled"] is False
     assert second_flow["file_retrieval_enabled"] is True
@@ -304,7 +312,11 @@ def test_chat_uses_safe_mode_when_primary_ml_path_times_out(monkeypatch) -> None
     assert isinstance(safe_mode_payload, dict)
     rag_flow = safe_mode_payload["rag_flow"]
     assert isinstance(rag_flow, dict)
-    assert rag_flow["verification_enabled"] is False
+    assert rag_flow["rule_verification_enabled"] is False
+    assert rag_flow["nli_model_enabled"] is False
+    assert rag_flow["rag_reranker_enabled"] is False
+    assert rag_flow["rag_nli_enabled"] is False
+    assert rag_flow["rag_graphrag_enabled"] is False
     assert rag_flow["scientific_retrieval_enabled"] is False
     assert rag_flow["web_retrieval_enabled"] is False
     assert rag_flow["file_retrieval_enabled"] is True

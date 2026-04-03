@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator, model_validator
 
 Role = Literal["normal", "researcher", "doctor", "admin"]
 
@@ -384,7 +384,14 @@ class RagSourceEntry(BaseModel):
 class RagFlowConfig(BaseModel):
     role_router_enabled: bool = True
     intent_router_enabled: bool = True
-    verification_enabled: bool = True
+    rule_verification_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("rule_verification_enabled", "verification_enabled"),
+    )
+    nli_model_enabled: bool = True
+    rag_reranker_enabled: bool = False
+    rag_nli_enabled: bool = True
+    rag_graphrag_enabled: bool = False
     deepseek_fallback_enabled: bool = True
     low_context_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
     precision_at_k: int = Field(default=10, ge=1, le=50)
@@ -393,6 +400,19 @@ class RagFlowConfig(BaseModel):
     scientific_retrieval_enabled: bool = True
     web_retrieval_enabled: bool = True
     file_retrieval_enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_verification_enabled(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if "rule_verification_enabled" in value:
+            return value
+        if "verification_enabled" not in value:
+            return value
+        normalized = dict(value)
+        normalized["rule_verification_enabled"] = normalized.get("verification_enabled")
+        return normalized
 
 
 class CareguardRuntimeConfig(BaseModel):

@@ -242,7 +242,7 @@ class Settings(BaseSettings):
         validation_alias="RAG_RERANKER_ENABLED",
     )
     rag_reranker_model: str = Field(
-        default="phase1-skeleton-reranker-v0",
+        default="embedding-cosine-reranker-v1",
         validation_alias="RAG_RERANKER_MODEL",
     )
     rag_reranker_top_n: int = Field(
@@ -272,6 +272,14 @@ class Settings(BaseSettings):
         validation_alias="RAG_RERANKER_CACHE_MAX_ENTRIES",
         ge=32,
         le=10000,
+    )
+    rule_verification_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "RULE_VERIFICATION_ENABLED",
+            "RAG_RULE_VERIFICATION_ENABLED",
+            "VERIFICATION_ENABLED",
+        ),
     )
     rag_nli_enabled: bool = Field(
         default=True,

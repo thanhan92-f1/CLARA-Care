@@ -153,6 +153,12 @@ def test_new_proxy_endpoints_success(
         assert forwarded_payload.get(key) == value
     if api_path == "/api/v1/research/tier2":
         assert isinstance(forwarded_payload.get("rag_flow"), dict)
+        rag_flow = forwarded_payload["rag_flow"]
+        assert rag_flow["rule_verification_enabled"] is True
+        assert rag_flow["nli_model_enabled"] is True
+        assert rag_flow["rag_reranker_enabled"] is False
+        assert rag_flow["rag_nli_enabled"] is True
+        assert rag_flow["rag_graphrag_enabled"] is False
         assert isinstance(forwarded_payload.get("rag_sources"), list)
         assert len(forwarded_payload["rag_sources"]) >= 1
     timeout = captured["timeout"]
@@ -521,6 +527,152 @@ def test_research_tier2_job_get_404_for_other_user(monkeypatch: pytest.MonkeyPat
         headers={"Authorization": f"Bearer {token_b}"},
     )
     assert other_user_response.status_code == 404
+
+
+def test_research_job_progress_prefers_ml_event_stage_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from clara_api.api.v1.endpoints import research as research_endpoint
+
+    _login("alice@research.clara")
+    now = datetime.now(tz=UTC)
+    job_id = "job-progress-prefers-ml-events"
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "alice@research.clara").first()
+        assert user is not None
+        job = ResearchJob(
+            job_id=job_id,
+            user_id=user.id,
+            role="researcher",
+            status="queued",
+            query_text="progress preference test",
+            request_payload={"query": "progress preference test", "research_mode": "deep"},
+            progress_json={
+                "flow_events": [],
+                "flow_stages": [],
+                "active_stage": "",
+                "active_status": "",
+                "status_note": "",
+                "reasoning_steps": [],
+            },
+            result_json=None,
+            error_text="",
+            created_at=now,
+            updated_at=now,
+            started_at=None,
+            completed_at=None,
+        )
+        db.add(job)
+        db.commit()
+
+    def _fake_invoke(
+        *,
+        ml_payload: dict[str, object],
+        fail_soft_payload: dict[str, object] | None,
+        heartbeat,
+    ) -> dict[str, object]:
+        _ = (ml_payload, fail_soft_payload)
+        heartbeat(12.0, None)
+        return {
+            "answer": "ok",
+            "flow_events": [
+                {"stage": "collect_evidence", "status": "completed", "note": "ML evidence ready"},
+                {"stage": "synthesize_findings", "status": "completed", "note": "ML synthesis done"},
+            ],
+            "metadata": {"research_mode": "deep"},
+        }
+
+    monkeypatch.setattr(research_endpoint, "_invoke_ml_tier2_with_progress", _fake_invoke)
+
+    research_endpoint._run_research_job(job_id)
+
+    with SessionLocal() as db:
+        row = db.query(ResearchJob).filter(ResearchJob.job_id == job_id).first()
+        assert row is not None
+        assert row.status == "completed"
+        assert isinstance(row.progress_json, dict)
+        progress = row.progress_json
+        assert progress["active_stage"] == "synthesize_findings"
+        assert progress["active_status"] == "completed"
+        assert progress["status_note"] == "ML synthesis done"
+        flow_stages = progress.get("flow_stages")
+        assert isinstance(flow_stages, list)
+        assert any(
+            isinstance(item, dict)
+            and item.get("id") == "synthesize_findings"
+            and item.get("status") == "completed"
+            for item in flow_stages
+        )
+
+
+def test_research_job_progress_falls_back_to_estimator_without_ml_stage_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from clara_api.api.v1.endpoints import research as research_endpoint
+
+    _login("alice@research.clara")
+    now = datetime.now(tz=UTC)
+    job_id = "job-progress-fallback-estimator"
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "alice@research.clara").first()
+        assert user is not None
+        job = ResearchJob(
+            job_id=job_id,
+            user_id=user.id,
+            role="researcher",
+            status="queued",
+            query_text="progress estimator fallback test",
+            request_payload={"query": "progress estimator fallback test", "research_mode": "deep"},
+            progress_json={
+                "flow_events": [],
+                "flow_stages": [],
+                "active_stage": "",
+                "active_status": "",
+                "status_note": "",
+                "reasoning_steps": [],
+            },
+            result_json=None,
+            error_text="",
+            created_at=now,
+            updated_at=now,
+            started_at=None,
+            completed_at=None,
+        )
+        db.add(job)
+        db.commit()
+
+    def _fake_invoke(
+        *,
+        ml_payload: dict[str, object],
+        fail_soft_payload: dict[str, object] | None,
+        heartbeat,
+    ) -> dict[str, object]:
+        _ = (ml_payload, fail_soft_payload)
+        heartbeat(12.0, None)
+        return {
+            "answer": "ok",
+            "metadata": {"research_mode": "deep"},
+        }
+
+    monkeypatch.setattr(research_endpoint, "_invoke_ml_tier2_with_progress", _fake_invoke)
+
+    research_endpoint._run_research_job(job_id)
+
+    with SessionLocal() as db:
+        row = db.query(ResearchJob).filter(ResearchJob.job_id == job_id).first()
+        assert row is not None
+        assert row.status == "completed"
+        assert isinstance(row.progress_json, dict)
+        flow_events = row.progress_json.get("flow_events")
+        assert isinstance(flow_events, list)
+        assert any(
+            isinstance(item, dict)
+            and item.get("stage") == "reasoning"
+            and item.get("status") == "in_progress"
+            for item in flow_events
+        )
 
 
 def test_research_tier2_job_stream_returns_progress_and_done() -> None:
@@ -928,6 +1080,8 @@ def test_research_tier2_forwards_research_mode_to_ml(
     assert forwarded["role"] == "researcher"
     assert forwarded["strict_deepseek_required"] is False
     assert isinstance(forwarded.get("rag_flow"), dict)
+    assert forwarded["rag_flow"]["rule_verification_enabled"] is True
+    assert forwarded["rag_flow"]["nli_model_enabled"] is True
     assert isinstance(forwarded.get("rag_sources"), list)
 
 
@@ -967,6 +1121,46 @@ def test_research_tier2_forwards_deep_beta_mode_to_ml(
     assert isinstance(forwarded, dict)
     assert forwarded["research_mode"] == "deep_beta"
     assert forwarded["role"] == "researcher"
+
+
+def test_research_tier2_maps_legacy_verification_enabled_in_rag_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = _login("alice@research.clara")
+    captured: dict[str, object] = {}
+
+    class _MockResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"answer": "ok", "metadata": {"research_mode": "fast"}}
+
+    def _fake_post(url: str, *, json: dict[str, object], timeout: float) -> _MockResponse:
+        captured["url"] = url
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _MockResponse()
+
+    monkeypatch.setattr("clara_api.api.v1.endpoints.ml_proxy.httpx.post", _fake_post)
+
+    response = client.post(
+        "/api/v1/research/tier2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "query": "legacy verification mapping",
+            "rag_flow": {
+                "verification_enabled": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    forwarded = captured["json"]
+    assert isinstance(forwarded, dict)
+    rag_flow = forwarded["rag_flow"]
+    assert rag_flow["rule_verification_enabled"] is False
+    assert "verification_enabled" not in rag_flow
 
 
 @pytest.mark.parametrize(

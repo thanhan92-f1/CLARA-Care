@@ -12,7 +12,7 @@ import urllib.request
 from uuid import uuid4
 
 from clara_ml.config import settings
-from clara_ml.factcheck import run_fides_lite
+from clara_ml.factcheck import FactCheckResult, run_fides_lite
 from clara_ml.llm.deepseek_client import DeepSeekClient
 from clara_ml.rag.pipeline import RagPipelineP1
 from clara_ml.rag.retrieval.source_router import (
@@ -166,6 +166,36 @@ def _normalize_retrieval_stack_mode(payload: dict[str, Any]) -> str:
     if raw_mode in {"full", "full_stack", "full-stack"}:
         return "full"
     return "auto"
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _coerce_optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    return None
 
 
 def _ascii_fold(text: str) -> str:
@@ -2447,6 +2477,27 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         uploaded_documents_raw if isinstance(uploaded_documents_raw, list) else []
     )
     rag_sources = payload.get("rag_sources")
+    rag_flow_payload = payload.get("rag_flow")
+    rag_flow = rag_flow_payload if isinstance(rag_flow_payload, dict) else {}
+    legacy_verification_enabled = _coerce_bool(
+        rag_flow.get("verification_enabled"),
+        bool(settings.rule_verification_enabled),
+    )
+    rule_verification_enabled = (
+        _coerce_bool(rag_flow.get("rule_verification_enabled"), legacy_verification_enabled)
+        if "rule_verification_enabled" in rag_flow
+        else legacy_verification_enabled
+    )
+    nli_model_enabled = _coerce_bool(rag_flow.get("nli_model_enabled"), True)
+    rag_nli_enabled_override = _coerce_optional_bool(rag_flow.get("rag_nli_enabled"))
+    rag_nli_enabled_runtime = (
+        bool(settings.rag_nli_enabled)
+        if rag_nli_enabled_override is None
+        else bool(rag_nli_enabled_override)
+    )
+    rag_nli_enabled_runtime = bool(nli_model_enabled and rag_nli_enabled_runtime)
+    rag_reranker_enabled_override = _coerce_optional_bool(rag_flow.get("rag_reranker_enabled"))
+    rag_graphrag_enabled_override = _coerce_optional_bool(rag_flow.get("rag_graphrag_enabled"))
     route = router.route(topic, role_hint=role_hint)
 
     plan_steps = _build_plan_steps(topic, source_mode, research_mode=research_mode)
@@ -2535,6 +2586,22 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "research_mode": research_mode,
                 "retrieval_route": planner_hints.get("retrieval_route", "internal-heavy"),
                 "router_confidence": planner_hints.get("router_confidence", 0.0),
+                "flow_flags": {
+                    "verification_enabled": legacy_verification_enabled,
+                    "rule_verification_enabled": rule_verification_enabled,
+                    "nli_model_enabled": nli_model_enabled,
+                    "rag_nli_enabled": rag_nli_enabled_runtime,
+                    "rag_reranker_enabled": (
+                        settings.rag_reranker_enabled
+                        if rag_reranker_enabled_override is None
+                        else rag_reranker_enabled_override
+                    ),
+                    "rag_graphrag_enabled": (
+                        settings.rag_graphrag_enabled
+                        if rag_graphrag_enabled_override is None
+                        else rag_graphrag_enabled_override
+                    ),
+                },
             },
         ),
     ]
@@ -2783,6 +2850,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 },
                 generation_enabled=False,
                 strict_deepseek_required=strict_deepseek_required,
+                rag_reranker_enabled=rag_reranker_enabled_override,
+                rag_graphrag_enabled=rag_graphrag_enabled_override,
             )
             pass_trace = (
                 pass_result.trace.get("retrieval")
@@ -3140,6 +3209,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 },
                 generation_enabled=False,
                 strict_deepseek_required=strict_deepseek_required,
+                rag_reranker_enabled=rag_reranker_enabled_override,
+                rag_graphrag_enabled=rag_graphrag_enabled_override,
             )
             pass_trace = (
                 pass_result.trace.get("retrieval")
@@ -3303,6 +3374,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         planner_hints=planner_hints,
         generation_enabled=True,
         strict_deepseek_required=strict_deepseek_required,
+        rag_reranker_enabled=rag_reranker_enabled_override,
+        rag_graphrag_enabled=rag_graphrag_enabled_override,
     )
     if strict_deepseek_required and (
         rag_result.model_used.startswith("local-synth")
@@ -3397,9 +3470,47 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             started_at=synthesis_started,
         )
     )
-    factcheck_result = run_fides_lite(answer=answer_markdown, retrieved_context=effective_context)
-    policy_action = "allow" if factcheck_result.verdict == "pass" else "warn"
-    verification_state = "verified" if policy_action == "allow" else "warning"
+    if rule_verification_enabled:
+        try:
+            factcheck_result = run_fides_lite(
+                answer=answer_markdown,
+                retrieved_context=effective_context,
+                nli_enabled=rag_nli_enabled_runtime,
+            )
+        except TypeError as type_exc:
+            if "unexpected keyword argument" not in str(type_exc):
+                raise
+            factcheck_result = run_fides_lite(
+                answer=answer_markdown,
+                retrieved_context=effective_context,
+            )
+        policy_action = "allow" if factcheck_result.verdict == "pass" else "warn"
+        verification_state = "verified" if policy_action == "allow" else "warning"
+    else:
+        factcheck_result = FactCheckResult(
+            enabled=False,
+            stage="verification-skipped-v1",
+            verdict="pass",
+            confidence=1.0,
+            supported_claims=0,
+            total_claims=0,
+            unsupported_claims=[],
+            evidence_count=len(effective_context),
+            severity="low",
+            note="Rule verification disabled by flow flag.",
+            verification_matrix=[],
+            contradiction_summary={
+                "version": "claim-v2-nli",
+                "has_contradiction": False,
+                "contradiction_count": 0,
+                "claims": [],
+                "details": [],
+                "note": "Verification skipped.",
+            },
+            fide_report={},
+        )
+        policy_action = "allow"
+        verification_state = "skipped"
     verification_matrix_rows = _compact_verification_matrix_rows(
         getattr(factcheck_result, "verification_matrix", []),
         max_items=20,
@@ -3421,10 +3532,22 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "summary": verification_matrix_summary,
         "contradiction_summary": contradiction_summary,
     }
-    safety_override = _evaluate_safety_critical_override(
-        rows=verification_matrix_rows,
-        nli_enabled=bool(settings.rag_nli_enabled),
-    )
+    if rule_verification_enabled:
+        safety_override = _evaluate_safety_critical_override(
+            rows=verification_matrix_rows,
+            nli_enabled=rag_nli_enabled_runtime,
+        )
+    else:
+        safety_override = {
+            "applied": False,
+            "status": "skipped",
+            "reason": "rule_verification_disabled",
+            "note": "Rule verification disabled by flow flag.",
+            "policy_action": policy_action,
+            "verification_state": verification_state,
+            "claims": [],
+            "affected_claim_count": 0,
+        }
     if bool(safety_override.get("applied")):
         policy_action = str(safety_override.get("policy_action") or policy_action)
         verification_state = str(safety_override.get("verification_state") or verification_state)
@@ -3488,31 +3611,43 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 },
             )
         )
-    flow_events.append(
-        _event(
-            stage="verification",
-            status="started",
-            source_count=factcheck_result.evidence_count,
-            note="Verifier started evidence consistency checks.",
-            component="verifier",
-            payload={"verifier": factcheck_result.stage},
+    if rule_verification_enabled:
+        flow_events.append(
+            _event(
+                stage="verification",
+                status="started",
+                source_count=factcheck_result.evidence_count,
+                note="Verifier started evidence consistency checks.",
+                component="verifier",
+                payload={"verifier": factcheck_result.stage},
+            )
         )
-    )
-    flow_events.append(
-        _event(
-            stage="verification",
-            status=factcheck_result.verdict,
-            source_count=factcheck_result.evidence_count,
-            note=factcheck_result.note,
-            component="verifier",
-            payload={
-                "confidence": factcheck_result.confidence,
-                "severity": factcheck_result.severity,
-                "supported_claims": factcheck_result.supported_claims,
-                "total_claims": factcheck_result.total_claims,
-            },
+        flow_events.append(
+            _event(
+                stage="verification",
+                status=factcheck_result.verdict,
+                source_count=factcheck_result.evidence_count,
+                note=factcheck_result.note,
+                component="verifier",
+                payload={
+                    "confidence": factcheck_result.confidence,
+                    "severity": factcheck_result.severity,
+                    "supported_claims": factcheck_result.supported_claims,
+                    "total_claims": factcheck_result.total_claims,
+                },
+            )
         )
-    )
+    else:
+        flow_events.append(
+            _event(
+                stage="verification",
+                status="skipped",
+                source_count=0,
+                note="Rule verification disabled by flow flag.",
+                component="verifier",
+                payload={"verifier": "disabled"},
+            )
+        )
     contradiction_stage_status = (
         "warning" if bool(contradiction_summary.get("has_contradiction")) else "completed"
     )
@@ -4008,6 +4143,22 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     telemetry = {
         "trace_id": trace_id,
         "run_id": run_id,
+        "flow_flags": {
+            "verification_enabled": legacy_verification_enabled,
+            "rule_verification_enabled": rule_verification_enabled,
+            "nli_model_enabled": nli_model_enabled,
+            "rag_nli_enabled": rag_nli_enabled_runtime,
+            "rag_reranker_enabled": (
+                settings.rag_reranker_enabled
+                if rag_reranker_enabled_override is None
+                else rag_reranker_enabled_override
+            ),
+            "rag_graphrag_enabled": (
+                settings.rag_graphrag_enabled
+                if rag_graphrag_enabled_override is None
+                else rag_graphrag_enabled_override
+            ),
+        },
         "keywords": planner_hints.get("keywords", []),
         "query_plan": query_plan,
         "search_plan": {
@@ -4087,6 +4238,22 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "source_mode": source_mode,
             "research_mode": research_mode,
             "deep_pass_count": len(deep_pass_summaries),
+            "flow_flags": {
+                "verification_enabled": legacy_verification_enabled,
+                "rule_verification_enabled": rule_verification_enabled,
+                "nli_model_enabled": nli_model_enabled,
+                "rag_nli_enabled": rag_nli_enabled_runtime,
+                "rag_reranker_enabled": (
+                    settings.rag_reranker_enabled
+                    if rag_reranker_enabled_override is None
+                    else rag_reranker_enabled_override
+                ),
+                "rag_graphrag_enabled": (
+                    settings.rag_graphrag_enabled
+                    if rag_graphrag_enabled_override is None
+                    else rag_graphrag_enabled_override
+                ),
+            },
             "source_attempts": source_attempts,
             "source_errors": aggregated_errors,
             "degraded_path": degraded_path,

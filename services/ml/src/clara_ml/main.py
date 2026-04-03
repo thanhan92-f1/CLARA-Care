@@ -111,6 +111,22 @@ def _as_bool(value: object, default: bool) -> bool:
     return default
 
 
+def _as_optional_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return None
+
+
 def _as_threshold(value: object, default: float) -> float:
     if isinstance(value, (int, float)):
         parsed = float(value)
@@ -469,12 +485,39 @@ def routed_chat_infer(payload: dict) -> dict:
     rag_flow = rag_flow_payload if isinstance(rag_flow_payload, dict) else {}
     role_router_enabled = _as_bool(rag_flow.get("role_router_enabled"), True)
     intent_router_enabled = _as_bool(rag_flow.get("intent_router_enabled"), True)
-    verification_enabled = _as_bool(rag_flow.get("verification_enabled"), True)
+    legacy_verification_enabled = _as_bool(
+        rag_flow.get("verification_enabled"),
+        bool(settings.rule_verification_enabled),
+    )
+    rule_verification_enabled = (
+        _as_bool(rag_flow.get("rule_verification_enabled"), legacy_verification_enabled)
+        if "rule_verification_enabled" in rag_flow
+        else legacy_verification_enabled
+    )
+    verification_enabled = rule_verification_enabled
     deepseek_fallback_enabled = _as_bool(rag_flow.get("deepseek_fallback_enabled"), True)
     low_context_threshold = _as_threshold(rag_flow.get("low_context_threshold"), 0.15)
     scientific_retrieval_enabled = _as_bool(rag_flow.get("scientific_retrieval_enabled"), False)
     web_retrieval_enabled = _as_bool(rag_flow.get("web_retrieval_enabled"), False)
     file_retrieval_enabled = _as_bool(rag_flow.get("file_retrieval_enabled"), True)
+    nli_model_enabled = _as_bool(rag_flow.get("nli_model_enabled"), True)
+    rag_reranker_enabled_override = _as_optional_bool(rag_flow.get("rag_reranker_enabled"))
+    rag_nli_enabled_override = _as_optional_bool(rag_flow.get("rag_nli_enabled"))
+    rag_graphrag_enabled_override = _as_optional_bool(rag_flow.get("rag_graphrag_enabled"))
+    rag_reranker_enabled = bool(
+        settings.rag_reranker_enabled
+        if rag_reranker_enabled_override is None
+        else rag_reranker_enabled_override
+    )
+    rag_nli_enabled = bool(
+        settings.rag_nli_enabled if rag_nli_enabled_override is None else rag_nli_enabled_override
+    )
+    rag_nli_enabled = bool(nli_model_enabled and rag_nli_enabled)
+    rag_graphrag_enabled = bool(
+        settings.rag_graphrag_enabled
+        if rag_graphrag_enabled_override is None
+        else rag_graphrag_enabled_override
+    )
     rag_sources = _as_list(
         rag_flow.get("rag_sources") if "rag_sources" in rag_flow else payload.get("rag_sources")
     )
@@ -510,11 +553,17 @@ def routed_chat_infer(payload: dict) -> dict:
                 "flow_applied": {
                     "role_router_enabled": role_router_enabled,
                     "intent_router_enabled": intent_router_enabled,
+                    "verification_enabled": verification_enabled,
+                    "rule_verification_enabled": rule_verification_enabled,
                     "deepseek_fallback_enabled": deepseek_fallback_enabled,
                     "low_context_threshold": low_context_threshold,
                     "scientific_retrieval_enabled": scientific_retrieval_enabled,
                     "web_retrieval_enabled": web_retrieval_enabled,
                     "file_retrieval_enabled": file_retrieval_enabled,
+                    "nli_model_enabled": nli_model_enabled,
+                    "rag_reranker_enabled": rag_reranker_enabled,
+                    "rag_nli_enabled": rag_nli_enabled,
+                    "rag_graphrag_enabled": rag_graphrag_enabled,
                 },
             },
             default_action="escalate",
@@ -566,11 +615,16 @@ def routed_chat_infer(payload: dict) -> dict:
                     "role_router_enabled": role_router_enabled,
                     "intent_router_enabled": intent_router_enabled,
                     "verification_enabled": verification_enabled,
+                    "rule_verification_enabled": rule_verification_enabled,
                     "deepseek_fallback_enabled": deepseek_fallback_enabled,
                     "low_context_threshold": low_context_threshold,
                     "scientific_retrieval_enabled": False,
                     "web_retrieval_enabled": False,
                     "file_retrieval_enabled": False,
+                    "nli_model_enabled": nli_model_enabled,
+                    "rag_reranker_enabled": rag_reranker_enabled,
+                    "rag_nli_enabled": rag_nli_enabled,
+                    "rag_graphrag_enabled": rag_graphrag_enabled,
                     "rag_sources_count": len(rag_sources),
                     "uploaded_documents_count": len(uploaded_documents),
                     "retrieval_profile": "smalltalk_fastpath",
@@ -608,6 +662,8 @@ def routed_chat_infer(payload: dict) -> dict:
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
             strict_deepseek_required=settings.deepseek_required,
+            rag_reranker_enabled=rag_reranker_enabled_override,
+            rag_graphrag_enabled=rag_graphrag_enabled_override,
         )
     except Exception as exc:
         if settings.deepseek_required or not deepseek_fallback_enabled:
@@ -627,12 +683,24 @@ def routed_chat_infer(payload: dict) -> dict:
             rag_sources=rag_sources,
             uploaded_documents=uploaded_documents,
             strict_deepseek_required=False,
+            rag_reranker_enabled=rag_reranker_enabled_override,
+            rag_graphrag_enabled=rag_graphrag_enabled_override,
         )
-    factcheck = (
-        run_fides_lite(answer=rag_result.answer, retrieved_context=rag_result.retrieved_context)
-        if verification_enabled
-        else None
-    )
+    factcheck = None
+    if rule_verification_enabled:
+        try:
+            factcheck = run_fides_lite(
+                answer=rag_result.answer,
+                retrieved_context=rag_result.retrieved_context,
+                nli_enabled=rag_nli_enabled,
+            )
+        except TypeError as type_exc:
+            if "unexpected keyword argument" not in str(type_exc):
+                raise
+            factcheck = run_fides_lite(
+                answer=rag_result.answer,
+                retrieved_context=rag_result.retrieved_context,
+            )
     answer = rag_result.answer
     if factcheck and factcheck.severity == "high":
         answer = (
@@ -670,7 +738,7 @@ def routed_chat_infer(payload: dict) -> dict:
                 ),
             )
         )
-    if verification_enabled:
+    if rule_verification_enabled:
         if factcheck is not None:
             flow_events.append(
                 _flow_event(
@@ -712,11 +780,16 @@ def routed_chat_infer(payload: dict) -> dict:
                 "role_router_enabled": role_router_enabled,
                 "intent_router_enabled": intent_router_enabled,
                 "verification_enabled": verification_enabled,
+                "rule_verification_enabled": rule_verification_enabled,
                 "deepseek_fallback_enabled": deepseek_fallback_enabled,
                 "low_context_threshold": low_context_threshold,
                 "scientific_retrieval_enabled": adjusted_scientific_retrieval_enabled,
                 "web_retrieval_enabled": adjusted_web_retrieval_enabled,
                 "file_retrieval_enabled": adjusted_file_retrieval_enabled,
+                "nli_model_enabled": nli_model_enabled,
+                "rag_reranker_enabled": rag_reranker_enabled,
+                "rag_nli_enabled": rag_nli_enabled,
+                "rag_graphrag_enabled": rag_graphrag_enabled,
                 "rag_sources_count": len(rag_sources),
                 "uploaded_documents_count": len(uploaded_documents),
                 "retrieval_profile": retrieval_profile,
