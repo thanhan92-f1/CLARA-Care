@@ -117,19 +117,19 @@ function getGreeting(now: Date): { title: string; subtitle: string } {
   const hour = now.getHours();
   if (hour < 12) {
     return {
-      title: "Good morning",
-      subtitle: "Bắt đầu ngày mới bằng checklist an toàn thuốc và readiness của hệ thống."
+      title: "Chào buổi sáng",
+      subtitle: "Bắt đầu nhẹ nhàng với checklist thuốc và tình trạng hệ thống."
     };
   }
   if (hour < 18) {
     return {
-      title: "Good afternoon",
-      subtitle: "Theo dõi telemetry realtime để giữ điều trị ổn định suốt ngày."
+      title: "Chào buổi chiều",
+      subtitle: "Theo dõi nhanh các chỉ số chính để giữ trải nghiệm ổn định."
     };
   }
   return {
-    title: "Good evening",
-    subtitle: "Tổng kết operational snapshot và ưu tiên action cho ngày mai."
+    title: "Chào buổi tối",
+    subtitle: "Tổng kết trong ngày và chuẩn bị các việc ưu tiên cho ngày mai."
   };
 }
 
@@ -560,20 +560,20 @@ export default function DashboardPage() {
   ];
 
   const kpis = [
-    { label: "Reliability", value: `${Math.round(reliability)}%`, detail: "Composite operational score" },
-    { label: "Throughput", value: formatCount(trendThroughput), detail: "Request delta/snapshot" },
-    { label: "Error rate", value: formatPercent(errorRate), detail: `${formatCount(errorSafe)} lỗi` },
-    { label: "Latency", value: `${latencySafe} ms`, detail: "Avg response" },
-    { label: "RAG coverage", value: `${enabledSources}/${totalSources}`, detail: formatPercent(sourceCoverage) },
-    { label: "Flow gates", value: `${flowEnabledCount}/11`, detail: `Threshold ${Math.round(lowContextThreshold * 100)}%` },
-    { label: "DDI risk", value: ddiRiskLabel, detail: `${formatCount(cabinetCount)} thuốc` },
-    { label: "Pending", value: formatCount(pendingActions), detail: "Action queue" }
+    { label: "Độ ổn định", value: `${Math.round(reliability)}%`, detail: "Điểm tổng hợp vận hành" },
+    { label: "Lưu lượng", value: formatCount(trendThroughput), detail: "Biến động request gần nhất" },
+    { label: "Tỷ lệ lỗi", value: formatPercent(errorRate), detail: `${formatCount(errorSafe)} lỗi` },
+    { label: "Độ trễ", value: `${latencySafe} ms`, detail: "Trung bình phản hồi" },
+    { label: "Độ phủ RAG", value: `${enabledSources}/${totalSources}`, detail: formatPercent(sourceCoverage) },
+    { label: "Flow bật", value: `${flowEnabledCount}/11`, detail: `Ngưỡng ${Math.round(lowContextThreshold * 100)}%` },
+    { label: "Rủi ro DDI", value: ddiRiskLabel, detail: `${formatCount(cabinetCount)} thuốc` },
+    { label: "Việc chờ", value: formatCount(pendingActions), detail: "Danh sách ưu tiên" }
   ];
 
   return (
     <PageShell
       title="Dashboard"
-      description="Futuristic command center cho CLARA: theo dõi telemetry, rủi ro thuốc, flow integrity và action ưu tiên trong một màn hình."
+      description="Trang tổng quan thân thiện của CLARA: theo dõi nhanh sức khỏe hệ thống, tủ thuốc và các việc cần làm."
       variant="plain"
     >
       <div className="space-y-4 sm:space-y-5">
@@ -583,7 +583,7 @@ export default function DashboardPage() {
 
           <div className="relative flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-3xl space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--text-muted)]">Neural Mission Console</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Tổng Quan Hôm Nay</p>
               <h2 className="text-2xl font-semibold text-[var(--text-primary)] sm:text-3xl">
                 {greeting.title}, {displayName}
               </h2>
@@ -610,10 +610,10 @@ export default function DashboardPage() {
 
           <div className="mt-4 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Vai trò: {roleLabel}</span>
-            <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Reliability: {Math.round(reliability)}%</span>
-            <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">DDI risk: {ddiRiskLabel}</span>
+            <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Độ ổn định: {Math.round(reliability)}%</span>
+            <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">Rủi ro DDI: {ddiRiskLabel}</span>
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">
-              Pending actions: {formatCount(pendingActions)}
+              Việc cần làm: {formatCount(pendingActions)}
             </span>
             <span className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3">
               {checkedAt ? `Cập nhật: ${checkedAt}` : "Đang đồng bộ dữ liệu..."}
@@ -638,41 +638,41 @@ export default function DashboardPage() {
 
         <section className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
           <NeonAreaChart
-            title="Live Telemetry (Requests / Errors / Latency / Cabinet)"
+            title="Theo Dõi Trực Tiếp (Request / Lỗi / Độ trễ / Tủ thuốc)"
             labels={graphLabels}
             series={[
               { id: "req", label: "Requests", color: "#22d3ee", values: requestsSeries.length > 0 ? requestsSeries : [requestSafe] },
-              { id: "err", label: "Errors", color: "#f43f5e", values: errorsSeries.length > 0 ? errorsSeries : [errorSafe] },
-              { id: "lat", label: "Latency", color: "#f59e0b", values: latencySeries.length > 0 ? latencySeries : [latencySafe] },
-              { id: "cab", label: "Cabinet", color: "#14b8a6", values: cabinetSeries.length > 0 ? cabinetSeries : [Math.max(0, cabinetCount ?? 0)] }
+              { id: "err", label: "Lỗi", color: "#f43f5e", values: errorsSeries.length > 0 ? errorsSeries : [errorSafe] },
+              { id: "lat", label: "Độ trễ", color: "#f59e0b", values: latencySeries.length > 0 ? latencySeries : [latencySafe] },
+              { id: "cab", label: "Tủ thuốc", color: "#14b8a6", values: cabinetSeries.length > 0 ? cabinetSeries : [Math.max(0, cabinetCount ?? 0)] }
             ]}
             className="min-h-[22rem]"
           />
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
             <SegmentRingGauge
-              label="Reliability Core"
+              label="Độ ổn định"
               value={Math.round(reliability)}
               max={100}
-              subLabel="API + ML + Error + Latency"
+              subLabel="Tổng hợp API + ML + lỗi + độ trễ"
               color="#38bdf8"
             />
             <SegmentRingGauge
-              label="RAG Coverage"
+              label="Độ phủ RAG"
               value={Math.round(sourceCoverage)}
               max={100}
-              subLabel={`${enabledSources}/${totalSources} sources enabled`}
+              subLabel={`${enabledSources}/${totalSources} nguồn đang bật`}
               color="#14b8a6"
             />
           </div>
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1fr_1fr_1.1fr]">
-          <RadarPulseChart title="System Radar" axes={radarAxes} />
-          <MatrixHeatmapMini title="Operational Matrix" rows={matrixRows} columns={matrixColumns} values={matrixValues} />
+          <RadarPulseChart title="Radar Hệ Thống" axes={radarAxes} />
+          <MatrixHeatmapMini title="Ma Trận Vận Hành" rows={matrixRows} columns={matrixColumns} values={matrixValues} />
           <div className="space-y-4">
-            <TelemetryBars title="Budget Tracking" items={telemetryBars} />
-            <ConduitFlowLine title="Flow Conduit" stages={flowStages} />
+            <TelemetryBars title="Chỉ Số Chính" items={telemetryBars} />
+            <ConduitFlowLine title="Luồng Xử Lý" stages={flowStages} />
           </div>
         </section>
 
@@ -680,7 +680,7 @@ export default function DashboardPage() {
           <article className="rounded-[1.5rem] border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4 shadow-soft sm:p-5">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Quick Actions</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Thao Tác Nhanh</p>
                 <h3 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">Bắt đầu nhanh</h3>
               </div>
               <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-1 text-xs text-[var(--text-secondary)]">
@@ -700,7 +700,7 @@ export default function DashboardPage() {
                   </span>
                   <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{action.label}</p>
                   <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">{action.detail}</p>
-                  <p className="mt-2 text-xs font-semibold text-[var(--text-brand)] transition group-hover:translate-x-0.5">Mở công cụ</p>
+                  <p className="mt-2 text-xs font-semibold text-[var(--text-brand)] transition group-hover:translate-x-0.5">Bắt đầu</p>
                 </Link>
               ))}
             </div>
@@ -709,7 +709,7 @@ export default function DashboardPage() {
           <article className="rounded-[1.5rem] border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-4 shadow-soft sm:p-5">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Pending Tasks</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Việc Cần Làm</p>
                 <h3 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">Việc cần xử lý hôm nay</h3>
               </div>
               <span className="rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-1 text-xs text-[var(--text-secondary)]">

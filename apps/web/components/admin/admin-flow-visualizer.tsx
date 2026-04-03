@@ -1057,16 +1057,14 @@ export default function AdminFlowVisualizer({
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">
-            CLARA Research Flow Visualizer
+            Bản Đồ Luồng CLARA
           </p>
           <h3 className="mt-2 text-lg font-semibold tracking-tight text-slate-950 dark:text-slate-100">
-            Runtime Canvas: Deep + Deep Beta
+            Luồng xử lý nghiên cứu
           </h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-            Canvas mới mô tả pipeline deep research nâng cấp: safety/legal ingress, query canonicalization,
-            deep_beta critic loop, retrieval orchestration, contradiction mining, verification, API pass-through
-            contract, UI telemetry matrix, baseline compare gate (Day7) và reranker cache gate (Day8)
-            trước khi vào feedback loop, active-eval artifact loop (Day9) và phase1-ready gate (Day10).
+            Mô tả trực quan toàn bộ pipeline nghiên cứu, từ kiểm tra an toàn đầu vào đến truy xuất, kiểm chứng,
+            phản hồi và vòng lặp đánh giá chất lượng. Thiết kế ưu tiên dễ đọc để team vận hành theo dõi nhanh.
           </p>
         </div>
 
@@ -1092,10 +1090,10 @@ export default function AdminFlowVisualizer({
       <div className="relative mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200/60 bg-white/70 px-4 py-3 shadow-[0_10px_30px_rgba(8,145,178,0.14)] backdrop-blur-xl dark:border-cyan-500/30 dark:bg-slate-900/58 dark:shadow-[0_16px_38px_rgba(2,6,23,0.72)]">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
-            Export
+            Tải ảnh
           </p>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            Xuất trực tiếp flow hiện tại thành ảnh JPG độ phân giải cao để đưa vào proposal hoặc slide pitching.
+            Xuất sơ đồ hiện tại thành ảnh JPG độ phân giải cao để chia sẻ nội bộ hoặc đưa vào slide.
           </p>
         </div>
         <button
@@ -1110,7 +1108,7 @@ export default function AdminFlowVisualizer({
               : "border-cyan-300 bg-cyan-100/95 text-cyan-800 hover:bg-cyan-200 dark:border-cyan-500/50 dark:bg-cyan-950/50 dark:text-cyan-200 dark:hover:bg-cyan-900/70",
           )}
         >
-          {isExporting ? "Đang xuất JPG 3x..." : "Xuất JPG High-Res"}
+          {isExporting ? "Đang xuất JPG 3x..." : "Xuất ảnh JPG chất lượng cao"}
         </button>
       </div>
 

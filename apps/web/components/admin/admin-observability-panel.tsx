@@ -416,8 +416,8 @@ export default function AdminObservabilityPanel() {
     if (rows.length === 0) {
       rows.push({
         level: "info",
-        title: "Runtime stable",
-        detail: "No abnormal signals detected in current sampling window.",
+        title: "Hệ thống ổn định",
+        detail: "Chưa phát hiện tín hiệu bất thường trong khoảng theo dõi hiện tại.",
         source: "system"
       });
     }
@@ -456,10 +456,10 @@ export default function AdminObservabilityPanel() {
       <section className="futura-panel rounded-[1.75rem] p-4">
         <div className="relative z-[1] flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Admin Command Center</p>
-            <h3 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">Futuristic Observability Grid</h3>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Theo Dõi Hệ Thống</p>
+            <h3 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">Bảng quan sát thân thiện</h3>
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              Giám sát tập trung runtime, flow-gates, coverage và risk pressure trong một surface duy nhất.
+              Một màn hình duy nhất để theo dõi trạng thái, cảnh báo và chất lượng trả lời.
             </p>
           </div>
 
@@ -471,14 +471,14 @@ export default function AdminObservabilityPanel() {
                 checked={autoRefresh}
                 onChange={(event) => setAutoRefresh(event.target.checked)}
               />
-              Auto 15s
+              Tự động 15s
             </label>
             <button
               type="button"
               onClick={() => void load()}
               className="rounded-lg border border-cyan-400/60 bg-cyan-100/80 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-200 dark:border-cyan-500/45 dark:bg-cyan-950/45 dark:text-cyan-200 dark:hover:bg-cyan-900/65"
             >
-              Refresh
+              Làm mới
             </button>
           </div>
         </div>
@@ -492,54 +492,54 @@ export default function AdminObservabilityPanel() {
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">API Health</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Sức khỏe API</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.apiStatus}</p>
-          <p className="text-xs text-[var(--text-secondary)]">{state.apiMessage || "No details"}</p>
+          <p className="text-xs text-[var(--text-secondary)]">{state.apiMessage || "Chưa có chi tiết"}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">ML Runtime</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.mlReachable === false ? "offline" : "online"}</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Trạng thái ML</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.mlReachable === false ? "mất kết nối" : "đang hoạt động"}</p>
           <p className="text-xs text-[var(--text-secondary)]">{state.mlStatus}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Requests / Errors</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Request / Lỗi</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">
             {formatCount(state.requestCount)} <span className="text-sm text-rose-400">/ {formatCount(state.errorCount)}</span>
           </p>
-          <p className="text-xs text-[var(--text-secondary)]">Error rate {formatPercent(errorRate)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Tỷ lệ lỗi {formatPercent(errorRate)}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Latency</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Độ trễ</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{latencyMs}ms</p>
-          <p className="text-xs text-[var(--text-secondary)]">Source coverage {formatPercent(sourceCoverage)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Độ phủ nguồn {formatPercent(sourceCoverage)}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Runtime Stability</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Độ ổn định</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{Math.round(runtimeStability)}</p>
-          <p className="text-xs text-[var(--text-secondary)]">Derived from errors + latency + dependency</p>
+          <p className="text-xs text-[var(--text-secondary)]">Tính từ lỗi + độ trễ + phụ thuộc</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Verification Strength</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Mức kiểm chứng</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{Math.round(verificationStrength)}</p>
-          <p className="text-xs text-[var(--text-secondary)]">Low-context threshold {Math.round(state.lowContextThreshold * 100)}%</p>
+          <p className="text-xs text-[var(--text-secondary)]">Ngưỡng low-context {Math.round(state.lowContextThreshold * 100)}%</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Flow Enabled</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Flow đang bật</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.flowEnabledCount}/{TOTAL_FLOW_FLAGS}</p>
-          <p className="text-xs text-[var(--text-secondary)]">Flow health {Math.round(flowHealth)}</p>
+          <p className="text-xs text-[var(--text-secondary)]">Sức khỏe flow {Math.round(flowHealth)}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">
-          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Success</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Thành công</p>
           <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{success}</p>
-          <p className="text-xs text-[var(--text-secondary)]">Successful request count</p>
+          <p className="text-xs text-[var(--text-secondary)]">Số request xử lý thành công</p>
         </article>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
         <article className="futura-card rounded-2xl p-4">
           <NeonAreaChart
-            title="Traffic Pressure"
-            description="Requests vs errors across latest sampling window"
+            title="Áp lực lưu lượng"
+            description="Request và lỗi trong khung thời gian theo dõi gần nhất"
             labels={axisLabels}
             series={trafficSeries}
             height={240}
@@ -547,8 +547,8 @@ export default function AdminObservabilityPanel() {
         </article>
         <article className="futura-card rounded-2xl p-4">
           <NeonAreaChart
-            title="Performance Envelope"
-            description="Latency vs source coverage trajectory"
+            title="Hiệu năng tổng quan"
+            description="Độ trễ và độ phủ nguồn theo thời gian"
             labels={axisLabels}
             series={performanceSeries}
             height={240}
@@ -559,32 +559,32 @@ export default function AdminObservabilityPanel() {
       <section className="grid gap-4 lg:grid-cols-3">
         <article className="futura-card rounded-2xl p-4">
           <div className="grid grid-cols-2 gap-3">
-            <SegmentRingGauge label="Stability" value={Math.round(runtimeStability)} tone="cyan" />
-            <SegmentRingGauge label="Verification" value={Math.round(verificationStrength)} tone="emerald" />
-            <SegmentRingGauge label="Coverage" value={Math.round(sourceCoverage)} tone="violet" />
+            <SegmentRingGauge label="Ổn định" value={Math.round(runtimeStability)} tone="cyan" />
+            <SegmentRingGauge label="Kiểm chứng" value={Math.round(verificationStrength)} tone="emerald" />
+            <SegmentRingGauge label="Độ phủ" value={Math.round(sourceCoverage)} tone="violet" />
             <SegmentRingGauge label="Flow" value={Math.round(flowHealth)} tone="amber" />
           </div>
         </article>
 
         <article className="futura-card rounded-2xl p-4">
           <RadarPulseChart
-            title="Control Radar"
-            description="Runtime resilience across 5 reliability dimensions"
+            title="Radar điều khiển"
+            description="Khả năng ổn định theo 5 chiều quan trọng"
             axes={radarAxes}
             size={260}
           />
         </article>
 
         <article className="futura-card rounded-2xl p-4">
-          <TelemetryBars title="Signal Stack" description="Realtime health score per subsystem" items={signalItems} />
+          <TelemetryBars title="Cụm tín hiệu" description="Điểm sức khỏe thời gian thực theo từng cụm" items={signalItems} />
         </article>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr_1fr]">
         <article className="futura-card rounded-2xl p-4">
           <ConduitFlowLine
-            title="Inference Pipeline"
-            description="Gateway -> routing -> verification -> ML service"
+            title="Luồng xử lý"
+            description="Gateway -> định tuyến -> kiểm chứng -> ML"
             stages={pipelineStages}
           />
 
@@ -601,7 +601,7 @@ export default function AdminObservabilityPanel() {
                         : "border-amber-300/80 bg-amber-100/90 text-amber-800 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-200"
                     ].join(" ")}
                   >
-                    {row.enabled ? "ON" : "OFF"}
+                    {row.enabled ? "BẬT" : "TẮT"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{row.detail}</p>
@@ -612,19 +612,19 @@ export default function AdminObservabilityPanel() {
 
         <article className="futura-card rounded-2xl p-4">
           <MatrixHeatmapMini
-            title="Risk Pressure Matrix"
-            description="Error, latency, coverage và flow risk intensity"
-            rows={["Errors", "Latency", "Coverage", "Flow"]}
-            columns={["Low", "Medium", "High", "Critical"]}
+            title="Ma trận áp lực rủi ro"
+            description="Cường độ rủi ro theo lỗi, độ trễ, độ phủ và flow"
+            rows={["Lỗi", "Độ trễ", "Độ phủ", "Flow"]}
+            columns={["Thấp", "Vừa", "Cao", "Nghiêm trọng"]}
             values={riskMatrix}
-            minLabel="Lower pressure"
-            maxLabel="Higher pressure"
+            minLabel="Áp lực thấp"
+            maxLabel="Áp lực cao"
           />
         </article>
 
         <article className="futura-card rounded-2xl p-4">
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Alert Triage</h3>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">Ưu tiên xử lý theo severity và nguồn phát sinh.</p>
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Cảnh báo cần xử lý</h3>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Ưu tiên theo mức độ ảnh hưởng và nguồn phát sinh.</p>
 
           <div className="mt-3 space-y-2">
             {alerts.map((alert, index) => {
