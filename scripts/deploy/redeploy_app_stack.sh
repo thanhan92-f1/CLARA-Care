@@ -5,6 +5,8 @@ ROOT_DIR="${1:-/opt/clara-care}"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env}"
 REQUIRE_DEEPSEEK="${REQUIRE_DEEPSEEK:-true}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
+SKIP_ENV_GUARD="${SKIP_ENV_GUARD:-false}"
+ENV_GUARD_SCRIPT="${ENV_GUARD_SCRIPT:-${ROOT_DIR}/scripts/ops/validate_runtime_env.sh}"
 
 if [[ ! -d "${ROOT_DIR}" ]]; then
   echo "[deploy] root dir not found: ${ROOT_DIR}" >&2
@@ -14,6 +16,14 @@ fi
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "[deploy] env file not found: ${ENV_FILE}" >&2
   exit 1
+fi
+
+if [[ "${SKIP_ENV_GUARD}" != "true" ]]; then
+  if [[ -x "${ENV_GUARD_SCRIPT}" ]]; then
+    REQUIRE_DEEPSEEK="${REQUIRE_DEEPSEEK}" "${ENV_GUARD_SCRIPT}" "${ENV_FILE}"
+  else
+    echo "[deploy] warn: env guard script not found or not executable: ${ENV_GUARD_SCRIPT}" >&2
+  fi
 fi
 
 COMPOSE=(
