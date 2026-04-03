@@ -30,9 +30,21 @@ const FLOW_FLAGS: Array<{ key: FlowFlagKey; label: string; hint: string; group: 
     group: "routing"
   },
   {
-    key: "verification_enabled",
-    label: "FIDES Verification",
-    hint: "Bật lớp kiểm chứng trước khi phát hành câu trả lời.",
+    key: "rule_verification_enabled",
+    label: "Rule Verification",
+    hint: "Bật lớp kiểm chứng theo policy/rule trước khi phát hành câu trả lời.",
+    group: "verification"
+  },
+  {
+    key: "nli_model_enabled",
+    label: "NLI Model",
+    hint: "Bật mô hình NLI phục vụ chấm quan hệ claim-evidence.",
+    group: "verification"
+  },
+  {
+    key: "rag_nli_enabled",
+    label: "RAG NLI",
+    hint: "Bật bước NLI trong pipeline RAG để verify claim-level.",
     group: "verification"
   },
   {
@@ -57,6 +69,18 @@ const FLOW_FLAGS: Array<{ key: FlowFlagKey; label: string; hint: string; group: 
     key: "file_retrieval_enabled",
     label: "File Retrieval",
     hint: "Sử dụng nội dung file người dùng upload trong bước retrieval.",
+    group: "retrieval"
+  },
+  {
+    key: "rag_reranker_enabled",
+    label: "Neural Reranker",
+    hint: "Bật reranker neural để ưu tiên bằng chứng chất lượng cao.",
+    group: "retrieval"
+  },
+  {
+    key: "rag_graphrag_enabled",
+    label: "GraphRAG",
+    hint: "Bật nhánh GraphRAG cho truy xuất theo quan hệ/đồ thị tri thức.",
     group: "retrieval"
   }
 ];
@@ -102,10 +126,19 @@ function normalizeFlow(flow?: Partial<ControlTowerConfig["rag_flow"]> | null): C
     typeof ndcgRaw === "number" && Number.isFinite(ndcgRaw) ? ndcgRaw : DEFAULT_RETRIEVAL_METRIC_K
   );
 
+  const ruleVerificationEnabled = flow?.rule_verification_enabled ?? flow?.verification_enabled ?? true;
+  const nliModelEnabled = flow?.nli_model_enabled ?? ruleVerificationEnabled;
+  const ragNliEnabled = flow?.rag_nli_enabled ?? nliModelEnabled;
+
   return {
     role_router_enabled: flow?.role_router_enabled ?? true,
     intent_router_enabled: flow?.intent_router_enabled ?? true,
-    verification_enabled: flow?.verification_enabled ?? true,
+    rule_verification_enabled: ruleVerificationEnabled,
+    nli_model_enabled: nliModelEnabled,
+    rag_reranker_enabled: flow?.rag_reranker_enabled ?? true,
+    rag_nli_enabled: ragNliEnabled,
+    rag_graphrag_enabled: flow?.rag_graphrag_enabled ?? false,
+    verification_enabled: flow?.verification_enabled ?? ruleVerificationEnabled,
     deepseek_fallback_enabled: flow?.deepseek_fallback_enabled ?? true,
     low_context_threshold: clamp(Number(flow?.low_context_threshold ?? 0.2), 0, 1),
     precision_at_k: clamp(precisionAtK, RETRIEVAL_METRIC_K_MIN, RETRIEVAL_METRIC_K_MAX),

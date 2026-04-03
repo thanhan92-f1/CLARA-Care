@@ -209,7 +209,11 @@ export default function DashboardPage() {
   const [flowFlags, setFlowFlags] = useState({
     roleRouter: false,
     intentRouter: false,
-    verificationGate: false,
+    ruleVerification: false,
+    nliModel: false,
+    ragNli: false,
+    ragReranker: false,
+    ragGraphRag: false,
     deepseekFallback: false,
     scientificRetrieval: false,
     webRetrieval: false,
@@ -382,7 +386,11 @@ export default function DashboardPage() {
         const flow = {
           roleRouter: Boolean(config.rag_flow.role_router_enabled),
           intentRouter: Boolean(config.rag_flow.intent_router_enabled),
-          verificationGate: Boolean(config.rag_flow.verification_enabled),
+          ruleVerification: Boolean(config.rag_flow.rule_verification_enabled ?? config.rag_flow.verification_enabled),
+          nliModel: Boolean(config.rag_flow.nli_model_enabled),
+          ragNli: Boolean(config.rag_flow.rag_nli_enabled),
+          ragReranker: Boolean(config.rag_flow.rag_reranker_enabled),
+          ragGraphRag: Boolean(config.rag_flow.rag_graphrag_enabled),
           deepseekFallback: Boolean(config.rag_flow.deepseek_fallback_enabled),
           scientificRetrieval: Boolean(config.rag_flow.scientific_retrieval_enabled),
           webRetrieval: Boolean(config.rag_flow.web_retrieval_enabled),
@@ -473,6 +481,7 @@ export default function DashboardPage() {
     errorRate,
     latencyMs: latencySafe
   });
+  const verificationStackEnabled = flowFlags.ruleVerification && flowFlags.nliModel && flowFlags.ragNli;
 
   const trendThroughput = timeline.length > 1
     ? Math.round((timeline[timeline.length - 1].requests - timeline[0].requests) / (timeline.length - 1))
@@ -490,7 +499,7 @@ export default function DashboardPage() {
     { label: "ML", value: mlTone === "ok" ? 88 : mlTone === "warn" ? 52 : 24 },
     { label: "DDI", value: (cabinetCount ?? 0) > 1 ? 82 : 46 },
     { label: "RAG", value: Math.round(sourceCoverage) },
-    { label: "Verify", value: flowFlags.verificationGate ? 92 : 30 },
+    { label: "Verify", value: verificationStackEnabled ? 92 : 30 },
     { label: "Latency", value: latencySafe < 800 ? 84 : latencySafe < 1200 ? 56 : 28 },
     { label: "Error", value: errorRate < 5 ? 86 : errorRate < 10 ? 52 : 22 }
   ];
@@ -498,10 +507,16 @@ export default function DashboardPage() {
   const matrixRows = ["Safety", "Operations", "Knowledge", "Flow", "Delivery"];
   const matrixColumns = ["Stability", "Latency", "Errors", "Coverage", "Confidence"];
   const matrixValues = [
-    [reliability, latencySafe < 850 ? 82 : 48, errorRate < 6 ? 83 : 34, Math.round(sourceCoverage), flowFlags.verificationGate ? 92 : 40],
+    [reliability, latencySafe < 850 ? 82 : 48, errorRate < 6 ? 83 : 34, Math.round(sourceCoverage), verificationStackEnabled ? 92 : 40],
     [healthTone === "ok" ? 90 : 45, latencySafe < 900 ? 80 : 44, errorRate < 8 ? 78 : 38, 74, reliability],
     [flowFlags.scientificRetrieval ? 88 : 42, 72, errorRate < 10 ? 74 : 36, Math.round(sourceCoverage), flowFlags.fileRetrieval ? 84 : 38],
-    [flowEnabledCount * 14, latencySafe < 850 ? 78 : 46, errorRate < 9 ? 72 : 34, flowEnabledCount * 12, flowFlags.intentRouter ? 86 : 40],
+    [
+      Math.round((flowEnabledCount / 11) * 100),
+      latencySafe < 850 ? 78 : 46,
+      errorRate < 9 ? 72 : 34,
+      Math.round((flowEnabledCount / 11) * 92),
+      flowFlags.intentRouter ? 86 : 40
+    ],
     [reliability, latencySafe < 800 ? 84 : 44, errorRate < 7 ? 80 : 36, 70, reliabilitySeries.length > 0 ? reliabilitySeries[reliabilitySeries.length - 1] : reliability]
   ];
 
@@ -514,10 +529,10 @@ export default function DashboardPage() {
 
   const flowStages = [
     { label: "Ingress", status: healthTone === "error" ? "error" as const : healthTone === "warn" ? "warn" as const : "ok" as const, detail: healthStatus },
-    { label: "Route", status: flowFlags.roleRouter && flowFlags.intentRouter ? "ok" as const : "warn" as const, detail: `${flowEnabledCount}/7` },
+    { label: "Route", status: flowFlags.roleRouter && flowFlags.intentRouter ? "ok" as const : "warn" as const, detail: `${flowEnabledCount}/11` },
     { label: "Retrieve", status: sourceCoverage >= 55 ? "ok" as const : "warn" as const, detail: `${enabledSources}/${totalSources}` },
     { label: "Analyze", status: mlTone === "error" ? "error" as const : mlTone === "warn" ? "warn" as const : "ok" as const, detail: mlStatus },
-    { label: "Verify", status: flowFlags.verificationGate ? "ok" as const : "warn" as const, detail: flowFlags.verificationGate ? "on" : "off" },
+    { label: "Verify", status: verificationStackEnabled ? "ok" as const : "warn" as const, detail: verificationStackEnabled ? "on" : "off" },
     { label: "Deliver", status: reliability >= 70 ? "ok" as const : reliability >= 50 ? "warn" as const : "error" as const, detail: `${Math.round(reliability)}%` }
   ];
 
@@ -550,7 +565,7 @@ export default function DashboardPage() {
     { label: "Error rate", value: formatPercent(errorRate), detail: `${formatCount(errorSafe)} lỗi` },
     { label: "Latency", value: `${latencySafe} ms`, detail: "Avg response" },
     { label: "RAG coverage", value: `${enabledSources}/${totalSources}`, detail: formatPercent(sourceCoverage) },
-    { label: "Flow gates", value: `${flowEnabledCount}/7`, detail: `Threshold ${Math.round(lowContextThreshold * 100)}%` },
+    { label: "Flow gates", value: `${flowEnabledCount}/11`, detail: `Threshold ${Math.round(lowContextThreshold * 100)}%` },
     { label: "DDI risk", value: ddiRiskLabel, detail: `${formatCount(cabinetCount)} thuốc` },
     { label: "Pending", value: formatCount(pendingActions), detail: "Action queue" }
   ];

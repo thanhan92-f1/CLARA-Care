@@ -22,7 +22,11 @@ import {
 type FlowFlags = {
   roleRouter: boolean;
   intentRouter: boolean;
-  verificationGate: boolean;
+  ruleVerification: boolean;
+  nliModel: boolean;
+  ragReranker: boolean;
+  ragNli: boolean;
+  ragGraphRag: boolean;
   deepseekFallback: boolean;
   scientificRetrieval: boolean;
   webRetrieval: boolean;
@@ -81,13 +85,19 @@ const INITIAL_STATE: ObservabilityState = {
   flow: {
     roleRouter: false,
     intentRouter: false,
-    verificationGate: false,
+    ruleVerification: false,
+    nliModel: false,
+    ragReranker: false,
+    ragNli: false,
+    ragGraphRag: false,
     deepseekFallback: false,
     scientificRetrieval: false,
     webRetrieval: false,
     fileRetrieval: false
   }
 };
+
+const TOTAL_FLOW_FLAGS = 11;
 
 function clamp(value: number, min = 0, max = 100): number {
   if (!Number.isFinite(value)) return min;
@@ -126,15 +136,28 @@ function buildRiskMatrix(params: {
     [clamp(28 - errors), clamp(errorRate * 2), clamp(errorRate * 4), clamp(errorRate * 6)],
     [clamp(40 - latencyMs / 20), clamp(latencyMs / 8), clamp(latencyMs / 5), clamp(latencyMs / 2.4)],
     [clamp(sourceCoverage), clamp(100 - sourceCoverage), clamp((100 - sourceCoverage) * 1.3), clamp((100 - sourceCoverage) * 1.7)],
-    [clamp(flowEnabled * 12), clamp((7 - flowEnabled) * 14), clamp((7 - flowEnabled) * 18), clamp((7 - flowEnabled) * 22)]
+    [
+      clamp((flowEnabled / TOTAL_FLOW_FLAGS) * 100),
+      clamp(((TOTAL_FLOW_FLAGS - flowEnabled) / TOTAL_FLOW_FLAGS) * 100),
+      clamp(((TOTAL_FLOW_FLAGS - flowEnabled) / TOTAL_FLOW_FLAGS) * 130),
+      clamp(((TOTAL_FLOW_FLAGS - flowEnabled) / TOTAL_FLOW_FLAGS) * 170)
+    ]
   ];
 }
 
 function computeFlowHealth(flow: FlowFlags): number {
-  const requiredKeys: Array<keyof FlowFlags> = ["roleRouter", "intentRouter", "verificationGate", "scientificRetrieval"];
+  const requiredKeys: Array<keyof FlowFlags> = [
+    "roleRouter",
+    "intentRouter",
+    "ruleVerification",
+    "nliModel",
+    "ragNli",
+    "ragReranker",
+    "scientificRetrieval"
+  ];
   const requiredOn = requiredKeys.filter((key) => flow[key]).length;
-  const optionalOn = [flow.deepseekFallback, flow.webRetrieval, flow.fileRetrieval].filter(Boolean).length;
-  return clamp(requiredOn * 20 + optionalOn * 13);
+  const optionalOn = [flow.deepseekFallback, flow.webRetrieval, flow.fileRetrieval, flow.ragGraphRag].filter(Boolean).length;
+  return clamp(requiredOn * 11 + optionalOn * 6);
 }
 
 export default function AdminObservabilityPanel() {
@@ -163,7 +186,11 @@ export default function AdminObservabilityPanel() {
       const flow = {
         roleRouter: Boolean(config.rag_flow.role_router_enabled),
         intentRouter: Boolean(config.rag_flow.intent_router_enabled),
-        verificationGate: Boolean(config.rag_flow.verification_enabled),
+        ruleVerification: Boolean(config.rag_flow.rule_verification_enabled ?? config.rag_flow.verification_enabled),
+        nliModel: Boolean(config.rag_flow.nli_model_enabled),
+        ragReranker: Boolean(config.rag_flow.rag_reranker_enabled),
+        ragNli: Boolean(config.rag_flow.rag_nli_enabled),
+        ragGraphRag: Boolean(config.rag_flow.rag_graphrag_enabled),
         deepseekFallback: Boolean(config.rag_flow.deepseek_fallback_enabled),
         scientificRetrieval: Boolean(config.rag_flow.scientific_retrieval_enabled),
         webRetrieval: Boolean(config.rag_flow.web_retrieval_enabled),
@@ -303,6 +330,8 @@ export default function AdminObservabilityPanel() {
     [flowHealth, runtimeStability, sourceCoverage, verificationStrength]
   );
 
+  const verificationStackEnabled = state.flow.ruleVerification && state.flow.nliModel && state.flow.ragNli;
+
   const pipelineStages = useMemo<
     Array<{ label: string; status: "ok" | "warn" | "error" | "idle"; note: string }>
   >(
@@ -310,10 +339,14 @@ export default function AdminObservabilityPanel() {
       { label: "Gateway", status: apiTone === "ok" ? "ok" : apiTone === "warn" ? "warn" : "error", note: state.apiStatus },
       { label: "Role Router", status: state.flow.roleRouter ? "ok" : "warn", note: state.flow.roleRouter ? "ON" : "OFF" },
       { label: "Intent Router", status: state.flow.intentRouter ? "ok" : "warn", note: state.flow.intentRouter ? "ON" : "OFF" },
-      { label: "Verification", status: state.flow.verificationGate ? "ok" : "error", note: state.flow.verificationGate ? "ON" : "OFF" },
+      {
+        label: "Rule + NLI Verification",
+        status: verificationStackEnabled ? "ok" : "error",
+        note: verificationStackEnabled ? "ON" : "OFF"
+      },
       { label: "ML Runtime", status: mlTone === "ok" ? "ok" : mlTone === "warn" ? "warn" : "error", note: state.mlReachable === false ? "offline" : "reachable" }
     ],
-    [apiTone, mlTone, state.apiStatus, state.flow.intentRouter, state.flow.roleRouter, state.flow.verificationGate, state.mlReachable]
+    [apiTone, mlTone, state.apiStatus, state.flow.intentRouter, state.flow.roleRouter, state.mlReachable, verificationStackEnabled]
   );
 
   const alerts = useMemo<AlertItem[]>(() => {
@@ -371,11 +404,11 @@ export default function AdminObservabilityPanel() {
       });
     }
 
-    if (!state.flow.verificationGate) {
+    if (!verificationStackEnabled) {
       rows.push({
         level: "critical",
-        title: "Verification gate disabled",
-        detail: "Safety guard is OFF and should be enabled for production-grade response control.",
+        title: "Verification stack disabled",
+        detail: "Rule verification hoặc NLI stack đang OFF, cần bật để giữ guardrail production.",
         source: "flow"
       });
     }
@@ -390,7 +423,7 @@ export default function AdminObservabilityPanel() {
     }
 
     return rows;
-  }, [apiTone, errorRate, latencyMs, sourceCoverage, state.apiMessage, state.enabledSources, state.flow.verificationGate, state.mlReachable, state.mlStatus, state.totalSources]);
+  }, [apiTone, errorRate, latencyMs, sourceCoverage, state.apiMessage, state.enabledSources, state.mlReachable, state.mlStatus, state.totalSources, verificationStackEnabled]);
 
   const riskMatrix = useMemo(
     () =>
@@ -407,7 +440,11 @@ export default function AdminObservabilityPanel() {
   const flowRows: Array<{ label: string; enabled: boolean; detail: string }> = [
     { label: "Role Router", enabled: state.flow.roleRouter, detail: "Định tuyến theo vai trò người dùng." },
     { label: "Intent Router", enabled: state.flow.intentRouter, detail: "Tách ý định để chọn pipeline phù hợp." },
-    { label: "Verification Gate", enabled: state.flow.verificationGate, detail: "Bắt buộc kiểm chứng trước phản hồi." },
+    { label: "Rule Verification", enabled: state.flow.ruleVerification, detail: "Kiểm chứng theo luật/policy trước phản hồi." },
+    { label: "NLI Model", enabled: state.flow.nliModel, detail: "Mô hình NLI cho quan hệ claim-evidence." },
+    { label: "RAG NLI", enabled: state.flow.ragNli, detail: "Bật bước NLI trong pipeline RAG." },
+    { label: "Neural Reranker", enabled: state.flow.ragReranker, detail: "Rerank evidence bằng mô hình neural." },
+    { label: "GraphRAG", enabled: state.flow.ragGraphRag, detail: "Nhánh truy xuất theo đồ thị tri thức." },
     { label: "DeepSeek Fallback", enabled: state.flow.deepseekFallback, detail: "Dự phòng đường suy luận khi degrade." },
     { label: "Scientific Retrieval", enabled: state.flow.scientificRetrieval, detail: "Ưu tiên nguồn y khoa chuẩn." },
     { label: "Web Retrieval", enabled: state.flow.webRetrieval, detail: "Bổ sung khi nguồn nội bộ thiếu ngữ cảnh." },
@@ -488,7 +525,7 @@ export default function AdminObservabilityPanel() {
         </article>
         <article className="futura-kpi rounded-xl p-3">
           <p className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Flow Enabled</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.flowEnabledCount}/7</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--text-primary)]">{state.flowEnabledCount}/{TOTAL_FLOW_FLAGS}</p>
           <p className="text-xs text-[var(--text-secondary)]">Flow health {Math.round(flowHealth)}</p>
         </article>
         <article className="futura-kpi rounded-xl p-3">

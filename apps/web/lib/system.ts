@@ -101,7 +101,12 @@ export type ControlTowerRagSource = {
 export type ControlTowerRagFlow = {
   role_router_enabled: boolean;
   intent_router_enabled: boolean;
-  verification_enabled: boolean;
+  rule_verification_enabled: boolean;
+  nli_model_enabled: boolean;
+  rag_reranker_enabled: boolean;
+  rag_nli_enabled: boolean;
+  rag_graphrag_enabled: boolean;
+  verification_enabled?: boolean;
   deepseek_fallback_enabled: boolean;
   low_context_threshold: number;
   scientific_retrieval_enabled: boolean;

@@ -37,11 +37,11 @@ const NODES: NeuralNode[] = [
   { id: "sci", label: "Scientific Retrieval", layer: 1, row: 1, kind: "toggle", toggleKey: "scientific_retrieval_enabled" },
   { id: "web", label: "Web Retrieval", layer: 1, row: 2, kind: "toggle", toggleKey: "web_retrieval_enabled" },
 
-  { id: "rank", label: "Neural Reranker", layer: 2, row: 0, kind: "toggle", toggleKey: "role_router_enabled" },
+  { id: "rank", label: "Neural Reranker", layer: 2, row: 0, kind: "toggle", toggleKey: "rag_reranker_enabled" },
   { id: "index", label: "Evidence Index", layer: 2, row: 1, kind: "required" },
-  { id: "verify", label: "NLI Verifier", layer: 2, row: 2, kind: "toggle", toggleKey: "verification_enabled" },
+  { id: "verify", label: "NLI Verifier", layer: 2, row: 2, kind: "toggle", toggleKey: "rag_nli_enabled" },
 
-  { id: "matrix", label: "Claim Matrix", layer: 3, row: 0, kind: "toggle", toggleKey: "verification_enabled" },
+  { id: "matrix", label: "Claim Matrix", layer: 3, row: 0, kind: "toggle", toggleKey: "rule_verification_enabled" },
   { id: "cite", label: "Citation Selector", layer: 3, row: 1, kind: "required" },
   { id: "fallback", label: "Fallback Branch", layer: 3, row: 2, kind: "toggle", toggleKey: "deepseek_fallback_enabled" },
 

@@ -3,29 +3,38 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ControlTowerConfig,
-  ControlTowerRagFlow,
   ControlTowerRagFlowConfig,
   ControlTowerRagSource,
   getControlTowerConfig,
   updateControlTowerConfig
 } from "@/lib/system";
 
-export type FlowToggleKey = Exclude<keyof ControlTowerRagFlow, "low_context_threshold">;
 export type RetrievalMetricKey = "precision_at_k" | "recall_at_k" | "ndcg_at_k";
 
-const FLOW_TOGGLES: FlowToggleKey[] = [
+const FLOW_TOGGLES = [
   "role_router_enabled",
   "intent_router_enabled",
-  "verification_enabled",
+  "rule_verification_enabled",
+  "nli_model_enabled",
+  "rag_reranker_enabled",
+  "rag_nli_enabled",
+  "rag_graphrag_enabled",
   "deepseek_fallback_enabled",
   "scientific_retrieval_enabled",
   "web_retrieval_enabled",
   "file_retrieval_enabled"
-];
+] as const;
+
+export type FlowToggleKey = (typeof FLOW_TOGGLES)[number];
 
 const DEFAULT_FLOW: ControlTowerRagFlowConfig = {
   role_router_enabled: true,
   intent_router_enabled: true,
+  rule_verification_enabled: true,
+  nli_model_enabled: true,
+  rag_reranker_enabled: true,
+  rag_nli_enabled: true,
+  rag_graphrag_enabled: false,
   verification_enabled: true,
   deepseek_fallback_enabled: true,
   low_context_threshold: 0.2,
@@ -80,10 +89,22 @@ function sortSources(sources: ControlTowerRagSource[]): ControlTowerRagSource[] 
 }
 
 function normalizeFlow(flow?: Partial<ControlTowerRagFlowConfig> | null): ControlTowerRagFlowConfig {
+  const ruleVerificationEnabled =
+    flow?.rule_verification_enabled ??
+    flow?.verification_enabled ??
+    DEFAULT_FLOW.rule_verification_enabled;
+  const nliModelEnabled = flow?.nli_model_enabled ?? ruleVerificationEnabled;
+  const ragNliEnabled = flow?.rag_nli_enabled ?? nliModelEnabled;
+
   return {
     role_router_enabled: flow?.role_router_enabled ?? DEFAULT_FLOW.role_router_enabled,
     intent_router_enabled: flow?.intent_router_enabled ?? DEFAULT_FLOW.intent_router_enabled,
-    verification_enabled: flow?.verification_enabled ?? DEFAULT_FLOW.verification_enabled,
+    rule_verification_enabled: ruleVerificationEnabled,
+    nli_model_enabled: nliModelEnabled,
+    rag_reranker_enabled: flow?.rag_reranker_enabled ?? DEFAULT_FLOW.rag_reranker_enabled,
+    rag_nli_enabled: ragNliEnabled,
+    rag_graphrag_enabled: flow?.rag_graphrag_enabled ?? DEFAULT_FLOW.rag_graphrag_enabled,
+    verification_enabled: flow?.verification_enabled ?? ruleVerificationEnabled,
     deepseek_fallback_enabled: flow?.deepseek_fallback_enabled ?? DEFAULT_FLOW.deepseek_fallback_enabled,
     low_context_threshold: clamp(Number(flow?.low_context_threshold ?? DEFAULT_FLOW.low_context_threshold), 0, 1),
     precision_at_k: clamp(
@@ -301,6 +322,6 @@ export default function useControlTowerConfig(): UseControlTowerConfigResult {
     setFlowToggle,
     setLowContextThreshold,
     setRetrievalMetricK,
-    flowToggleKeys: FLOW_TOGGLES
+    flowToggleKeys: [...FLOW_TOGGLES]
   };
 }
