@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import perf_counter
 from typing import Any
 import unicodedata
@@ -63,7 +64,24 @@ _REQUIRED_DEEP_MARKDOWN_HEADINGS = (
 )
 
 _DEFAULT_DEEP_PASS_CAP = 12
-_DEEP_BETA_PASS_CAP = 14
+_DEEP_BETA_PASS_CAP = 20
+_DEEP_BETA_REASONING_STAGE_ORDER = (
+    "deep_beta_scope",
+    "deep_beta_hypothesis_map",
+    "deep_beta_retrieval_budget",
+    "deep_beta_multi_pass_retrieval",
+    "deep_beta_evidence_audit",
+    "deep_beta_claim_graph",
+    "deep_beta_counter_evidence_scan",
+    "deep_beta_guideline_alignment",
+    "deep_beta_risk_stratification",
+    "deep_beta_gap_fill",
+    "deep_beta_evidence_verification",
+    "deep_beta_chain_synthesis",
+    "deep_beta_report_synthesis",
+    "deep_beta_quality_gate",
+    "deep_beta_chain_verification",
+)
 _ALLOWED_RETRIEVAL_ROUTES = {
     "internal-heavy",
     "scientific-heavy",
@@ -641,6 +659,836 @@ def _build_query_planner_client() -> DeepSeekClient:
         retries_per_base=0,
         retry_backoff_seconds=0.0,
     )
+
+
+def _build_reasoning_client(*, timeout_seconds: float | None = None) -> DeepSeekClient:
+    resolved_timeout = float(timeout_seconds or settings.deep_beta_reasoning_llm_timeout_seconds)
+    resolved_timeout = max(2.0, min(resolved_timeout, 120.0))
+    return DeepSeekClient(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        model=settings.deepseek_model,
+        timeout_seconds=resolved_timeout,
+        retries_per_base=0,
+        retry_backoff_seconds=0.0,
+    )
+
+
+def _parse_json_from_llm(raw_text: str) -> dict[str, Any]:
+    cleaned = _strip_markdown_fence(str(raw_text or "").strip())
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, dict):
+        raise ValueError("llm_json_not_object")
+    return parsed
+
+
+def _run_deep_beta_llm_reasoning_node(
+    *,
+    node_name: str,
+    objective: str,
+    topic: str,
+    query_plan: dict[str, Any],
+    retrieval_budget: dict[str, Any],
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not settings.deep_beta_reasoning_llm_enabled:
+        return {
+            "node": node_name,
+            "status": "skipped",
+            "reason": "deep_beta_reasoning_llm_disabled",
+            "confidence": 0.0,
+            "insights": [],
+            "actions": [],
+            "watchouts": [],
+        }
+    if not str(settings.deepseek_api_key or "").strip():
+        return {
+            "node": node_name,
+            "status": "degraded",
+            "reason": "api_key_missing",
+            "confidence": 0.0,
+            "insights": [],
+            "actions": [],
+            "watchouts": [],
+        }
+
+    compact_passes = [
+        {
+            "pass_index": item.get("pass_index"),
+            "subquery": item.get("subquery"),
+            "retrieved_count": item.get("retrieved_count"),
+            "duration_ms": item.get("duration_ms"),
+            "source_errors": item.get("source_errors", {}),
+        }
+        for item in deep_pass_summaries[:12]
+        if isinstance(item, dict)
+    ]
+    compact_evidence = [
+        {
+            "id": item.get("id"),
+            "source": item.get("source"),
+            "title": item.get("title"),
+            "score": item.get("score"),
+            "text": _compact_snippet(item.get("text", ""), max_len=220),
+        }
+        for item in evidence_rows[:20]
+        if isinstance(item, dict)
+    ]
+
+    system_prompt = (
+        "You are a clinical research reasoning worker node in a multi-agent RAG pipeline. "
+        "Return STRICT JSON only. No markdown. No extra keys."
+    )
+    prompt = (
+        "Analyze this node objective and produce structured reasoning output.\n"
+        "Output EXACT JSON:\n"
+        "{\n"
+        '  "confidence": 0.0,\n'
+        '  "insights": ["short insight"],\n'
+        '  "actions": ["next action"],\n'
+        '  "watchouts": ["risk/caveat"],\n'
+        '  "follow_up_queries": ["targeted retrieval query"],\n'
+        '  "evidence_checks": ["specific evidence check"]\n'
+        "}\n"
+        "Constraints:\n"
+        "- confidence must be between 0 and 1\n"
+        "- each array size <= 6\n"
+        "- focus on evidence quality, contradiction risk, and retrieval gaps\n\n"
+        f"node_name={node_name}\n"
+        f"objective={objective}\n"
+        f"topic={topic}\n"
+        f"query_plan={json.dumps(query_plan, ensure_ascii=False)}\n"
+        f"retrieval_budget={json.dumps(retrieval_budget, ensure_ascii=False)}\n"
+        f"deep_pass_summaries={json.dumps(compact_passes, ensure_ascii=False)}\n"
+        f"evidence_rows={json.dumps(compact_evidence, ensure_ascii=False)}\n"
+    )
+
+    try:
+        client = _build_reasoning_client()
+        response = client.generate(prompt=prompt, system_prompt=system_prompt)
+        parsed = _parse_json_from_llm(response.content)
+        confidence = _normalize_router_confidence(parsed.get("confidence"))
+
+        def _clean_list(key: str) -> list[str]:
+            raw = parsed.get(key)
+            if not isinstance(raw, list):
+                return []
+            cleaned: list[str] = []
+            for item in raw[:6]:
+                text = " ".join(str(item or "").split()).strip()
+                if text:
+                    cleaned.append(text)
+            return cleaned
+
+        return {
+            "node": node_name,
+            "status": "completed",
+            "reason": "ok",
+            "model_used": response.model,
+            "confidence": confidence,
+            "insights": _clean_list("insights"),
+            "actions": _clean_list("actions"),
+            "watchouts": _clean_list("watchouts"),
+            "follow_up_queries": _clean_list("follow_up_queries"),
+            "evidence_checks": _clean_list("evidence_checks"),
+        }
+    except Exception as exc:  # pragma: no cover - provider/network defensive path
+        return {
+            "node": node_name,
+            "status": "degraded",
+            "reason": f"{exc.__class__.__name__}",
+            "confidence": 0.0,
+            "insights": [],
+            "actions": [],
+            "watchouts": [],
+            "follow_up_queries": [],
+            "evidence_checks": [],
+        }
+
+
+def _run_deep_beta_parallel_reasoning_nodes(
+    *,
+    topic: str,
+    query_plan: dict[str, Any],
+    retrieval_budget: dict[str, Any],
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    nodes = [
+        (
+            "deep_beta_evidence_audit",
+            "Audit evidence coverage quality, identify weak sources and unresolved questions.",
+        ),
+        (
+            "deep_beta_claim_graph",
+            "Build claim/conflict graph across passes and flag contradiction hypotheses.",
+        ),
+        (
+            "deep_beta_counter_evidence_scan",
+            "Find strongest counter-evidence, adverse subgroup exceptions, and unresolved caveats.",
+        ),
+        (
+            "deep_beta_guideline_alignment",
+            "Check alignment/misalignment between retrieved evidence and guideline-level recommendations.",
+        ),
+        (
+            "deep_beta_risk_stratification",
+            "Stratify risk signals by age/comorbidity/polypharmacy and highlight red-flag trajectories.",
+        ),
+        (
+            "deep_beta_gap_fill",
+            "Propose high-yield gap-fill retrieval actions to improve coverage.",
+        ),
+    ]
+    max_nodes = max(1, min(int(settings.deep_beta_reasoning_llm_nodes), len(nodes)))
+    selected_nodes = nodes[:max_nodes]
+    if not selected_nodes:
+        return []
+
+    reasoning_rounds = max(1, int(settings.deep_beta_reasoning_rounds))
+    max_workers = max(1, min(int(settings.deep_beta_reasoning_parallel_workers), len(selected_nodes)))
+    outputs: list[dict[str, Any]] = []
+    for round_index in range(1, reasoning_rounds + 1):
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="deep-beta-llm") as executor:
+            futures = {
+                executor.submit(
+                    _run_deep_beta_llm_reasoning_node,
+                    node_name=node_name,
+                    objective=(
+                        f"{objective} "
+                        f"(round {round_index}/{reasoning_rounds}; prioritize unresolved gaps from earlier rounds)"
+                        if reasoning_rounds > 1
+                        else objective
+                    ),
+                    topic=topic,
+                    query_plan=query_plan,
+                    retrieval_budget=retrieval_budget,
+                    deep_pass_summaries=deep_pass_summaries,
+                    evidence_rows=evidence_rows,
+                ): node_name
+                for node_name, objective in selected_nodes
+            }
+            for future in as_completed(futures):
+                node_name = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # pragma: no cover - defensive
+                    result = {
+                        "node": node_name,
+                        "status": "degraded",
+                        "reason": f"{exc.__class__.__name__}",
+                        "confidence": 0.0,
+                        "insights": [],
+                        "actions": [],
+                        "watchouts": [],
+                        "follow_up_queries": [],
+                        "evidence_checks": [],
+                    }
+                result["round"] = round_index
+                result["rounds_total"] = reasoning_rounds
+                outputs.append(result)
+    outputs.sort(
+        key=lambda item: (
+            str(item.get("node")),
+            _safe_int(item.get("round"), 0),
+        )
+    )
+    return outputs
+
+
+def _collect_reasoning_follow_up_queries(
+    reasoning_nodes: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[str]:
+    if limit <= 0:
+        return []
+    collected: list[str] = []
+    for node in reasoning_nodes:
+        if not isinstance(node, dict):
+            continue
+        for key in ("follow_up_queries", "evidence_checks", "actions", "watchouts"):
+            raw = node.get(key)
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                text = " ".join(str(item or "").split()).strip()
+                if not text:
+                    continue
+                collected.append(text)
+    return _dedupe_query_list(collected, limit=limit)
+
+
+def _run_deep_beta_evidence_verification_node(
+    *,
+    topic: str,
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_rows: list[dict[str, Any]],
+    reasoning_nodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not settings.deep_beta_evidence_verification_enabled:
+        return {
+            "status": "skipped",
+            "verification_confidence": 0.0,
+            "supported_claims": [],
+            "unsupported_claims": [],
+            "contradicted_claims": [],
+            "evidence_gaps": [],
+            "high_risk_flags": [],
+            "model_used": "disabled",
+        }
+    if not str(settings.deepseek_api_key or "").strip():
+        return {
+            "status": "degraded",
+            "verification_confidence": 0.0,
+            "supported_claims": [],
+            "unsupported_claims": [],
+            "contradicted_claims": [],
+            "evidence_gaps": ["DeepSeek API key missing."],
+            "high_risk_flags": [],
+            "model_used": "unconfigured",
+        }
+
+    compact_passes = [
+        {
+            "pass_index": item.get("pass_index"),
+            "subquery": item.get("subquery"),
+            "retrieved_count": item.get("retrieved_count"),
+            "source_errors": item.get("source_errors", {}),
+        }
+        for item in deep_pass_summaries[:18]
+        if isinstance(item, dict)
+    ]
+    compact_evidence = [
+        {
+            "id": item.get("id"),
+            "source": item.get("source"),
+            "title": item.get("title"),
+            "score": item.get("score"),
+            "snippet": _compact_snippet(item.get("text"), max_len=180),
+        }
+        for item in evidence_rows[:28]
+        if isinstance(item, dict)
+    ]
+    compact_nodes = [
+        {
+            "node": item.get("node"),
+            "status": item.get("status"),
+            "confidence": item.get("confidence"),
+            "insights": item.get("insights", [])[:3] if isinstance(item.get("insights"), list) else [],
+            "watchouts": item.get("watchouts", [])[:3] if isinstance(item.get("watchouts"), list) else [],
+        }
+        for item in reasoning_nodes[:20]
+        if isinstance(item, dict)
+    ]
+    prompt = (
+        "Verify evidence support at claim level for this deep research run.\n"
+        "Output STRICT JSON only with exact schema:\n"
+        "{\n"
+        '  "verification_confidence": 0.0,\n'
+        '  "supported_claims": ["..."],\n'
+        '  "unsupported_claims": ["..."],\n'
+        '  "contradicted_claims": ["..."],\n'
+        '  "evidence_gaps": ["..."],\n'
+        '  "high_risk_flags": ["..."]\n'
+        "}\n"
+        "Rules:\n"
+        "- keep each list <= 8 items\n"
+        "- do not prescribe diagnosis/dose\n"
+        "- high_risk_flags should prioritize clinical safety issues\n"
+        "- if evidence is weak, explicitly add to evidence_gaps\n\n"
+        f"topic={topic}\n"
+        f"deep_pass_summaries={json.dumps(compact_passes, ensure_ascii=False)}\n"
+        f"evidence_rows={json.dumps(compact_evidence, ensure_ascii=False)}\n"
+        f"reasoning_nodes={json.dumps(compact_nodes, ensure_ascii=False)}\n"
+    )
+    try:
+        client = _build_reasoning_client(
+            timeout_seconds=max(float(settings.deep_beta_evidence_verification_timeout_seconds), 2.0)
+        )
+        response = client.generate(
+            prompt=prompt,
+            system_prompt=(
+                "You are CLARA deep evidence verifier. "
+                "Be conservative and safety-first. Output strict JSON only."
+            ),
+        )
+        parsed = _parse_json_from_llm(response.content)
+
+        def _clean(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            cleaned: list[str] = []
+            for item in value[:8]:
+                text = " ".join(str(item or "").split()).strip()
+                if text:
+                    cleaned.append(text)
+            return cleaned
+
+        return {
+            "status": "completed",
+            "verification_confidence": _normalize_router_confidence(
+                parsed.get("verification_confidence")
+            ),
+            "supported_claims": _clean(parsed.get("supported_claims")),
+            "unsupported_claims": _clean(parsed.get("unsupported_claims")),
+            "contradicted_claims": _clean(parsed.get("contradicted_claims")),
+            "evidence_gaps": _clean(parsed.get("evidence_gaps")),
+            "high_risk_flags": _clean(parsed.get("high_risk_flags")),
+            "model_used": response.model,
+        }
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "status": "degraded",
+            "verification_confidence": 0.0,
+            "supported_claims": [],
+            "unsupported_claims": [],
+            "contradicted_claims": [],
+            "evidence_gaps": [f"evidence_verification_error:{exc.__class__.__name__}"],
+            "high_risk_flags": [],
+            "model_used": "error",
+        }
+
+
+def _run_deep_beta_quality_gate(
+    *,
+    topic: str,
+    answer_markdown: str,
+    citations: list[Citation],
+    verification_matrix_payload: dict[str, Any],
+    reasoning_nodes: list[dict[str, Any]],
+    evidence_verification: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not settings.deep_beta_quality_gate_enabled:
+        return {
+            "status": "skipped",
+            "quality_score": 0.0,
+            "groundedness_score": 0.0,
+            "completeness_score": 0.0,
+            "revision_required": False,
+            "findings": [],
+            "follow_up_actions": [],
+        }
+    if not str(settings.deepseek_api_key or "").strip():
+        return {
+            "status": "degraded",
+            "quality_score": 0.0,
+            "groundedness_score": 0.0,
+            "completeness_score": 0.0,
+            "revision_required": False,
+            "findings": ["DeepSeek API key missing for quality gate."],
+            "follow_up_actions": [],
+        }
+
+    compact_citations = [
+        {
+            "source_id": item.source_id,
+            "source": item.source,
+            "title": item.title,
+            "url": item.url,
+        }
+        for item in citations[:14]
+    ]
+    prompt = (
+        "Evaluate this medical deep-research markdown answer quality.\n"
+        "Return STRICT JSON only.\n"
+        "Schema:\n"
+        "{\n"
+        '  "quality_score": 0.0,\n'
+        '  "groundedness_score": 0.0,\n'
+        '  "completeness_score": 0.0,\n'
+        '  "revision_required": false,\n'
+        '  "findings": ["..."],\n'
+        '  "follow_up_actions": ["..."]\n'
+        "}\n"
+        "Rules:\n"
+        "- scores in [0,1]\n"
+        "- findings/follow_up_actions max 6 each\n"
+        "- penalize unsupported clinical claims, missing safety caveats, weak attribution\n\n"
+        f"topic={topic}\n"
+        f"answer_markdown={answer_markdown}\n"
+        f"citations={json.dumps(compact_citations, ensure_ascii=False)}\n"
+        f"verification_matrix={json.dumps(verification_matrix_payload, ensure_ascii=False)}\n"
+        f"evidence_verification={json.dumps(evidence_verification or {}, ensure_ascii=False)}\n"
+        f"reasoning_nodes={json.dumps(reasoning_nodes[:12], ensure_ascii=False)}\n"
+    )
+    try:
+        client = _build_reasoning_client(
+            timeout_seconds=max(float(settings.deep_beta_quality_gate_timeout_seconds), 2.0)
+        )
+        response = client.generate(
+            prompt=prompt,
+            system_prompt=(
+                "You are CLARA quality gate evaluator for medical RAG reports. "
+                "Be strict and safety-first. Output strict JSON only."
+            ),
+        )
+        parsed = _parse_json_from_llm(response.content)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "status": "degraded",
+            "quality_score": 0.0,
+            "groundedness_score": 0.0,
+            "completeness_score": 0.0,
+            "revision_required": False,
+            "findings": [f"quality_gate_error:{exc.__class__.__name__}"],
+            "follow_up_actions": [],
+        }
+
+    def _clamp(value: Any) -> float:
+        return _normalize_router_confidence(value)
+
+    def _clean_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        for item in value[:6]:
+            text = " ".join(str(item or "").split()).strip()
+            if text:
+                cleaned.append(text)
+        return cleaned
+
+    return {
+        "status": "completed",
+        "quality_score": _clamp(parsed.get("quality_score")),
+        "groundedness_score": _clamp(parsed.get("groundedness_score")),
+        "completeness_score": _clamp(parsed.get("completeness_score")),
+        "revision_required": bool(parsed.get("revision_required", False)),
+        "findings": _clean_list(parsed.get("findings")),
+        "follow_up_actions": _clean_list(parsed.get("follow_up_actions")),
+    }
+
+
+def _normalize_mermaid_block_body(body: str) -> str:
+    normalized = str(body or "")
+    normalized = re.sub(r"<\s*br\s*/?\s*>", "\n", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"</?[a-z][^>\n]*>", "", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"&nbsp;", " ", normalized, flags=re.IGNORECASE)
+    # Normalize inline citations like " ... [1]" or " ... [pubmed-123]".
+    normalized = re.sub(
+        r"(?<=\s)\[((?:\d{1,3})|(?:[A-Za-z][A-Za-z0-9_.:-]{2,}))\](?=(?:\s|$|[.,;:\]]))",
+        r"(\1)",
+        normalized,
+    )
+    return "\n".join(line.rstrip() for line in normalized.splitlines()).strip()
+
+
+def _strip_html_from_mermaid_blocks(markdown_text: str) -> str:
+    text = str(markdown_text or "")
+    pattern = re.compile(r"```mermaid\s*(.*?)```", flags=re.DOTALL | re.IGNORECASE)
+
+    def _normalize(block: re.Match[str]) -> str:
+        body = _normalize_mermaid_block_body(block.group(1))
+        return f"```mermaid\n{body}\n```"
+
+    return pattern.sub(_normalize, text)
+
+
+def _canonical_h2_key(heading: str) -> str:
+    text = str(heading or "")
+    if text.startswith("## "):
+        text = text[3:]
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-zA-Z0-9]+", " ", text).strip().lower()
+    return text
+
+
+def _resolve_required_deep_heading_key(heading: str) -> str:
+    key = _canonical_h2_key(heading)
+    if not key:
+        return ""
+    for required in _REQUIRED_DEEP_MARKDOWN_HEADINGS:
+        required_key = _canonical_h2_key(required)
+        if key == required_key or key.startswith(f"{required_key} "):
+            return required_key
+    return key
+
+
+def _dedupe_duplicate_h2_headings(markdown_text: str) -> str:
+    lines = [line.rstrip() for line in str(markdown_text or "").splitlines()]
+    prelude: list[str] = []
+    sections: list[tuple[str, list[str]]] = []
+    current_heading: str | None = None
+    current_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if current_heading is None:
+                if current_lines:
+                    prelude.extend(current_lines)
+            else:
+                sections.append((current_heading, current_lines))
+            current_heading = stripped
+            current_lines = [line]
+            continue
+        current_lines.append(line)
+    if current_heading is None:
+        if current_lines:
+            prelude.extend(current_lines)
+    else:
+        sections.append((current_heading, current_lines))
+
+    required_heading_by_key = {
+        _canonical_h2_key(item): item for item in _REQUIRED_DEEP_MARKDOWN_HEADINGS
+    }
+    singleton_keys = set(required_heading_by_key.keys())
+    output: list[str] = [line for line in prelude if line.strip()]
+    block_plan: list[tuple[str, str | list[str]]] = []
+    singleton_best_blocks: dict[str, list[str]] = {}
+    previous_key: str | None = None
+
+    for heading, block_lines in sections:
+        key = _resolve_required_deep_heading_key(heading)
+        if not key:
+            continue
+        if key in singleton_keys:
+            current_best = singleton_best_blocks.get(key)
+            current_len = sum(len(item.strip()) for item in block_lines[1:] if item.strip())
+            if current_best is None:
+                singleton_best_blocks[key] = block_lines
+                block_plan.append(("singleton", key))
+            else:
+                previous_len = sum(len(item.strip()) for item in current_best[1:] if item.strip())
+                if current_len > previous_len:
+                    singleton_best_blocks[key] = block_lines
+            previous_key = key
+            continue
+        if key == previous_key:
+            continue
+        block_plan.append(("block", block_lines))
+        previous_key = key
+
+    emitted_singleton: set[str] = set()
+    for block_type, payload in block_plan:
+        if block_type == "singleton":
+            singleton_key = str(payload)
+            if singleton_key in emitted_singleton:
+                continue
+            block_lines = singleton_best_blocks.get(singleton_key)
+            if block_lines:
+                canonical_heading = required_heading_by_key.get(singleton_key)
+                normalized_block = list(block_lines)
+                if canonical_heading:
+                    normalized_block[0] = canonical_heading
+                output.extend(normalized_block)
+                emitted_singleton.add(singleton_key)
+            continue
+        if isinstance(payload, list):
+            output.extend(payload)
+    return "\n".join(output).strip() + "\n"
+
+
+def _sanitize_deep_beta_markdown_output(markdown_text: str) -> str:
+    return _dedupe_duplicate_h2_headings(_strip_html_from_mermaid_blocks(markdown_text))
+
+
+def _ensure_deep_beta_report_artifacts(
+    *,
+    markdown_text: str,
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_verification: dict[str, Any] | None,
+    verification_summary: dict[str, Any] | None,
+) -> str:
+    output = _sanitize_deep_beta_markdown_output(markdown_text)
+    appendix_sections: list[str] = []
+
+    if "| --- |" not in output:
+        rows = [
+            "| Pass | Subquery | Retrieved | Duration (ms) |",
+            "| --- | --- | ---: | ---: |",
+        ]
+        for item in deep_pass_summaries[:10]:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                f"| {_safe_int(item.get('pass_index'), 0)} | "
+                f"{_escape_markdown_cell(item.get('subquery') or '-')} | "
+                f"{_safe_int(item.get('retrieved_count'), 0)} | "
+                f"{round(_safe_float(item.get('duration_ms'), 0.0), 2)} |"
+            )
+        appendix_sections.append("### Bảng bổ sung Deep Beta\n" + "\n".join(rows))
+
+    if "```mermaid" not in output:
+        appendix_sections.append(
+            "### Decision Flow (Deep Beta)\n"
+            "```mermaid\n"
+            "flowchart TD\n"
+            "    A[Scope Lock] --> B[Multi-pass Retrieval]\n"
+            "    B --> C[Parallel Reasoning Nodes]\n"
+            "    C --> D[Evidence Verification]\n"
+            "    D --> E{High-risk / Contradiction?}\n"
+            "    E -- Yes --> F[Warn + Escalate clinician]\n"
+            "    E -- No --> G[Long-form synthesis + quality gate]\n"
+            "```\n"
+        )
+
+    if "```chart-spec" not in output:
+        evidence = evidence_verification if isinstance(evidence_verification, dict) else {}
+        matrix = verification_summary if isinstance(verification_summary, dict) else {}
+        appendix_sections.append(
+            "### Chart Spec (Deep Beta Signals)\n"
+            "```chart-spec\n"
+            "type: bar\n"
+            "title: Deep Beta Evidence Signals\n"
+            "x: [supported_claims, unsupported_claims, contradicted_claims, support_ratio]\n"
+            "y:\n"
+            f"  - {len(evidence.get('supported_claims', [])) if isinstance(evidence.get('supported_claims'), list) else 0}\n"
+            f"  - {len(evidence.get('unsupported_claims', [])) if isinstance(evidence.get('unsupported_claims'), list) else 0}\n"
+            f"  - {len(evidence.get('contradicted_claims', [])) if isinstance(evidence.get('contradicted_claims'), list) else 0}\n"
+            f"  - {round(_safe_float(matrix.get('support_ratio'), 0.0), 3)}\n"
+            "```\n"
+        )
+
+    if appendix_sections:
+        output = f"{output.rstrip()}\n\n" + "\n\n".join(appendix_sections).rstrip() + "\n"
+    return output
+
+
+def _synthesize_deep_beta_long_report(
+    *,
+    topic: str,
+    answer_markdown: str,
+    citations: list[Citation],
+    verification_matrix_payload: dict[str, Any],
+    reasoning_nodes: list[dict[str, Any]],
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_verification: dict[str, Any] | None = None,
+) -> str:
+    if not settings.deep_beta_report_llm_enabled:
+        return answer_markdown
+    if not str(settings.deepseek_api_key or "").strip():
+        return answer_markdown
+
+    compact_citations = [
+        {
+            "source_id": item.source_id,
+            "source": item.source,
+            "title": item.title,
+            "url": item.url,
+            "relevance": item.relevance,
+        }
+        for item in citations[:18]
+    ]
+    verification_summary = (
+        verification_matrix_payload.get("summary")
+        if isinstance(verification_matrix_payload.get("summary"), dict)
+        else {}
+    )
+    contradiction_summary = (
+        verification_matrix_payload.get("contradiction_summary")
+        if isinstance(verification_matrix_payload.get("contradiction_summary"), dict)
+        else {}
+    )
+    compact_passes = [
+        {
+            "pass_index": item.get("pass_index"),
+            "subquery": item.get("subquery"),
+            "retrieved_count": item.get("retrieved_count"),
+            "duration_ms": item.get("duration_ms"),
+        }
+        for item in deep_pass_summaries[:14]
+        if isinstance(item, dict)
+    ]
+
+    target_words = max(int(settings.deep_beta_report_min_words), 900)
+    prompt = (
+        "Rewrite the baseline answer into a long-form clinical research report in Vietnamese.\n"
+        "Output valid GitHub-Flavored Markdown only, no HTML.\n"
+        "Must include these sections in this exact order:\n"
+        "## Kết luận nhanh\n"
+        "## Tóm tắt điều hành\n"
+        "## Bối cảnh lâm sàng áp dụng\n"
+        "## Phân tích chi tiết\n"
+        "## Bảng tổng hợp bằng chứng\n"
+        "## Ma trận quyết định an toàn\n"
+        "## Kế hoạch theo dõi sau tư vấn\n"
+        "## Cảnh báo pháp lý & giới hạn hệ thống\n"
+        "## Nguồn tham chiếu\n"
+        "Requirements:\n"
+        "- length >= "
+        f"{target_words} words\n"
+        "- each major section must contain concrete bullet points (not placeholder text)\n"
+        "- explicitly discuss uncertainty, contradictory evidence, and subgroup caveats\n"
+        "- include an 'if-then' decision flow in mermaid format\n"
+        "- include at least one markdown table in 'Bảng tổng hợp bằng chứng'\n"
+        "- include one mermaid flowchart for decision pathway\n"
+        "- mermaid block must not contain HTML tags like <br>, <p>, <div>, <span>\n"
+        "- include one fenced code block with language 'chart-spec' summarizing numeric signals\n"
+        "- citations must use source_id style [source-id]\n"
+        "- do not prescribe dosage, do not diagnose\n\n"
+        f"topic={topic}\n"
+        f"baseline_answer={answer_markdown}\n"
+        f"citations={json.dumps(compact_citations, ensure_ascii=False)}\n"
+        f"verification_summary={json.dumps(verification_summary, ensure_ascii=False)}\n"
+        f"contradiction_summary={json.dumps(contradiction_summary, ensure_ascii=False)}\n"
+        f"evidence_verification={json.dumps(evidence_verification or {}, ensure_ascii=False)}\n"
+        f"reasoning_nodes={json.dumps(reasoning_nodes, ensure_ascii=False)}\n"
+        f"deep_pass_summaries={json.dumps(compact_passes, ensure_ascii=False)}\n"
+    )
+    system_prompt = (
+        "You are CLARA Deep Beta medical report synthesizer. "
+        "Be evidence-grounded, safety-first, and specific."
+    )
+    try:
+        client = _build_reasoning_client(timeout_seconds=max(settings.deep_beta_reasoning_llm_timeout_seconds, 30.0))
+        response = client.generate(prompt=prompt, system_prompt=system_prompt)
+        content = str(response.content or "").strip()
+        if not content:
+            return answer_markdown
+        target_chars = max(1800, int(target_words * 5))
+        if len(content) < target_chars:
+            pass_rows = [
+                "| Pass | Subquery | Retrieved | Duration (ms) |",
+                "| --- | --- | ---: | ---: |",
+            ]
+            for item in compact_passes[:12]:
+                pass_rows.append(
+                    f"| {item.get('pass_index') or '-'} | "
+                    f"{_escape_markdown_cell(item.get('subquery') or '-')} | "
+                    f"{_safe_int(item.get('retrieved_count'), 0)} | "
+                    f"{round(_safe_float(item.get('duration_ms'), 0.0), 2)} |"
+                )
+            node_rows = [
+                "| Reasoning Node | Status | Confidence | Highlight |",
+                "| --- | --- | ---: | --- |",
+            ]
+            for node in reasoning_nodes[:10]:
+                insights = node.get("insights")
+                top_insight = (
+                    _compact_snippet(insights[0], max_len=120)
+                    if isinstance(insights, list) and insights
+                    else ""
+                )
+                node_rows.append(
+                    f"| {_escape_markdown_cell(node.get('node') or '-')} | "
+                    f"{_escape_markdown_cell(node.get('status') or '-')} | "
+                    f"{_normalize_router_confidence(node.get('confidence')):.2f} | "
+                    f"{_escape_markdown_cell(top_insight or '-')} |"
+                )
+            appendix = (
+                "\n\n## Phụ lục kỹ thuật Deep Beta\n"
+                "### Tóm tắt multi-pass retrieval\n"
+                + "\n".join(pass_rows)
+                + "\n\n### Tóm tắt reasoning nodes\n"
+                + "\n".join(node_rows)
+            )
+            content = f"{content}{appendix}"
+        return _ensure_deep_beta_report_artifacts(
+            markdown_text=content,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_verification=evidence_verification,
+            verification_summary=verification_summary,
+        )
+    except Exception:
+        return _ensure_deep_beta_report_artifacts(
+            markdown_text=answer_markdown,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_verification=evidence_verification,
+            verification_summary=verification_summary,
+        )
 
 
 def _refine_query_plan_with_llm(
@@ -1879,7 +2727,7 @@ def _deep_beta_research_methodology(
     base = _deep_research_methodology(topic=topic, subqueries=subqueries)
     return {
         **base,
-        "id": "agentic-deep-research-beta-v1",
+        "id": "agentic-deep-research-beta-v2",
         "query": topic,
         "retrieval_budget": retrieval_budget,
         "inspired_patterns": [
@@ -1887,6 +2735,9 @@ def _deep_beta_research_methodology(
             "retrieval_budgeting",
             "iterative_gap_fill",
             "reasoning_chain_audit",
+            "parallel_reasoning_workers",
+            "evidence_quality_auditor",
+            "longform_report_synthesis",
         ],
         "stages": [
             {
@@ -1909,49 +2760,51 @@ def _deep_beta_research_methodology(
                 "name": "beta_chain_verification",
                 "goal": "Đánh dấu mắt xích yếu, mâu thuẫn và mức tự tin cuối.",
             },
+            {
+                "name": "beta_parallel_reasoning",
+                "goal": "Chạy nhiều node reasoning LLM song song để kiểm evidence/gap/mâu thuẫn.",
+            },
+            {
+                "name": "beta_evidence_verification",
+                "goal": "Hợp nhất evidence-check theo claim và gắn cờ mắt xích chưa đủ bằng chứng.",
+            },
+            {
+                "name": "beta_longform_report",
+                "goal": "Tổng hợp báo cáo dài dạng markdown với bảng, mermaid, chart-spec.",
+            },
         ],
     }
 
 
 def _build_deep_beta_reasoning_steps(*, topic: str, subqueries: list[str]) -> list[dict[str, Any]]:
-    return [
-        {
-            "stage": "deep_beta_scope",
-            "status": "pending",
-            "objective": "Lock scope, safety boundaries and exclusions for the beta chain.",
-            "subquery": subqueries[0] if subqueries else topic,
-        },
-        {
-            "stage": "deep_beta_hypothesis_map",
-            "status": "pending",
-            "objective": "Map main/counter hypotheses with expected supporting evidence.",
-            "subquery": subqueries[1] if len(subqueries) > 1 else topic,
-        },
-        {
-            "stage": "deep_beta_retrieval_budget",
-            "status": "pending",
-            "objective": "Allocate retrieval budgets and quality thresholds across passes.",
-            "subquery": subqueries[2] if len(subqueries) > 2 else topic,
-        },
-        {
-            "stage": "deep_beta_multi_pass_retrieval",
-            "status": "pending",
-            "objective": "Run iterative retrieval passes and close evidence gaps.",
-            "subquery": subqueries[3] if len(subqueries) > 3 else topic,
-        },
-        {
-            "stage": "deep_beta_chain_synthesis",
-            "status": "pending",
-            "objective": "Build synthesis chain from pass-level evidence summaries.",
-            "subquery": subqueries[4] if len(subqueries) > 4 else topic,
-        },
-        {
-            "stage": "deep_beta_chain_verification",
-            "status": "pending",
-            "objective": "Validate chain consistency, contradictions and uncertainty.",
-            "subquery": subqueries[5] if len(subqueries) > 5 else topic,
-        },
-    ]
+    objectives = {
+        "deep_beta_scope": "Lock scope, safety boundaries and exclusions for the beta chain.",
+        "deep_beta_hypothesis_map": "Map main/counter hypotheses with expected supporting evidence.",
+        "deep_beta_retrieval_budget": "Allocate retrieval budgets and quality thresholds across passes.",
+        "deep_beta_multi_pass_retrieval": "Run iterative retrieval passes and close evidence gaps.",
+        "deep_beta_evidence_audit": "LLM node: audit evidence coverage, quality, and unresolved dimensions.",
+        "deep_beta_claim_graph": "LLM node: derive claim/conflict graph and contradiction hypotheses.",
+        "deep_beta_counter_evidence_scan": "LLM node: seek strongest counter-evidence and boundary conditions.",
+        "deep_beta_guideline_alignment": "LLM node: compare findings against guideline-level recommendations.",
+        "deep_beta_risk_stratification": "LLM node: stratify risk by subgroup and red-flag conditions.",
+        "deep_beta_gap_fill": "Run targeted retrieval passes to fill evidence gaps from LLM audit.",
+        "deep_beta_evidence_verification": "LLM node: verify claim support/contradiction coverage before synthesis.",
+        "deep_beta_chain_synthesis": "Generate long-form synthesis chain from pass-level evidence.",
+        "deep_beta_chain_verification": "Validate chain consistency, contradictions, and uncertainty.",
+        "deep_beta_report_synthesis": "LLM node: synthesize long-form final report with explicit evidence contract.",
+        "deep_beta_quality_gate": "LLM node: final quality gate for groundedness/completeness before response.",
+    }
+    steps: list[dict[str, Any]] = []
+    for index, stage in enumerate(_DEEP_BETA_REASONING_STAGE_ORDER):
+        steps.append(
+            {
+                "stage": stage,
+                "status": "pending",
+                "objective": objectives.get(stage, stage),
+                "subquery": subqueries[index] if index < len(subqueries) else topic,
+            }
+        )
+    return steps
 
 def _resolve_deep_pass_count(
     payload: dict[str, Any],
@@ -2294,6 +3147,8 @@ def _build_reasoning_digest(
     verification_matrix_payload: dict[str, Any],
     flow_events: list[dict[str, Any]],
     deep_pass_count: int,
+    parallel_reasoning_nodes: list[dict[str, Any]] | None = None,
+    evidence_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     summary = (
         verification_matrix_payload.get("summary")
@@ -2323,6 +3178,16 @@ def _build_reasoning_digest(
     elif "llm_query_planner_fallback" in reason_codes:
         llm_status = "fallback"
 
+    node_rows = parallel_reasoning_nodes if isinstance(parallel_reasoning_nodes, list) else []
+    completed_nodes = sum(
+        1
+        for item in node_rows
+        if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "completed"
+    )
+    evidence_verification_payload = (
+        evidence_verification if isinstance(evidence_verification, dict) else {}
+    )
+
     return {
         "topic": topic,
         "research_mode": research_mode,
@@ -2332,6 +3197,17 @@ def _build_reasoning_digest(
             "citation_count": len(citations),
             "top_sources": top_sources,
             "deep_pass_count": max(1, int(deep_pass_count)),
+            "parallel_reasoning_nodes": len(node_rows),
+            "parallel_reasoning_nodes_completed": completed_nodes,
+            "evidence_verification_confidence": _safe_float(
+                evidence_verification_payload.get("verification_confidence"),
+                0.0,
+            ),
+            "evidence_verification_gaps": (
+                len(evidence_verification_payload.get("evidence_gaps", []))
+                if isinstance(evidence_verification_payload.get("evidence_gaps"), list)
+                else 0
+            ),
         },
         "verification": {
             "support_ratio": _safe_float(summary.get("support_ratio"), 0.0),
@@ -2465,6 +3341,139 @@ def _ensure_markdown_structure(
     )
 
 
+def _build_deep_beta_reasoning_client(*, timeout_cap_seconds: float = 25.0) -> DeepSeekClient | None:
+    if not str(settings.deepseek_api_key or "").strip():
+        return None
+    timeout_seconds = max(2.0, min(float(settings.deepseek_timeout_seconds), timeout_cap_seconds))
+    return DeepSeekClient(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        model=settings.deepseek_model,
+        timeout_seconds=timeout_seconds,
+        retries_per_base=0,
+        retry_backoff_seconds=0.0,
+    )
+
+
+def _extract_reasoning_context_rows(
+    rows: list[dict[str, Any]],
+    *,
+    max_items: int = 18,
+    max_text_len: int = 260,
+) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        compact.append(
+            {
+                "id": _first_nonempty_text(item.get("id"), item.get("source"), f"ctx-{len(compact)+1}"),
+                "source": _first_nonempty_text(item.get("source"), "unknown"),
+                "title": _compact_snippet(_first_nonempty_text(item.get("title")), max_len=96),
+                "text": _compact_snippet(item.get("text"), max_len=max_text_len),
+                "url": _safe_url(item.get("url")) or "",
+                "score": _safe_float(item.get("score"), 0.0),
+            }
+        )
+        if len(compact) >= max_items:
+            break
+    return compact
+
+
+def _strip_json_fence(raw: str) -> str:
+    text = str(raw or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"```$", "", text).strip()
+    return text
+
+
+def _deep_beta_json_call(
+    *,
+    client: DeepSeekClient,
+    system_prompt: str,
+    prompt: str,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        response = client.generate(prompt=prompt, system_prompt=system_prompt)
+    except Exception:
+        return fallback
+
+    try:
+        parsed = json.loads(_strip_json_fence(response.content))
+    except Exception:
+        return fallback
+    return parsed if isinstance(parsed, dict) else fallback
+
+
+def _deep_beta_markdown_call(
+    *,
+    client: DeepSeekClient,
+    system_prompt: str,
+    prompt: str,
+) -> str:
+    try:
+        response = client.generate(prompt=prompt, system_prompt=system_prompt)
+    except Exception:
+        return ""
+    return str(response.content or "").strip()
+
+
+def _coerce_reasoning_queries(value: Any, *, limit: int = 6) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return _dedupe_query_list([str(item) for item in value], limit=limit)
+
+
+def _ensure_min_deep_beta_report(
+    *,
+    report_markdown: str,
+    topic: str,
+    citations: list[Citation],
+    deep_pass_summaries: list[dict[str, Any]],
+    min_chars: int,
+) -> str:
+    cleaned = str(report_markdown or "").strip()
+    if len(cleaned) >= max(400, int(min_chars)):
+        return cleaned
+
+    citations_md = "\n".join(_citation_markdown_lines(citations))
+    pass_rows = deep_pass_summaries[:10]
+    pass_table_rows = [
+        "| Pass | Subquery | Retrieved | Duration (ms) |",
+        "| --- | --- | --- | --- |",
+    ]
+    if pass_rows:
+        for item in pass_rows:
+            pass_table_rows.append(
+                "| "
+                f"{_escape_markdown_cell(item.get('pass_index'))} | "
+                f"{_escape_markdown_cell(_compact_snippet(item.get('subquery'), max_len=120))} | "
+                f"{_escape_markdown_cell(item.get('retrieved_count'))} | "
+                f"{_escape_markdown_cell(item.get('duration_ms'))} |"
+            )
+    else:
+        pass_table_rows.append("| 1 | baseline | 0 | 0 |")
+    pass_table = "\n".join(pass_table_rows)
+
+    extension = (
+        "## Phụ lục Deep Beta (Auto-Expanded)\n"
+        f"- Chủ đề: {_compact_snippet(topic, max_len=220)}\n"
+        f"- Tổng số pass retrieval: {max(1, len(deep_pass_summaries))}\n"
+        f"- Tổng số nguồn trích dẫn: {len(citations)}\n\n"
+        "### Nhật ký pass retrieval\n"
+        f"{pass_table}\n\n"
+        "### Hướng dẫn diễn giải an toàn\n"
+        "- Luôn đọc kết quả như thông tin hỗ trợ, không thay thế chỉ định điều trị cá thể hóa.\n"
+        "- Ưu tiên xác minh lại điểm mâu thuẫn evidence trước khi ra quyết định.\n"
+        "- Khi có bệnh nền/đa thuốc/triệu chứng nặng, cần trao đổi bác sĩ ngay.\n\n"
+        "### Nguồn tham chiếu bổ sung\n"
+        f"{citations_md}"
+    )
+    combined = f"{cleaned}\n\n{extension}".strip()
+    return combined
+
+
 def run_research_tier2(payload: dict[str, Any]) -> dict:
     topic = _normalize_topic(payload)
     research_mode = _normalize_research_mode(payload)
@@ -2498,6 +3507,21 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     rag_nli_enabled_runtime = bool(nli_model_enabled and rag_nli_enabled_runtime)
     rag_reranker_enabled_override = _coerce_optional_bool(rag_flow.get("rag_reranker_enabled"))
     rag_graphrag_enabled_override = _coerce_optional_bool(rag_flow.get("rag_graphrag_enabled"))
+    if research_mode == "deep_beta":
+        if rag_reranker_enabled_override is None:
+            rag_reranker_enabled_override = True
+        if rag_graphrag_enabled_override is None:
+            rag_graphrag_enabled_override = True
+    effective_rag_reranker_enabled = (
+        bool(settings.rag_reranker_enabled)
+        if rag_reranker_enabled_override is None
+        else bool(rag_reranker_enabled_override)
+    )
+    effective_rag_graphrag_enabled = (
+        bool(settings.rag_graphrag_enabled)
+        if rag_graphrag_enabled_override is None
+        else bool(rag_graphrag_enabled_override)
+    )
     route = router.route(topic, role_hint=role_hint)
 
     plan_steps = _build_plan_steps(topic, source_mode, research_mode=research_mode)
@@ -2591,16 +3615,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                     "rule_verification_enabled": rule_verification_enabled,
                     "nli_model_enabled": nli_model_enabled,
                     "rag_nli_enabled": rag_nli_enabled_runtime,
-                    "rag_reranker_enabled": (
-                        settings.rag_reranker_enabled
-                        if rag_reranker_enabled_override is None
-                        else rag_reranker_enabled_override
-                    ),
-                    "rag_graphrag_enabled": (
-                        settings.rag_graphrag_enabled
-                        if rag_graphrag_enabled_override is None
-                        else rag_graphrag_enabled_override
-                    ),
+                    "rag_reranker_enabled": effective_rag_reranker_enabled,
+                    "rag_graphrag_enabled": effective_rag_graphrag_enabled,
                 },
             },
         ),
@@ -2716,7 +3732,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         payload.get("strict_deepseek_required", settings.deepseek_required)
     )
     deepseek_fallback_enabled = not strict_deepseek_required
-    pass_count_cap = _DEEP_BETA_PASS_CAP if research_mode == "deep_beta" else _DEFAULT_DEEP_PASS_CAP
+    deep_beta_cap = max(6, min(int(settings.deep_beta_pass_cap), 64))
+    pass_count_cap = deep_beta_cap if research_mode == "deep_beta" else _DEFAULT_DEEP_PASS_CAP
     deep_pass_count = _resolve_deep_pass_count(
         payload,
         int(planner_hints.get("deep_pass_count", 1)),
@@ -2734,6 +3751,10 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     deep_beta_reasoning_steps: list[dict[str, Any]] = []
     deep_beta_retrieval_budgets: dict[str, Any] = {}
     deep_beta_chain_status: dict[str, Any] = {}
+    deep_beta_parallel_reasoning_nodes: list[dict[str, Any]] = []
+    deep_beta_gap_fill_queries: list[str] = []
+    deep_beta_evidence_verification: dict[str, Any] = {}
+    deep_beta_quality_gate: dict[str, Any] = {}
 
     def _update_beta_reasoning_step(
         *,
@@ -2752,6 +3773,54 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             if isinstance(payload, dict) and payload:
                 item["payload"] = payload
             break
+
+    def _refresh_beta_chain_status(*, current_stage: str | None = None, status: str | None = None) -> None:
+        if not deep_beta_reasoning_steps:
+            return
+        total_steps = len(deep_beta_reasoning_steps)
+        completed_steps = sum(
+            1
+            for item in deep_beta_reasoning_steps
+            if str(item.get("status") or "").strip().lower() == "completed"
+        )
+        warning_steps = sum(
+            1
+            for item in deep_beta_reasoning_steps
+            if str(item.get("status") or "").strip().lower() in {"warning", "degraded", "failed"}
+        )
+        skipped_steps = sum(
+            1
+            for item in deep_beta_reasoning_steps
+            if str(item.get("status") or "").strip().lower() in {"skipped"}
+        )
+        terminal_steps = completed_steps + warning_steps + skipped_steps
+        if not current_stage:
+            current_stage = ""
+            for item in deep_beta_reasoning_steps:
+                state = str(item.get("status") or "").strip().lower()
+                if state in {"pending", "started", "running"}:
+                    current_stage = str(item.get("stage") or "")
+                    break
+            if not current_stage and deep_beta_reasoning_steps:
+                current_stage = str(deep_beta_reasoning_steps[-1].get("stage") or "")
+        if not status:
+            if terminal_steps >= total_steps and warning_steps == 0:
+                status = "completed"
+            elif terminal_steps >= total_steps and warning_steps > 0:
+                status = "warning"
+            else:
+                status = "running"
+        deep_beta_chain_status.update(
+            {
+                "completed_steps": completed_steps,
+                "total_steps": total_steps,
+                "terminal_steps": terminal_steps,
+                "current_stage": current_stage,
+                "status": status,
+                "warning_steps": warning_steps,
+                "skipped_steps": skipped_steps,
+            }
+        )
 
     if research_mode == "deep":
         query_plan = (
@@ -3040,6 +4109,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "total_steps": len(deep_beta_reasoning_steps),
             "current_stage": "deep_beta_scope",
         }
+        _refresh_beta_chain_status(current_stage="deep_beta_scope", status="running")
 
         flow_events.append(
             _event(
@@ -3061,12 +4131,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             note="Scope lock completed.",
             payload={"topic": topic},
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": 1,
-                "current_stage": "deep_beta_hypothesis_map",
-            }
-        )
+        _refresh_beta_chain_status(current_stage="deep_beta_hypothesis_map", status="running")
         flow_events.append(
             _event(
                 stage="deep_beta_scope",
@@ -3100,12 +4165,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             note="Hypothesis map completed.",
             payload={"profiles": deep_research_profiles},
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": 2,
-                "current_stage": "deep_beta_retrieval_budget",
-            }
-        )
+        _refresh_beta_chain_status(current_stage="deep_beta_retrieval_budget", status="running")
         flow_events.append(
             _event(
                 stage="deep_beta_hypothesis_map",
@@ -3137,12 +4197,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             note="Retrieval budget allocated.",
             payload=deep_beta_retrieval_budgets,
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": 3,
-                "current_stage": "deep_beta_multi_pass_retrieval",
-            }
-        )
+        _refresh_beta_chain_status(current_stage="deep_beta_multi_pass_retrieval", status="running")
         flow_events.append(
             _event(
                 stage="deep_beta_retrieval_budget",
@@ -3300,12 +4355,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "pass_summaries": deep_pass_summaries,
             },
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": 4,
-                "current_stage": "deep_beta_chain_synthesis",
-            }
-        )
+        _refresh_beta_chain_status(current_stage="deep_beta_evidence_audit", status="running")
         flow_events.extend(deep_pass_flow_events)
         flow_events.append(
             _event(
@@ -3323,6 +4373,291 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 },
             )
         )
+
+        parallel_started = perf_counter()
+        flow_events.append(
+            _event(
+                stage="deep_beta_parallel_reasoning",
+                status="started",
+                source_count=len(deep_pass_summaries),
+                note="Running parallel Deep Beta LLM reasoning nodes for evidence audit.",
+                component="verifier",
+                payload={
+                    "nodes_target": min(
+                        int(settings.deep_beta_reasoning_llm_nodes),
+                        6,
+                    ),
+                    "parallel_workers": int(settings.deep_beta_reasoning_parallel_workers),
+                    "reasoning_rounds": int(settings.deep_beta_reasoning_rounds),
+                },
+            )
+        )
+        deep_beta_parallel_reasoning_nodes = _run_deep_beta_parallel_reasoning_nodes(
+            topic=topic,
+            query_plan=query_plan if isinstance(query_plan, dict) else {},
+            retrieval_budget=deep_beta_retrieval_budgets,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_rows=_merge_retrieved_context([], deep_pass_contexts),
+        )
+        completed_parallel_nodes = 0
+        for node_result in deep_beta_parallel_reasoning_nodes:
+            node_name = str(node_result.get("node") or "deep_beta_parallel_node")
+            node_status = str(node_result.get("status") or "degraded").strip().lower()
+            mapped_status = "completed" if node_status == "completed" else "warning"
+            if mapped_status == "completed":
+                completed_parallel_nodes += 1
+            node_note = (
+                "Reasoning node completed."
+                if mapped_status == "completed"
+                else f"Reasoning node degraded ({node_result.get('reason') or 'unknown'})."
+            )
+            _update_beta_reasoning_step(
+                stage=node_name,
+                status=mapped_status,
+                note=node_note,
+                payload=node_result,
+            )
+            flow_events.append(
+                _event(
+                    stage=node_name,
+                    status=mapped_status,
+                    source_count=len(deep_pass_summaries),
+                    note=node_note,
+                    component="verifier",
+                    payload=node_result,
+                )
+            )
+        _refresh_beta_chain_status(current_stage="deep_beta_gap_fill", status="running")
+        flow_events.append(
+            _event(
+                stage="deep_beta_parallel_reasoning",
+                status="completed" if completed_parallel_nodes else "warning",
+                source_count=len(deep_beta_parallel_reasoning_nodes),
+                note="Parallel Deep Beta reasoning nodes finished.",
+                component="verifier",
+                payload={
+                    "completed_nodes": completed_parallel_nodes,
+                    "total_nodes": len(deep_beta_parallel_reasoning_nodes),
+                    "nodes": deep_beta_parallel_reasoning_nodes,
+                },
+                started_at=parallel_started,
+            )
+        )
+
+        deep_beta_gap_fill_queries = _collect_reasoning_follow_up_queries(
+            deep_beta_parallel_reasoning_nodes,
+            limit=max(int(settings.deep_beta_gap_fill_max_queries), 1),
+        )
+        gap_fill_pass_cap = max(0, int(settings.deep_beta_gap_fill_max_passes))
+        if deep_beta_gap_fill_queries and gap_fill_pass_cap > 0:
+            gap_fill_started = perf_counter()
+            _update_beta_reasoning_step(
+                stage="deep_beta_gap_fill",
+                status="started",
+                note="Targeted gap-fill retrieval started.",
+                payload={
+                    "queries": deep_beta_gap_fill_queries[:gap_fill_pass_cap],
+                    "pass_cap": gap_fill_pass_cap,
+                },
+            )
+            flow_events.append(
+                _event(
+                    stage="deep_beta_gap_fill",
+                    status="started",
+                    source_count=0,
+                    note="Deep beta targeted gap-fill retrieval started.",
+                    component="retrieval",
+                    payload={
+                        "query_count": len(deep_beta_gap_fill_queries),
+                        "pass_cap": gap_fill_pass_cap,
+                        "queries": deep_beta_gap_fill_queries[:gap_fill_pass_cap],
+                    },
+                )
+            )
+            executed_gap_fill_passes = 0
+            for query_index, gap_query in enumerate(deep_beta_gap_fill_queries[:gap_fill_pass_cap], start=1):
+                pass_started = perf_counter()
+                flow_events.append(
+                    _event(
+                        stage="deep_beta_gap_fill_pass",
+                        status="started",
+                        source_count=0,
+                        note=f"Deep beta gap-fill pass {query_index} started.",
+                        component="retrieval",
+                        payload={"pass_index": query_index, "subquery": gap_query},
+                    )
+                )
+                pass_result = pipeline.run(
+                    gap_query,
+                    low_context_threshold=float(planner_hints["low_context_threshold"]),
+                    deepseek_fallback_enabled=deepseek_fallback_enabled,
+                    scientific_retrieval_enabled=bool(planner_hints["scientific_retrieval_enabled"]),
+                    web_retrieval_enabled=bool(planner_hints["web_retrieval_enabled"]),
+                    file_retrieval_enabled=bool(planner_hints["file_retrieval_enabled"]),
+                    rag_sources=rag_sources,
+                    uploaded_documents=uploaded_documents,
+                    planner_hints={
+                        **planner_hints,
+                        "query_focus": f"deep_beta_gap_fill_{query_index}",
+                        "reason_codes": [
+                            *planner_hints.get("reason_codes", []),
+                            f"deep_beta_gap_fill_{query_index}",
+                        ],
+                    },
+                    generation_enabled=False,
+                    strict_deepseek_required=strict_deepseek_required,
+                    rag_reranker_enabled=rag_reranker_enabled_override,
+                    rag_graphrag_enabled=rag_graphrag_enabled_override,
+                )
+                deep_pass_contexts.append(pass_result.retrieved_context)
+                deep_pass_summaries.append(
+                    {
+                        "pass_index": len(deep_pass_summaries) + 1,
+                        "subquery": gap_query,
+                        "retrieved_count": len(pass_result.retrieved_ids),
+                        "doc_ids": list(pass_result.retrieved_ids[:8]),
+                        "relevance": pass_result.context_debug.get("relevance")
+                        if isinstance(pass_result.context_debug, dict)
+                        else None,
+                        "duration_ms": round((perf_counter() - pass_started) * 1000.0, 3),
+                        "source_errors": {},
+                        "source_attempts": [],
+                        "index_summary": {},
+                        "crawl_summary": {},
+                        "reasoning_focus": f"deep_beta_gap_fill_{query_index}",
+                        "budget_target_docs": deep_beta_retrieval_budgets.get("per_pass_doc_target"),
+                    }
+                )
+                flow_events.extend(
+                    _normalize_retrieval_events(
+                        pass_result.flow_events, default_component="deep_beta_retrieval"
+                    )
+                )
+                flow_events.append(
+                    _event(
+                        stage="deep_beta_gap_fill_pass",
+                        status="completed",
+                        source_count=len(pass_result.retrieved_ids),
+                        note=f"Deep beta gap-fill pass {query_index} completed.",
+                        component="retrieval",
+                        payload={
+                            "pass_index": query_index,
+                            "subquery": gap_query,
+                            "retrieved_count": len(pass_result.retrieved_ids),
+                        },
+                        started_at=pass_started,
+                    )
+                )
+                executed_gap_fill_passes += 1
+            _update_beta_reasoning_step(
+                stage="deep_beta_gap_fill",
+                status="completed" if executed_gap_fill_passes else "warning",
+                note=(
+                    "Targeted gap-fill retrieval completed."
+                    if executed_gap_fill_passes
+                    else "No effective docs retrieved from gap-fill queries."
+                ),
+                payload={
+                    "executed_passes": executed_gap_fill_passes,
+                    "queries": deep_beta_gap_fill_queries[:gap_fill_pass_cap],
+                },
+            )
+            flow_events.append(
+                _event(
+                    stage="deep_beta_gap_fill",
+                    status="completed" if executed_gap_fill_passes else "warning",
+                    source_count=executed_gap_fill_passes,
+                    note=(
+                        "Deep beta targeted gap-fill retrieval completed."
+                        if executed_gap_fill_passes
+                        else "Deep beta gap-fill did not add strong evidence."
+                    ),
+                    component="retrieval",
+                    payload={
+                        "executed_passes": executed_gap_fill_passes,
+                        "queries": deep_beta_gap_fill_queries[:gap_fill_pass_cap],
+                    },
+                    started_at=gap_fill_started,
+                )
+            )
+        else:
+            _update_beta_reasoning_step(
+                stage="deep_beta_gap_fill",
+                status="skipped",
+                note="Gap-fill retrieval skipped (no follow-up queries or pass cap=0).",
+                payload={
+                    "query_count": len(deep_beta_gap_fill_queries),
+                    "pass_cap": gap_fill_pass_cap,
+                },
+            )
+            flow_events.append(
+                _event(
+                    stage="deep_beta_gap_fill",
+                    status="skipped",
+                    source_count=0,
+                    note="Gap-fill retrieval skipped.",
+                    component="retrieval",
+                    payload={
+                        "query_count": len(deep_beta_gap_fill_queries),
+                        "pass_cap": gap_fill_pass_cap,
+                    },
+                )
+            )
+
+        _refresh_beta_chain_status(current_stage="deep_beta_evidence_verification", status="running")
+        evidence_verify_started = perf_counter()
+        flow_events.append(
+            _event(
+                stage="deep_beta_evidence_verification",
+                status="started",
+                source_count=len(deep_pass_summaries),
+                note="Deep beta evidence verification node started.",
+                component="verifier",
+                payload={
+                    "reasoning_node_count": len(deep_beta_parallel_reasoning_nodes),
+                    "pass_count": len(deep_pass_summaries),
+                },
+            )
+        )
+        deep_beta_evidence_verification = _run_deep_beta_evidence_verification_node(
+            topic=topic,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_rows=_merge_retrieved_context([], deep_pass_contexts),
+            reasoning_nodes=deep_beta_parallel_reasoning_nodes,
+        )
+        evidence_verification_status = str(
+            deep_beta_evidence_verification.get("status") or "degraded"
+        ).strip().lower()
+        mapped_evidence_status = (
+            "completed" if evidence_verification_status == "completed" else "warning"
+        )
+        _update_beta_reasoning_step(
+            stage="deep_beta_evidence_verification",
+            status=mapped_evidence_status,
+            note=(
+                "Evidence verification completed."
+                if mapped_evidence_status == "completed"
+                else "Evidence verification degraded."
+            ),
+            payload=deep_beta_evidence_verification,
+        )
+        flow_events.append(
+            _event(
+                stage="deep_beta_evidence_verification",
+                status=mapped_evidence_status,
+                source_count=len(deep_pass_summaries),
+                note=(
+                    "Deep beta evidence verification completed."
+                    if mapped_evidence_status == "completed"
+                    else "Deep beta evidence verification degraded."
+                ),
+                component="verifier",
+                payload=deep_beta_evidence_verification,
+                started_at=evidence_verify_started,
+            )
+        )
+
+        _refresh_beta_chain_status(current_stage="deep_beta_chain_synthesis", status="running")
         flow_events.append(
             _event(
                 stage="deep_beta_chain_synthesis",
@@ -3342,12 +4677,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             note="Deep beta chain synthesis prepared for final answer generation.",
             payload={"pass_summaries": deep_pass_summaries},
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": 5,
-                "current_stage": "deep_beta_chain_verification",
-            }
-        )
+        _refresh_beta_chain_status(current_stage="deep_beta_chain_verification", status="running")
         flow_events.append(
             _event(
                 stage="deep_beta_chain_synthesis",
@@ -3454,6 +4784,84 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         citations,
         research_mode=research_mode,
     )
+    if research_mode == "deep_beta":
+        deep_beta_report_started = perf_counter()
+        flow_events.append(
+            _event(
+                stage="deep_beta_report_synthesis",
+                status="started",
+                source_count=len(citations),
+                note="Deep Beta long-form report synthesis started.",
+                component="postprocess",
+                payload={
+                    "citation_count": len(citations),
+                    "reasoning_node_count": len(deep_beta_parallel_reasoning_nodes),
+                    "deep_pass_count": len(deep_pass_summaries),
+                },
+            )
+        )
+        rewritten_report = _synthesize_deep_beta_long_report(
+            topic=topic,
+            answer_markdown=answer_markdown,
+            citations=citations,
+            verification_matrix_payload={},
+            reasoning_nodes=deep_beta_parallel_reasoning_nodes,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_verification=deep_beta_evidence_verification,
+        )
+        report_changed = bool(
+            str(rewritten_report or "").strip()
+            and str(rewritten_report).strip() != str(answer_markdown).strip()
+        )
+        if report_changed:
+            answer_markdown = _ensure_markdown_structure(
+                topic,
+                rewritten_report,
+                citations,
+                research_mode=research_mode,
+            )
+            _update_beta_reasoning_step(
+                stage="deep_beta_report_synthesis",
+                status="completed",
+                note="Deep beta report synthesis completed with LLM long-form output.",
+                payload={"answer_chars": len(answer_markdown)},
+            )
+            _refresh_beta_chain_status(current_stage="deep_beta_chain_verification", status="running")
+        else:
+            _update_beta_reasoning_step(
+                stage="deep_beta_report_synthesis",
+                status="warning",
+                note="Deep beta report synthesis fell back to baseline answer.",
+                payload={"answer_chars": len(answer_markdown)},
+            )
+            _refresh_beta_chain_status(current_stage="deep_beta_chain_verification", status="warning")
+        flow_events.append(
+            _event(
+                stage="deep_beta_report_synthesis",
+                status="completed" if report_changed else "warning",
+                source_count=len(citations),
+                note=(
+                    "Deep Beta long-form report synthesized."
+                    if report_changed
+                    else "Deep Beta report synthesis degraded; baseline report retained."
+                ),
+                component="postprocess",
+                payload={
+                    "report_changed": report_changed,
+                    "answer_chars": len(answer_markdown),
+                    "target_min_words": int(settings.deep_beta_report_min_words),
+                },
+                started_at=deep_beta_report_started,
+            )
+        )
+    if research_mode == "deep_beta":
+        answer_markdown = _sanitize_deep_beta_markdown_output(answer_markdown)
+        answer_markdown = _ensure_deep_beta_report_artifacts(
+            markdown_text=answer_markdown,
+            deep_pass_summaries=deep_pass_summaries,
+            evidence_verification=deep_beta_evidence_verification,
+            verification_summary={},
+        )
     answer_status = "warning" if fallback_used else "completed"
     flow_events.append(
         _event(
@@ -3574,6 +4982,69 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             )
         )
     verification_matrix_payload["safety_override"] = safety_override
+    if research_mode == "deep_beta":
+        quality_gate_started = perf_counter()
+        flow_events.append(
+            _event(
+                stage="deep_beta_quality_gate",
+                status="started",
+                source_count=len(citations),
+                note="Deep beta quality gate started.",
+                component="verifier",
+                payload={
+                    "reasoning_nodes": deep_beta_parallel_reasoning_nodes,
+                    "citation_count": len(citations),
+                    "evidence_verification_status": deep_beta_evidence_verification.get("status"),
+                },
+            )
+        )
+        deep_beta_quality_gate = _run_deep_beta_quality_gate(
+            topic=topic,
+            answer_markdown=answer_markdown,
+            citations=citations,
+            verification_matrix_payload=verification_matrix_payload,
+            reasoning_nodes=deep_beta_parallel_reasoning_nodes,
+            evidence_verification=deep_beta_evidence_verification,
+        )
+        gate_status = str(deep_beta_quality_gate.get("status") or "degraded").strip().lower()
+        gate_quality_score = _safe_float(deep_beta_quality_gate.get("quality_score"), 0.0)
+        if gate_status == "completed" and gate_quality_score >= 0.65:
+            gate_event_status = "completed"
+        elif gate_status == "completed":
+            gate_event_status = "warning"
+        elif gate_status == "skipped":
+            gate_event_status = "skipped"
+        else:
+            gate_event_status = "degraded"
+        _update_beta_reasoning_step(
+            stage="deep_beta_quality_gate",
+            status=gate_event_status,
+            note=(
+                "Deep beta quality gate completed."
+                if gate_event_status == "completed"
+                else "Deep beta quality gate requires manual review."
+            ),
+            payload=deep_beta_quality_gate,
+        )
+        _refresh_beta_chain_status(
+            current_stage="deep_beta_chain_verification",
+            status="warning" if gate_event_status in {"warning", "degraded"} else "running",
+        )
+        flow_events.append(
+            _event(
+                stage="deep_beta_quality_gate",
+                status=gate_event_status,
+                source_count=len(citations),
+                note=(
+                    "Deep beta quality gate completed."
+                    if gate_event_status == "completed"
+                    else "Deep beta quality gate flagged potential quality risks."
+                ),
+                component="verifier",
+                payload=deep_beta_quality_gate,
+                started_at=quality_gate_started,
+            )
+        )
     verifier_trace = _build_verifier_trace(
         factcheck_result=factcheck_result,
         policy_action=policy_action,
@@ -3695,14 +5166,6 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             if contradiction_summary.get("has_contradiction") or factcheck_result.verdict != "pass"
             else "completed"
         )
-        deep_beta_chain_status.update(
-            {
-                "completed_steps": len(deep_beta_reasoning_steps),
-                "current_stage": "deep_beta_chain_verification",
-                "status": "completed",
-                "verification_status": chain_verification_status,
-            }
-        )
         _update_beta_reasoning_step(
             stage="deep_beta_chain_verification",
             status=chain_verification_status,
@@ -3713,6 +5176,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "contradiction_count": contradiction_summary.get("contradiction_count"),
             },
         )
+        _refresh_beta_chain_status(
+            current_stage="deep_beta_chain_verification",
+            status=chain_verification_status,
+        )
+        deep_beta_chain_status["verification_status"] = chain_verification_status
         flow_events.append(
             _event(
                 stage="deep_beta_chain_verification",
@@ -3747,17 +5215,73 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     )
     effective_fallback_used = False if strict_deepseek_required else fallback_used
     answer_status = "warning" if effective_fallback_used else "completed"
+
+    def _beta_stage_status(stage_name: str, default: str = "completed") -> str:
+        if research_mode != "deep_beta" or not deep_beta_reasoning_steps:
+            return default
+        for item in deep_beta_reasoning_steps:
+            if str(item.get("stage")) != stage_name:
+                continue
+            raw = str(item.get("status") or "").strip().lower()
+            if raw in {"completed", "pass", "ok"}:
+                return "completed"
+            if raw in {"warning", "degraded", "failed", "error"}:
+                return "warning"
+            if raw in {"running", "started", "pending"}:
+                return "running"
+            return default
+        return default
+
     metadata_stage_entries = [
         {"name": "plan", "status": "completed"},
         *(
             [{"name": "deep_research", "status": "completed"}]
             if research_mode == "deep"
             else [
-                {"name": "deep_beta_scope", "status": "completed"},
-                {"name": "deep_beta_hypothesis_map", "status": "completed"},
-                {"name": "deep_beta_retrieval_budget", "status": "completed"},
-                {"name": "deep_beta_multi_pass_retrieval", "status": retrieval_status},
-                {"name": "deep_beta_chain_synthesis", "status": "completed"},
+                {"name": "deep_beta_scope", "status": _beta_stage_status("deep_beta_scope")},
+                {"name": "deep_beta_hypothesis_map", "status": _beta_stage_status("deep_beta_hypothesis_map")},
+                {"name": "deep_beta_retrieval_budget", "status": _beta_stage_status("deep_beta_retrieval_budget")},
+                {
+                    "name": "deep_beta_multi_pass_retrieval",
+                    "status": _beta_stage_status("deep_beta_multi_pass_retrieval", retrieval_status),
+                },
+                {"name": "deep_beta_evidence_audit", "status": _beta_stage_status("deep_beta_evidence_audit")},
+                {"name": "deep_beta_claim_graph", "status": _beta_stage_status("deep_beta_claim_graph")},
+                {
+                    "name": "deep_beta_counter_evidence_scan",
+                    "status": _beta_stage_status("deep_beta_counter_evidence_scan"),
+                },
+                {
+                    "name": "deep_beta_guideline_alignment",
+                    "status": _beta_stage_status("deep_beta_guideline_alignment"),
+                },
+                {
+                    "name": "deep_beta_risk_stratification",
+                    "status": _beta_stage_status("deep_beta_risk_stratification"),
+                },
+                {"name": "deep_beta_gap_fill", "status": _beta_stage_status("deep_beta_gap_fill")},
+                {
+                    "name": "deep_beta_parallel_reasoning",
+                    "status": (
+                        "completed"
+                        if deep_beta_parallel_reasoning_nodes
+                        and all(
+                            str(item.get("status") or "").strip().lower() == "completed"
+                            for item in deep_beta_parallel_reasoning_nodes
+                            if isinstance(item, dict)
+                        )
+                        else "warning"
+                        if deep_beta_parallel_reasoning_nodes
+                        else "skipped"
+                    ),
+                },
+                {
+                    "name": "deep_beta_evidence_verification",
+                    "status": _beta_stage_status("deep_beta_evidence_verification"),
+                },
+                {"name": "deep_beta_chain_synthesis", "status": _beta_stage_status("deep_beta_chain_synthesis")},
+                {"name": "deep_beta_report_synthesis", "status": _beta_stage_status("deep_beta_report_synthesis")},
+                {"name": "deep_beta_quality_gate", "status": _beta_stage_status("deep_beta_quality_gate")},
                 {
                     "name": "deep_beta_chain_verification",
                     "status": (
@@ -4118,6 +5642,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         verification_matrix_payload=verification_matrix_payload,
         flow_events=flow_events,
         deep_pass_count=len(deep_pass_summaries) if deep_pass_summaries else 1,
+        parallel_reasoning_nodes=deep_beta_parallel_reasoning_nodes,
+        evidence_verification=deep_beta_evidence_verification,
     )
     retrieval_route = _normalize_retrieval_route(
         query_plan.get("retrieval_route")
@@ -4148,16 +5674,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "rule_verification_enabled": rule_verification_enabled,
             "nli_model_enabled": nli_model_enabled,
             "rag_nli_enabled": rag_nli_enabled_runtime,
-            "rag_reranker_enabled": (
-                settings.rag_reranker_enabled
-                if rag_reranker_enabled_override is None
-                else rag_reranker_enabled_override
-            ),
-            "rag_graphrag_enabled": (
-                settings.rag_graphrag_enabled
-                if rag_graphrag_enabled_override is None
-                else rag_graphrag_enabled_override
-            ),
+            "rag_reranker_enabled": effective_rag_reranker_enabled,
+            "rag_graphrag_enabled": effective_rag_graphrag_enabled,
         },
         "keywords": planner_hints.get("keywords", []),
         "query_plan": query_plan,
@@ -4204,6 +5722,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "deep_research_profiles": deep_research_profiles,
         "deep_research_methodology": deep_research_method,
         "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+        "parallel_reasoning_nodes": (
+            deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
+        ),
+        "evidence_verification": (
+            deep_beta_evidence_verification if research_mode == "deep_beta" else {}
+        ),
         "retrieval_budgets": deep_beta_retrieval_budgets if research_mode == "deep_beta" else {},
         "chain_status": deep_beta_chain_status if research_mode == "deep_beta" else {},
         "source_target_objective": source_target_objective,
@@ -4243,16 +5767,8 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
                 "rule_verification_enabled": rule_verification_enabled,
                 "nli_model_enabled": nli_model_enabled,
                 "rag_nli_enabled": rag_nli_enabled_runtime,
-                "rag_reranker_enabled": (
-                    settings.rag_reranker_enabled
-                    if rag_reranker_enabled_override is None
-                    else rag_reranker_enabled_override
-                ),
-                "rag_graphrag_enabled": (
-                    settings.rag_graphrag_enabled
-                    if rag_graphrag_enabled_override is None
-                    else rag_graphrag_enabled_override
-                ),
+                "rag_reranker_enabled": effective_rag_reranker_enabled,
+                "rag_graphrag_enabled": effective_rag_graphrag_enabled,
             },
             "source_attempts": source_attempts,
             "source_errors": aggregated_errors,
@@ -4274,6 +5790,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "otel_export": otel_export_status,
             "deep_research_methodology": deep_research_method,
             "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+            "parallel_reasoning_nodes": (
+                deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
+            ),
+            "evidence_verification": (
+                deep_beta_evidence_verification if research_mode == "deep_beta" else {}
+            ),
             "pass_summaries": deep_pass_summaries if research_mode == "deep_beta" else [],
             "retrieval_budgets": (
                 deep_beta_retrieval_budgets
@@ -4332,6 +5854,12 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "research_mode": research_mode,
         "deep_pass_count": len(deep_pass_summaries),
         "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+        "parallel_reasoning_nodes": (
+            deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
+        ),
+        "evidence_verification": (
+            deep_beta_evidence_verification if research_mode == "deep_beta" else {}
+        ),
         "pass_summaries": deep_pass_summaries if research_mode == "deep_beta" else [],
         "retrieval_budgets": (
             deep_beta_retrieval_budgets

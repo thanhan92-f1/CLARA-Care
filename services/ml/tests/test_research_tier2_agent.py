@@ -1551,6 +1551,9 @@ def test_run_research_tier2_deep_beta_emits_beta_stages_and_metadata(monkeypatch
         and event.get("status") == "completed"
     ) == 4
     assert sum(1 for item in call_log if item.get("generation_enabled") is False) == 4
+    answer = str(result.get("answer", ""))
+    assert "```mermaid" in answer
+    assert "```chart-spec" in answer
 
 
 def test_run_research_tier2_deep_mode_does_not_emit_beta_stages(monkeypatch):
@@ -1644,3 +1647,77 @@ def test_run_research_tier2_deep_mode_does_not_emit_beta_stages(monkeypatch):
         str(event.get("stage", "")).startswith("deep_beta")
         for event in result.get("flow_events", [])
     )
+
+
+def test_strip_html_from_mermaid_blocks_removes_html_tags() -> None:
+    markdown = (
+        "```mermaid\n"
+        "flowchart TD\n"
+        "A[Start]<br/> --> B<p>Done</p>\n"
+        "```\n"
+    )
+    cleaned = tier2._strip_html_from_mermaid_blocks(markdown)
+    assert "<br" not in cleaned.lower()
+    assert "<p>" not in cleaned.lower()
+    assert "```mermaid" in cleaned
+
+
+def test_strip_html_from_mermaid_blocks_normalizes_inline_citations() -> None:
+    markdown = (
+        "```mermaid\n"
+        "flowchart TD\n"
+        "A[Claim] --> B[Khuyến nghị [pubmed-30879339] [1]]\n"
+        "```\n"
+    )
+    cleaned = tier2._strip_html_from_mermaid_blocks(markdown)
+    assert "[pubmed-30879339]" not in cleaned
+    assert "[1]" not in cleaned
+    assert "(pubmed-30879339)" in cleaned
+    assert "(1)" in cleaned
+
+
+def test_dedupe_duplicate_h2_headings_removes_repeated_conclusion() -> None:
+    markdown = (
+        "## Kết luận nhanh\n"
+        "A.\n\n"
+        "## Kết luận nhanh\n"
+        "B.\n\n"
+        "## Tóm tắt điều hành\n"
+        "C.\n"
+    )
+    cleaned = tier2._dedupe_duplicate_h2_headings(markdown)
+    assert cleaned.count("## Kết luận nhanh") == 1
+    assert cleaned.count("## Tóm tắt điều hành") == 1
+    assert "B." not in cleaned
+
+
+def test_dedupe_duplicate_h2_headings_handles_prefixed_required_heading() -> None:
+    markdown = (
+        "## Kết luận nhanh\n"
+        "Nội dung ngắn.\n\n"
+        "## Kết luận nhanh Warfarin có nguy cơ cao\n"
+        "Nội dung dài hơn và đầy đủ hơn.\n\n"
+        "## Tóm tắt điều hành\n"
+        "Tóm tắt.\n"
+    )
+    cleaned = tier2._dedupe_duplicate_h2_headings(markdown)
+    assert cleaned.count("## Kết luận nhanh") == 1
+    assert "## Kết luận nhanh Warfarin có nguy cơ cao" not in cleaned
+    assert "Nội dung dài hơn và đầy đủ hơn." in cleaned
+
+
+def test_ensure_deep_beta_report_artifacts_appends_missing_blocks() -> None:
+    report = "## Kết luận nhanh\nNo table no mermaid no chart."
+    fixed = tier2._ensure_deep_beta_report_artifacts(
+        markdown_text=report,
+        deep_pass_summaries=[{"pass_index": 1, "subquery": "warfarin interaction", "retrieved_count": 3}],
+        evidence_verification={
+            "supported_claims": ["c1"],
+            "unsupported_claims": [],
+            "contradicted_claims": [],
+        },
+        verification_summary={"support_ratio": 0.8},
+    )
+    assert "```mermaid" in fixed
+    assert "```chart-spec" in fixed
+    assert "| Pass | Subquery | Retrieved |" in fixed
