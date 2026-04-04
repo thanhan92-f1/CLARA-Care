@@ -24,6 +24,13 @@ type CodeFenceProps = {
   isChartSpec: boolean;
 };
 
+type ChartSpecData = {
+  type: "bar" | "pie";
+  title: string;
+  labels: string[];
+  values: number[];
+};
+
 type SectionTone = "brand" | "evidence" | "safety" | "warning" | "neutral";
 
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
@@ -133,19 +140,185 @@ function sanitizeMermaidSvg(svg: string): string {
       if (!current || current === "none" || current === "transparent") {
         node.setAttribute("fill", "#0f172a");
       }
+      if (!node.getAttribute("font-family")) {
+        node.setAttribute("font-family", "Inter, Segoe UI, Arial, sans-serif");
+      }
     });
 
     parsed.querySelectorAll("foreignObject *").forEach((node) => {
       const currentStyle = node.getAttribute("style") ?? "";
-      if (!/color\s*:/i.test(currentStyle)) {
-        node.setAttribute("style", `${currentStyle}${currentStyle ? ";" : ""}color:#0f172a;`);
-      }
+      const nextStyle = `${currentStyle}${currentStyle ? ";" : ""}color:#0f172a !important;`;
+      node.setAttribute("style", nextStyle);
     });
+
+    const svgEl = parsed.documentElement;
+    const styleEl = parsed.createElementNS("http://www.w3.org/2000/svg", "style");
+    styleEl.textContent = `
+      text, tspan, .label, .nodeLabel { fill: #0f172a !important; color: #0f172a !important; }
+      foreignObject *, .label foreignObject * { color: #0f172a !important; fill: #0f172a !important; }
+    `;
+    svgEl.insertBefore(styleEl, svgEl.firstChild);
 
     return parsed.documentElement.outerHTML || "";
   } catch {
     return "";
   }
+}
+
+function parseInlineList(input: string): string[] {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [];
+  return trimmed
+    .slice(1, -1)
+    .split(",")
+    .map((item) => item.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
+function parseNumberLike(input: string): number | null {
+  const normalized = input.trim().replace(/_/g, "");
+  if (!normalized) return null;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseChartSpec(code: string): ChartSpecData | null {
+  const raw = code.trim();
+  if (!raw) return null;
+
+  // JSON-like chart spec support
+  if (raw.startsWith("{") && raw.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const type = String(parsed.type || "").toLowerCase();
+      const labels = Array.isArray(parsed.x) ? parsed.x.map(String) : [];
+      const values = Array.isArray(parsed.y) ? parsed.y.map((item) => Number(item)) : [];
+      if ((type === "bar" || type === "pie") && labels.length && labels.length === values.length) {
+        return {
+          type,
+          title: String(parsed.title || "Biểu đồ dữ liệu"),
+          labels,
+          values: values.map((value) => (Number.isFinite(value) ? value : 0)),
+        };
+      }
+    } catch {
+      // Continue fallback parser
+    }
+  }
+
+  // Simple YAML-like parser for current backend contract.
+  const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  let type: "bar" | "pie" = "bar";
+  let title = "Biểu đồ dữ liệu";
+  let labels: string[] = [];
+  const values: number[] = [];
+  let inYBlock = false;
+
+  for (const line of lines) {
+    if (line.startsWith("type:")) {
+      const value = line.slice("type:".length).trim().toLowerCase();
+      if (value === "pie") type = "pie";
+      if (value === "bar") type = "bar";
+      inYBlock = false;
+      continue;
+    }
+    if (line.startsWith("title:")) {
+      title = line.slice("title:".length).trim().replace(/^["']|["']$/g, "") || title;
+      inYBlock = false;
+      continue;
+    }
+    if (line.startsWith("x:")) {
+      labels = parseInlineList(line.slice("x:".length));
+      inYBlock = false;
+      continue;
+    }
+    if (line.startsWith("y:")) {
+      const inline = line.slice("y:".length).trim();
+      if (inline.startsWith("[")) {
+        parseInlineList(inline).forEach((token) => {
+          const num = parseNumberLike(token);
+          if (num !== null) values.push(num);
+        });
+        inYBlock = false;
+      } else {
+        inYBlock = true;
+      }
+      continue;
+    }
+    if (inYBlock && line.startsWith("- ")) {
+      const num = parseNumberLike(line.slice(2));
+      if (num !== null) values.push(num);
+      continue;
+    }
+    inYBlock = false;
+  }
+
+  if (!labels.length || !values.length || labels.length !== values.length) {
+    return null;
+  }
+  return { type, title, labels, values };
+}
+
+function formatChartValue(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (Math.abs(value) >= 1000) return value.toLocaleString("vi-VN");
+  if (Math.abs(value) >= 1) return value.toFixed(2).replace(/\.00$/, "");
+  return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function ChartSpecPreview({ spec }: { spec: ChartSpecData }) {
+  const max = Math.max(...spec.values, 0.000001);
+  const total = spec.values.reduce((sum, item) => sum + Math.max(item, 0), 0);
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-900/60">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-300">
+        Chart Preview · {spec.type.toUpperCase()}
+      </p>
+      <h4 className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{spec.title}</h4>
+      {spec.type === "pie" ? (
+        <div className="mt-3 space-y-2">
+          {spec.labels.map((label, index) => {
+            const value = spec.values[index] ?? 0;
+            const pct = total > 0 ? (Math.max(value, 0) / total) * 100 : 0;
+            return (
+              <div key={`${label}-${index}`} className="space-y-1">
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                  <span>{label}</span>
+                  <span>{formatChartValue(value)} ({pct.toFixed(1)}%)</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-full rounded-full bg-cyan-500"
+                    style={{ width: `${Math.min(Math.max(pct, 0), 100)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {spec.labels.map((label, index) => {
+            const value = spec.values[index] ?? 0;
+            const ratio = Math.max(0, value) / max;
+            return (
+              <div key={`${label}-${index}`} className="grid grid-cols-[minmax(120px,1fr)_4fr_auto] items-center gap-2 text-xs">
+                <span className="truncate text-slate-600 dark:text-slate-300" title={label}>{label}</span>
+                <div className="h-2 overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-full rounded bg-indigo-500"
+                    style={{ width: `${Math.min(Math.max(ratio * 100, 0), 100)}%` }}
+                  />
+                </div>
+                <span className="font-medium text-slate-700 dark:text-slate-200">{formatChartValue(value)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function normalizeMermaidCode(code: string): string {
@@ -335,6 +508,10 @@ function flattenMarkdownChildren(value: unknown): string {
 function CodeFence({ code, language, isChartSpec }: CodeFenceProps) {
   const [notice, setNotice] = useState<"" | "success" | "error">("");
   const label = getFenceLanguageLabel(language);
+  const chartSpec = useMemo(
+    () => (isChartSpec ? parseChartSpec(code) : null),
+    [code, isChartSpec]
+  );
 
   const onCopy = async () => {
     if (!navigator?.clipboard) {
@@ -370,9 +547,14 @@ function CodeFence({ code, language, isChartSpec }: CodeFenceProps) {
       <pre className="overflow-x-auto p-3 text-[13px] leading-6">
         <code className={language ? `language-${language}` : undefined}>{code}</code>
       </pre>
+      {chartSpec ? (
+        <div className="border-t border-slate-700/80 bg-slate-950/40 p-3">
+          <ChartSpecPreview spec={chartSpec} />
+        </div>
+      ) : null}
       {isChartSpec ? (
         <p className="border-t border-slate-700/80 bg-slate-950/40 px-3 py-2 text-[11px] text-slate-300">
-          Block này là spec dữ liệu biểu đồ. Nếu UI có chart-engine, có thể dựng chart trực tiếp từ nội dung này.
+          Block này là spec dữ liệu biểu đồ. CLARA đã render preview trực tiếp nếu parse được.
         </p>
       ) : null}
     </section>
