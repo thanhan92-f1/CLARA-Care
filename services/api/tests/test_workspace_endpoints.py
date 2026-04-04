@@ -1,3 +1,7 @@
+import io
+import json
+import zipfile
+
 from fastapi.testclient import TestClient
 
 from clara_api.db.models import Query as QueryModel
@@ -18,7 +22,13 @@ def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_conversation(email: str, query_text: str, *, title: str = "") -> int:
+def _create_conversation(
+    email: str,
+    query_text: str,
+    *,
+    title: str = "",
+    response_text: str = "ok",
+) -> int:
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == email).first()
         assert user is not None
@@ -30,7 +40,7 @@ def _create_conversation(email: str, query_text: str, *, title: str = "") -> int
                 session_id=session_obj.id,
                 role="normal",
                 user_input=query_text,
-                response_text="ok",
+                response_text=response_text,
             )
         )
         db.commit()
@@ -586,3 +596,140 @@ def test_workspace_conversation_update_and_delete() -> None:
         json={"title": "Không còn"},
     )
     assert missing_response.status_code == 404
+
+
+def test_workspace_bulk_meta_update_and_share_listing() -> None:
+    email = "workspace-bulk-meta@example.com"
+    headers = _auth_headers(_login(email))
+
+    folder_response = client.post(
+        "/api/v1/workspace/folders",
+        headers=headers,
+        json={"name": "Bulk Folder"},
+    )
+    assert folder_response.status_code == 200
+    folder_id = folder_response.json()["id"]
+
+    channel_response = client.post(
+        "/api/v1/workspace/channels",
+        headers=headers,
+        json={"name": "Bulk Channel", "visibility": "private"},
+    )
+    assert channel_response.status_code == 200
+    channel_id = channel_response.json()["id"]
+
+    conversation_ids = [
+        _create_conversation(email, "bulk meta conversation 1"),
+        _create_conversation(email, "bulk meta conversation 2"),
+    ]
+
+    bulk_response = client.patch(
+        "/api/v1/workspace/conversations/meta/bulk",
+        headers=headers,
+        json={
+            "conversation_ids": conversation_ids,
+            "folder_id": folder_id,
+            "channel_id": channel_id,
+            "is_favorite": True,
+            "touched": False,
+        },
+    )
+    assert bulk_response.status_code == 200
+    bulk_payload = bulk_response.json()
+    assert bulk_payload["updated_count"] == 2
+    assert sorted(bulk_payload["updated_ids"]) == sorted(conversation_ids)
+
+    conversations_response = client.get("/api/v1/workspace/conversations", headers=headers)
+    assert conversations_response.status_code == 200
+    items = conversations_response.json()["items"]
+    by_id = {item["conversation_id"]: item for item in items}
+    for conversation_id in conversation_ids:
+        assert by_id[conversation_id]["folder_id"] == folder_id
+        assert by_id[conversation_id]["channel_id"] == channel_id
+        assert by_id[conversation_id]["is_favorite"] is True
+
+    create_share_response = client.post(
+        f"/api/v1/workspace/conversations/{conversation_ids[0]}/share",
+        headers=headers,
+        json={"expires_in_hours": 24},
+    )
+    assert create_share_response.status_code == 200
+
+    list_shares_response = client.get("/api/v1/workspace/shares", headers=headers)
+    assert list_shares_response.status_code == 200
+    shares = list_shares_response.json()
+    assert any(item["conversation_id"] == conversation_ids[0] for item in shares)
+
+
+def test_workspace_export_markdown_and_docx() -> None:
+    email = "workspace-export@example.com"
+    headers = _auth_headers(_login(email))
+    conversation_id = _create_conversation(
+        email,
+        "Warfarin và ibuprofen có nguy cơ xuất huyết.",
+        title="Export Thread",
+    )
+
+    markdown_response = client.get(
+        f"/api/v1/workspace/conversations/{conversation_id}/export?format=markdown",
+        headers=headers,
+    )
+    assert markdown_response.status_code == 200
+    assert markdown_response.headers["content-type"].startswith("text/markdown")
+    assert "# Export Thread" in markdown_response.text
+    assert "Warfarin và ibuprofen" in markdown_response.text
+
+    docx_response = client.get(
+        f"/api/v1/workspace/conversations/{conversation_id}/export?format=docx",
+        headers=headers,
+    )
+    assert docx_response.status_code == 200
+    assert (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        in docx_response.headers["content-type"]
+    )
+    assert len(docx_response.content) > 200
+
+    with zipfile.ZipFile(io.BytesIO(docx_response.content), mode="r") as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    assert "Export Thread" in document_xml
+
+
+def test_workspace_export_docx_preserves_markdown_styles_and_mermaid_block() -> None:
+    email = "workspace-export-rich@example.com"
+    headers = _auth_headers(_login(email))
+    markdown_answer = (
+        "## Kết luận nhanh\n\n"
+        "**Nguy cơ cao** khi phối hợp warfarin và NSAID.\n\n"
+        "| Thuốc | Mức độ |\n"
+        "|---|---|\n"
+        "| Warfarin + Ibuprofen | High |\n\n"
+        "```mermaid\n"
+        "flowchart TD\n"
+        "A[Warfarin] --> B[Nguy cơ xuất huyết]\n"
+        "```"
+    )
+    response_text = json.dumps({"result": {"answer_markdown": markdown_answer}}, ensure_ascii=False)
+    conversation_id = _create_conversation(
+        email,
+        "Hãy đánh giá tương tác warfarin với thuốc giảm đau.",
+        title="Rich Export Thread",
+        response_text=response_text,
+    )
+
+    docx_response = client.get(
+        f"/api/v1/workspace/conversations/{conversation_id}/export?format=docx",
+        headers=headers,
+    )
+    assert docx_response.status_code == 200
+    assert (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        in docx_response.headers["content-type"]
+    )
+
+    with zipfile.ZipFile(io.BytesIO(docx_response.content), mode="r") as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    assert "Rich Export Thread" in document_xml
+    assert "w:b" in document_xml
+    assert "w:tbl" in document_xml
+    assert "Mermaid Diagram" in document_xml

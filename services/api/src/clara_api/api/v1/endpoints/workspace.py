@@ -6,11 +6,12 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from clara_api.core.config import get_settings
+from clara_api.core.markdown_docx import build_docx_bytes_from_markdown as render_docx_bytes
 from clara_api.core.rbac import require_roles
 from clara_api.core.security import TokenPayload
 from clara_api.db.models import Query as QueryModel
@@ -25,6 +26,8 @@ from clara_api.db.models import (
 )
 from clara_api.db.session import get_db
 from clara_api.schemas import (
+    WorkspaceBulkConversationMetaUpdateRequest,
+    WorkspaceBulkConversationMetaUpdateResponse,
     WorkspaceChannelCreateRequest,
     WorkspaceChannelResponse,
     WorkspaceChannelUpdateRequest,
@@ -32,9 +35,10 @@ from clara_api.schemas import (
     WorkspaceConversationListResponse,
     WorkspaceConversationMetaResponse,
     WorkspaceConversationMetaUpdateRequest,
-    WorkspaceConversationUpdateRequest,
     WorkspaceConversationShareCreateRequest,
+    WorkspaceConversationShareListItem,
     WorkspaceConversationShareResponse,
+    WorkspaceConversationUpdateRequest,
     WorkspaceFolderCreateRequest,
     WorkspaceFolderResponse,
     WorkspaceFolderUpdateRequest,
@@ -333,6 +337,52 @@ def _extract_answer_text(raw_text: str) -> str:
         if isinstance(value, str) and value.strip():
             return value
     return stripped
+
+
+def _slug_file_name(value: str) -> str:
+    slug = _slugify(value)
+    return slug[:80] or "conversation"
+
+
+def _build_conversation_export_markdown(
+    *,
+    conversation_id: int,
+    title: str,
+    rows: list[QueryModel],
+) -> str:
+    now_text = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+    lines: list[str] = [
+        f"# {title}",
+        "",
+        f"- Conversation ID: `{conversation_id}`",
+        f"- Exported at: `{now_text}`",
+        f"- Messages: `{len(rows)}`",
+        "",
+    ]
+    for index, row in enumerate(rows, start=1):
+        created = _as_utc_aware(row.created_at) or datetime.now(tz=UTC)
+        lines.append(f"## Turn {index}")
+        lines.append("")
+        lines.append(f"**Time:** `{created.isoformat()}`")
+        lines.append("")
+        lines.append("### User")
+        lines.append("")
+        lines.append((row.user_input or "").strip() or "(empty)")
+        lines.append("")
+        lines.append("### Assistant")
+        lines.append("")
+        lines.append(_extract_answer_text(row.response_text))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _render_docx_document_xml(markdown_text: str) -> str:
+    # Backward-compatible shim for test utilities that may still import this helper.
+    return markdown_text
+
+
+def _build_docx_bytes_from_markdown(markdown_text: str) -> bytes:
+    return render_docx_bytes(markdown_text)
 
 
 def _as_utc_aware(value: datetime | None) -> datetime | None:
@@ -797,12 +847,12 @@ def update_workspace_conversation_meta(
 ) -> WorkspaceConversationMetaResponse:
     user = _get_user_by_token(db, token)
     _get_owned_conversation(db, user_id=user.id, conversation_id=conversation_id)
-
-    folder_id = payload.folder_id
-    channel_id = payload.channel_id
-    if folder_id is not None:
+    fields_set = payload.model_fields_set
+    folder_id = payload.folder_id if "folder_id" in fields_set else None
+    channel_id = payload.channel_id if "channel_id" in fields_set else None
+    if "folder_id" in fields_set and folder_id is not None:
         _get_owned_folder(db, user_id=user.id, folder_id=folder_id)
-    if channel_id is not None:
+    if "channel_id" in fields_set and channel_id is not None:
         _get_owned_channel(db, user_id=user.id, channel_id=channel_id)
 
     meta = db.execute(
@@ -816,8 +866,10 @@ def update_workspace_conversation_meta(
         db.add(meta)
         db.flush()
 
-    meta.folder_id = folder_id
-    meta.channel_id = channel_id
+    if "folder_id" in fields_set:
+        meta.folder_id = folder_id
+    if "channel_id" in fields_set:
+        meta.channel_id = channel_id
     if payload.is_favorite is not None:
         meta.is_favorite = bool(payload.is_favorite)
     if payload.touched:
@@ -833,6 +885,82 @@ def update_workspace_conversation_meta(
         is_favorite=bool(meta.is_favorite),
         last_opened_at=meta.last_opened_at,
         updated_at=meta.updated_at,
+    )
+
+
+@router.patch(
+    "/conversations/meta/bulk",
+    response_model=WorkspaceBulkConversationMetaUpdateResponse,
+)
+def bulk_update_workspace_conversation_meta(
+    payload: WorkspaceBulkConversationMetaUpdateRequest,
+    token: TokenPayload = USER_ROLE_DEP,
+    db: Session = Depends(get_db),
+) -> WorkspaceBulkConversationMetaUpdateResponse:
+    user = _get_user_by_token(db, token)
+    fields_set = payload.model_fields_set
+
+    target_ids = sorted(
+        {int(value) for value in payload.conversation_ids if isinstance(value, int) and value > 0}
+    )[:200]
+    if not target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Danh sách conversation_ids không hợp lệ.",
+        )
+
+    if "folder_id" in fields_set and payload.folder_id is not None:
+        _get_owned_folder(db, user_id=user.id, folder_id=payload.folder_id)
+    if "channel_id" in fields_set and payload.channel_id is not None:
+        _get_owned_channel(db, user_id=user.id, channel_id=payload.channel_id)
+
+    owned_ids = db.execute(
+        select(SessionModel.id).where(
+            SessionModel.user_id == user.id,
+            SessionModel.id.in_(target_ids),
+        )
+    ).scalars().all()
+    owned_set = {int(value) for value in owned_ids}
+    if not owned_set:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy conversation hợp lệ.",
+        )
+
+    metas = (
+        db.execute(
+            select(WorkspaceConversationMeta).where(
+                WorkspaceConversationMeta.user_id == user.id,
+                WorkspaceConversationMeta.session_id.in_(owned_set),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    meta_by_session = {meta.session_id: meta for meta in metas}
+    updated_ids: list[int] = []
+    touched_at = datetime.now(tz=UTC)
+    for conversation_id in sorted(owned_set):
+        meta = meta_by_session.get(conversation_id)
+        if meta is None:
+            meta = WorkspaceConversationMeta(user_id=user.id, session_id=conversation_id)
+            db.add(meta)
+            db.flush()
+        if "folder_id" in fields_set:
+            meta.folder_id = payload.folder_id
+        if "channel_id" in fields_set:
+            meta.channel_id = payload.channel_id
+        if payload.is_favorite is not None:
+            meta.is_favorite = bool(payload.is_favorite)
+        if payload.touched:
+            meta.last_opened_at = touched_at
+        db.add(meta)
+        updated_ids.append(conversation_id)
+
+    db.commit()
+    return WorkspaceBulkConversationMetaUpdateResponse(
+        updated_count=len(updated_ids),
+        updated_ids=updated_ids,
     )
 
 
@@ -984,6 +1112,134 @@ def revoke_conversation_share(
     db.add(share)
     db.commit()
     return {"revoked": True}
+
+
+@router.get("/shares", response_model=list[WorkspaceConversationShareListItem])
+def list_workspace_shares(
+    limit: int = 60,
+    active_only: bool = True,
+    token: TokenPayload = USER_ROLE_DEP,
+    db: Session = Depends(get_db),
+) -> list[WorkspaceConversationShareListItem]:
+    user = _get_user_by_token(db, token)
+    safe_limit = max(1, min(200, int(limit)))
+    stmt = (
+        select(WorkspaceConversationShare)
+        .where(WorkspaceConversationShare.user_id == user.id)
+        .order_by(
+            WorkspaceConversationShare.updated_at.desc(),
+            WorkspaceConversationShare.id.desc(),
+        )
+        .limit(safe_limit)
+    )
+    if active_only:
+        stmt = stmt.where(WorkspaceConversationShare.is_active.is_(True))
+    shares = db.execute(stmt).scalars().all()
+    if not shares:
+        return []
+
+    session_ids = [share.session_id for share in shares]
+    sessions = (
+        db.execute(
+            select(SessionModel).where(
+                SessionModel.user_id == user.id,
+                SessionModel.id.in_(session_ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    session_by_id = {session_obj.id: session_obj for session_obj in sessions}
+    message_counts = dict(
+        db.execute(
+            select(QueryModel.session_id, func.count(QueryModel.id))
+            .where(QueryModel.session_id.in_(session_ids))
+            .group_by(QueryModel.session_id)
+        ).all()
+    )
+    last_message_map = dict(
+        db.execute(
+            select(QueryModel.session_id, func.max(QueryModel.created_at))
+            .where(QueryModel.session_id.in_(session_ids))
+            .group_by(QueryModel.session_id)
+        ).all()
+    )
+
+    payload: list[WorkspaceConversationShareListItem] = []
+    for share in shares:
+        session_obj = session_by_id.get(share.session_id)
+        if session_obj is None:
+            continue
+        title = (session_obj.title or "").strip() or f"Conversation #{session_obj.id}"
+        payload.append(
+            WorkspaceConversationShareListItem(
+                conversation_id=session_obj.id,
+                conversation_title=title,
+                message_count=int(message_counts.get(session_obj.id, 0) or 0),
+                last_message_at=last_message_map.get(session_obj.id),
+                share_token=share.share_token,
+                public_url=_public_share_url(share.share_token),
+                is_active=bool(share.is_active),
+                expires_at=share.expires_at,
+                created_at=share.created_at,
+                updated_at=share.updated_at,
+            )
+        )
+    return payload
+
+
+@router.get(
+    "/conversations/{conversation_id}/export",
+    responses={
+        200: {
+            "content": {
+                "text/markdown": {},
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+            }
+        }
+    },
+)
+def export_workspace_conversation(
+    conversation_id: int,
+    format: str = Query(default="markdown", pattern="^(markdown|docx)$"),
+    token: TokenPayload = USER_ROLE_DEP,
+    db: Session = Depends(get_db),
+) -> Response:
+    user = _get_user_by_token(db, token)
+    session_obj = _get_owned_conversation(db, user_id=user.id, conversation_id=conversation_id)
+    rows = (
+        db.execute(
+            select(QueryModel)
+            .where(QueryModel.session_id == conversation_id)
+            .order_by(QueryModel.created_at.asc(), QueryModel.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    title = (session_obj.title or "").strip() or f"Conversation {conversation_id}"
+    markdown_text = _build_conversation_export_markdown(
+        conversation_id=conversation_id,
+        title=title,
+        rows=rows,
+    )
+    safe_name = _slug_file_name(title)
+    selected_format = format.strip().lower()
+
+    if selected_format == "docx":
+        payload = _build_docx_bytes_from_markdown(markdown_text)
+        filename = f"{safe_name}.docx"
+        return Response(
+            content=payload,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    filename = f"{safe_name}.md"
+    return Response(
+        content=markdown_text.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get(
