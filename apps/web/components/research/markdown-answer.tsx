@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toPng } from "html-to-image";
 
 export type MarkdownAnswerCitation = {
   title: string;
@@ -485,6 +486,36 @@ function normalizeAnswer(answer: string): string {
   return answer.replace(/\r\n/g, "\n").trim();
 }
 
+function sanitizeFileName(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function buildExportBaseName(answer: string): string {
+  const firstHeading = answer
+    .split("\n")
+    .find((line) => line.trim().startsWith("## "))
+    ?.replace(/^##\s+/, "")
+    .trim();
+  const date = new Date().toISOString().replace(/[:.]/g, "-");
+  const title = sanitizeFileName(firstHeading || "clara-research-answer");
+  return `${title}-${date}`;
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function getFenceLanguageLabel(language?: string): string {
   if (!language) return "text";
   if (language === "ts" || language === "tsx") return "typescript";
@@ -563,6 +594,9 @@ function CodeFence({ code, language, isChartSpec }: CodeFenceProps) {
 
 export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProps) {
   const normalized = useMemo(() => normalizeAnswer(answer), [answer]);
+  const [exportNotice, setExportNotice] = useState<string>("");
+  const contentId = useMemo(() => `markdown-answer-${Math.random().toString(36).slice(2, 10)}`, []);
+  const exportBaseName = useMemo(() => buildExportBaseName(normalized), [normalized]);
   const citationMap = useMemo(
     () =>
       citations.reduce<Record<string, MarkdownAnswerCitation>>((acc, item, index) => {
@@ -576,9 +610,65 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
     return null;
   }
 
+  const onExportMarkdown = () => {
+    const blob = new Blob([normalized], { type: "text/markdown;charset=utf-8" });
+    downloadBlob(blob, `${exportBaseName}.md`);
+    setExportNotice("Đã xuất file Markdown.");
+    window.setTimeout(() => setExportNotice(""), 1400);
+  };
+
+  const onExportDoc = () => {
+    const node = document.getElementById(contentId);
+    const html = node?.innerHTML ?? "";
+    const safeHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body>${html}</body></html>`;
+    const blob = new Blob([safeHtml], { type: "application/msword;charset=utf-8" });
+    downloadBlob(blob, `${exportBaseName}.doc`);
+    setExportNotice("Đã xuất file DOC.");
+    window.setTimeout(() => setExportNotice(""), 1400);
+  };
+
+  const onCopyMarkdown = async () => {
+    if (!navigator?.clipboard) {
+      setExportNotice("Clipboard không khả dụng.");
+      window.setTimeout(() => setExportNotice(""), 1400);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(normalized);
+      setExportNotice("Đã copy markdown.");
+    } catch {
+      setExportNotice("Không thể copy markdown.");
+    }
+    window.setTimeout(() => setExportNotice(""), 1400);
+  };
+
+  const onExportPng = async () => {
+    const node = document.getElementById(contentId);
+    if (!node) {
+      setExportNotice("Không tìm thấy nội dung để xuất PNG.");
+      window.setTimeout(() => setExportNotice(""), 1400);
+      return;
+    }
+    try {
+      const dataUrl = await toPng(node, {
+        cacheBust: true,
+        pixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
+        backgroundColor: "#ffffff",
+      });
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      downloadBlob(blob, `${exportBaseName}.png`);
+      setExportNotice("Đã xuất PNG.");
+    } catch {
+      setExportNotice("Xuất PNG thất bại.");
+    }
+    window.setTimeout(() => setExportNotice(""), 1600);
+  };
+
   return (
     <div className="medical-markdown prose prose-slate max-w-none dark:prose-invert prose-p:leading-7 prose-li:leading-7 prose-headings:tracking-tight">
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-cyan-300/70 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-900 dark:border-cyan-700/70 dark:bg-cyan-950/35 dark:text-cyan-100">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-300/70 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-900 dark:border-cyan-700/70 dark:bg-cyan-950/35 dark:text-cyan-100">
+        <div className="flex flex-wrap items-center gap-2">
         <span>Báo cáo y khoa có cấu trúc</span>
         <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5 text-[10px] text-cyan-700 dark:border-cyan-600/70 dark:bg-cyan-900/45 dark:text-cyan-200">
           markdown + citation
@@ -586,7 +676,42 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
         <span className="rounded-full border border-cyan-300/70 bg-white/70 px-2 py-0.5 text-[10px] text-cyan-700 dark:border-cyan-600/70 dark:bg-cyan-900/45 dark:text-cyan-200">
           mermaid/table ready
         </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onCopyMarkdown}
+            className="rounded-md border border-cyan-300/70 bg-white/70 px-2 py-1 text-[10px] font-semibold text-cyan-800 transition hover:bg-white dark:border-cyan-600/70 dark:bg-cyan-900/50 dark:text-cyan-100"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            onClick={onExportMarkdown}
+            className="rounded-md border border-cyan-300/70 bg-white/70 px-2 py-1 text-[10px] font-semibold text-cyan-800 transition hover:bg-white dark:border-cyan-600/70 dark:bg-cyan-900/50 dark:text-cyan-100"
+          >
+            Xuất .md
+          </button>
+          <button
+            type="button"
+            onClick={onExportDoc}
+            className="rounded-md border border-cyan-300/70 bg-white/70 px-2 py-1 text-[10px] font-semibold text-cyan-800 transition hover:bg-white dark:border-cyan-600/70 dark:bg-cyan-900/50 dark:text-cyan-100"
+          >
+            Xuất .doc
+          </button>
+          <button
+            type="button"
+            onClick={() => void onExportPng()}
+            className="rounded-md border border-cyan-300/70 bg-white/70 px-2 py-1 text-[10px] font-semibold text-cyan-800 transition hover:bg-white dark:border-cyan-600/70 dark:bg-cyan-900/50 dark:text-cyan-100"
+          >
+            Xuất .png
+          </button>
+        </div>
       </div>
+      {exportNotice ? (
+        <p className="mb-2 text-[11px] text-cyan-700 dark:text-cyan-300">{exportNotice}</p>
+      ) : null}
+      <div id={contentId}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
@@ -695,6 +820,7 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
       >
         {normalized}
       </ReactMarkdown>
+      </div>
     </div>
   );
 }
