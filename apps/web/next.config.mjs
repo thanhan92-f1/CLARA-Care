@@ -1,6 +1,16 @@
+const proxyTarget = (process.env.NEXT_SERVER_API_PROXY || "http://api:8000/api/v1").replace(/\/+$/, "");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true
+  reactStrictMode: true,
+  async rewrites() {
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${proxyTarget}/:path*`,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

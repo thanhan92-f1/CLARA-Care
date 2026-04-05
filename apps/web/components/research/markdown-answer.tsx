@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toPng } from "html-to-image";
+import { exportWorkspaceDocxFromMarkdown } from "@/lib/workspace";
 
 export type MarkdownAnswerCitation = {
   title: string;
@@ -482,8 +483,178 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   );
 }
 
+const UNICODE_BULLET_PATTERN = /^(\s*)[•●▪◦]\s+(.*)$/;
+const MERMAID_START_PREFIXES = [
+  "flowchart",
+  "graph ",
+  "sequencediagram",
+  "classdiagram",
+  "statediagram",
+  "erdiagram",
+  "journey",
+  "gantt",
+  "pie",
+  "mindmap",
+  "timeline",
+];
+
+function normalizeUnicodeBullets(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const match = line.match(UNICODE_BULLET_PATTERN);
+    if (match) {
+      out.push(`${match[1]}- ${match[2]}`);
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+function normalizeTableBlocks(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith("|")) {
+      out.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      const prev = out.length > 0 ? out[out.length - 1].trim() : "";
+      let next = "";
+      let cursor = i + 1;
+      while (cursor < lines.length) {
+        const candidate = lines[cursor].trim();
+        if (candidate) {
+          next = candidate;
+          break;
+        }
+        cursor += 1;
+      }
+      if (prev.startsWith("|") && next.startsWith("|")) {
+        continue;
+      }
+    }
+
+    out.push(line);
+  }
+
+  return out.join("\n");
+}
+
+function collectNonEmptyBlock(lines: string[], start: number): [string[], number] {
+  const block: string[] = [];
+  let cursor = start;
+  while (cursor < lines.length) {
+    const value = lines[cursor];
+    const trimmed = value.trim();
+    if (!trimmed) break;
+    if (trimmed.startsWith("```")) break;
+    if (cursor > start && trimmed.startsWith("#")) break;
+    block.push(value);
+    cursor += 1;
+  }
+  return [block, cursor];
+}
+
+function autoFenceSpecialBlocks(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let prevNonEmpty = "";
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    const lowered = trimmed.toLowerCase();
+
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      if (trimmed) prevNonEmpty = trimmed;
+      index += 1;
+      continue;
+    }
+
+    if (inFence) {
+      out.push(line);
+      if (trimmed) prevNonEmpty = trimmed;
+      index += 1;
+      continue;
+    }
+
+    if (MERMAID_START_PREFIXES.some((prefix) => lowered.startsWith(prefix))) {
+      const [block, next] = collectNonEmptyBlock(lines, index);
+      out.push("```mermaid");
+      out.push(...block);
+      out.push("```");
+      if (next < lines.length && lines[next].trim() === "") {
+        out.push(lines[next]);
+        index = next + 1;
+      } else {
+        index = next;
+      }
+      prevNonEmpty = "```mermaid";
+      continue;
+    }
+
+    if (lowered.startsWith("type:") && /chart[- ]spec/i.test(prevNonEmpty)) {
+      const [block, next] = collectNonEmptyBlock(lines, index);
+      out.push("```chart-spec");
+      out.push(...block);
+      out.push("```");
+      if (next < lines.length && lines[next].trim() === "") {
+        out.push(lines[next]);
+        index = next + 1;
+      } else {
+        index = next;
+      }
+      prevNonEmpty = "```chart-spec";
+      continue;
+    }
+
+    out.push(line);
+    if (trimmed) prevNonEmpty = trimmed;
+    index += 1;
+  }
+
+  return out.join("\n");
+}
+
 function normalizeAnswer(answer: string): string {
-  return answer.replace(/\r\n/g, "\n").trim();
+  const base = answer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const bulletFixed = normalizeUnicodeBullets(base);
+  const tableFixed = normalizeTableBlocks(bulletFixed);
+  const fenced = autoFenceSpecialBlocks(tableFixed);
+  return fenced.trim();
 }
 
 function sanitizeFileName(value: string): string {
@@ -617,14 +788,22 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
     window.setTimeout(() => setExportNotice(""), 1400);
   };
 
-  const onExportDoc = () => {
-    const node = document.getElementById(contentId);
-    const html = node?.innerHTML ?? "";
-    const safeHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body>${html}</body></html>`;
-    const blob = new Blob([safeHtml], { type: "application/msword;charset=utf-8" });
-    downloadBlob(blob, `${exportBaseName}.doc`);
-    setExportNotice("Đã xuất file DOC.");
-    window.setTimeout(() => setExportNotice(""), 1400);
+  const onExportDocx = async () => {
+    try {
+      const blob = await exportWorkspaceDocxFromMarkdown({
+        markdown: normalized,
+        title: exportBaseName,
+      });
+      downloadBlob(blob, `${exportBaseName}.docx`);
+      setExportNotice("Đã xuất file DOCX.");
+    } catch (cause) {
+      const reason =
+        cause instanceof Error && cause.message
+          ? cause.message
+          : "Lỗi không xác định.";
+      setExportNotice(`Xuất DOCX thất bại: ${reason}`);
+    }
+    window.setTimeout(() => setExportNotice(""), 1600);
   };
 
   const onCopyMarkdown = async () => {
@@ -694,10 +873,10 @@ export default function MarkdownAnswer({ answer, citations }: MarkdownAnswerProp
           </button>
           <button
             type="button"
-            onClick={onExportDoc}
+            onClick={() => void onExportDocx()}
             className="rounded-md border border-cyan-300/70 bg-white/70 px-2 py-1 text-[10px] font-semibold text-cyan-800 transition hover:bg-white dark:border-cyan-600/70 dark:bg-cyan-900/50 dark:text-cyan-100"
           >
-            Xuất .doc
+            Xuất .docx
           </button>
           <button
             type="button"

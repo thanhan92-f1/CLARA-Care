@@ -89,6 +89,19 @@ export type WorkspaceConversationShare = {
   updated_at: string;
 };
 
+export type WorkspaceConversationShareListItem = {
+  conversation_id: number;
+  conversation_title: string;
+  message_count: number;
+  last_message_at?: string | null;
+  share_token: string;
+  public_url: string;
+  is_active: boolean;
+  expires_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type WorkspacePublicConversationMessage = {
   query_id: number;
   role: string;
@@ -247,6 +260,27 @@ export async function updateWorkspaceConversationMeta(
   return data;
 }
 
+export async function bulkUpdateWorkspaceConversationMeta(payload: {
+  conversationIds: number[];
+  folderId?: number | null;
+  channelId?: number | null;
+  isFavorite?: boolean;
+  touched?: boolean;
+}): Promise<{ updated_count: number; updated_ids: number[] }> {
+  const body: Record<string, unknown> = {
+    conversation_ids: payload.conversationIds,
+    touched: payload.touched ?? true,
+  };
+  if ("folderId" in payload) body.folder_id = payload.folderId ?? null;
+  if ("channelId" in payload) body.channel_id = payload.channelId ?? null;
+  if ("isFavorite" in payload) body.is_favorite = payload.isFavorite;
+  const { data } = await api.patch<{ updated_count: number; updated_ids: number[] }>(
+    "/api/v1/workspace/conversations/meta/bulk",
+    body
+  );
+  return data;
+}
+
 export async function updateWorkspaceConversation(
   conversationId: number,
   payload: { title: string }
@@ -290,6 +324,19 @@ export async function getWorkspaceConversationShare(
   return data;
 }
 
+export async function listWorkspaceShares(params?: {
+  limit?: number;
+  activeOnly?: boolean;
+}): Promise<WorkspaceConversationShareListItem[]> {
+  const { data } = await api.get<WorkspaceConversationShareListItem[]>("/api/v1/workspace/shares", {
+    params: {
+      limit: params?.limit ?? 80,
+      active_only: params?.activeOnly ?? true,
+    },
+  });
+  return data;
+}
+
 export async function revokeWorkspaceConversationShare(
   conversationId: number
 ): Promise<{ revoked: boolean }> {
@@ -297,6 +344,28 @@ export async function revokeWorkspaceConversationShare(
     `/api/v1/workspace/conversations/${conversationId}/share`
   );
   return data;
+}
+
+export async function exportWorkspaceConversation(
+  conversationId: number,
+  format: "markdown" | "docx"
+): Promise<Blob> {
+  const response = await api.get(`/api/v1/workspace/conversations/${conversationId}/export`, {
+    params: { format },
+    responseType: "blob",
+  });
+  return response.data as Blob;
+}
+
+export async function exportWorkspaceDocxFromMarkdown(payload: {
+  markdown: string;
+  title?: string;
+}): Promise<Blob> {
+  const response = await api.post("/api/v1/workspace/export/docx", payload, {
+    responseType: "blob",
+    timeout: 5 * 60 * 1000,
+  });
+  return response.data as Blob;
 }
 
 export async function getWorkspacePublicConversation(

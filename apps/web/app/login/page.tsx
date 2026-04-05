@@ -30,13 +30,15 @@ export default function LoginPage() {
       const refreshToken = response.data?.refresh_token as string | undefined;
       const serverRole = response.data?.role as "normal" | "researcher" | "doctor" | "admin" | undefined;
 
-      if (!accessToken || !refreshToken) {
-        throw new Error("Phản hồi đăng nhập thiếu token.");
+      if (!accessToken) {
+        throw new Error("Phản hồi đăng nhập thiếu access token.");
       }
 
       const nextRole = serverRole ?? "normal";
       setAccessToken(accessToken);
-      setRefreshToken(refreshToken);
+      if (refreshToken) {
+        setRefreshToken(refreshToken);
+      }
       setStoredRole(nextRole);
       const targetPath = resolvePostLoginPath({
         nextPath:
@@ -45,7 +47,15 @@ export default function LoginPage() {
             : null,
         role: nextRole
       });
-      router.push(targetPath);
+      router.replace(targetPath);
+      router.refresh();
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          if (window.location.pathname === "/login") {
+            window.location.assign(targetPath);
+          }
+        }, 350);
+      }
     } catch (submitError) {
       const fallbackMessage = "Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.";
       if (submitError instanceof Error && submitError.message) {
