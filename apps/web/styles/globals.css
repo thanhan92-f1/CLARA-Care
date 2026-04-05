@@ -90,24 +90,17 @@
     Arial,
     sans-serif;
   --font-display:
-    "Orbitron",
-    "Oxanium",
-    "Exo 2",
-    "Rajdhani",
-    "DIN Condensed",
-    "Roboto Condensed",
-    "Arial Narrow",
-    "Helvetica Neue Condensed Bold",
-    "Sora",
-    "Manrope",
     "Be Vietnam Pro",
-    "Avenir Next",
+    "Inter",
+    "Noto Sans",
+    "Manrope",
     "Segoe UI",
+    "Calibri",
+    "Arial",
+    "Avenir Next",
     ui-sans-serif,
     system-ui,
     -apple-system,
-    Helvetica,
-    Arial,
     sans-serif;
 }
 
