@@ -11,6 +11,7 @@ import { ConversationItem, ResearchResult } from "@/components/research/lib/rese
 import ChatComposer from "@/components/chat-workspace/chat-composer";
 import ChatTurn from "@/components/chat-workspace/chat-turn";
 import PageShell from "@/components/ui/page-shell";
+import { clearTokens, getRole, type UserRole } from "@/lib/auth-store";
 import {
   RESEARCH_TIER2_JOB_POLL_MS,
   ResearchExecutionMode,
@@ -292,6 +293,8 @@ export default function ChatWorkspacePage() {
   const [scopeManagerTab, setScopeManagerTab] = useState<"folders" | "channels">("folders");
   const [scopeFolderDraft, setScopeFolderDraft] = useState("");
   const [scopeChannelDraft, setScopeChannelDraft] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountRole, setAccountRole] = useState<UserRole>("normal");
 
   const isFastResearchMode = selectedResearchMode === "fast";
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
@@ -378,6 +381,10 @@ export default function ChatWorkspacePage() {
       document.body.style.overflow = previousOverflow;
     };
   }, [isMobileSidebarOpen]);
+
+  useEffect(() => {
+    setAccountRole(getRole());
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1024px)");
@@ -1117,6 +1124,20 @@ export default function ChatWorkspacePage() {
     setIsMobileSidebarOpen(false);
     setIsCommandPaletteOpen(false);
     setCommandPaletteQuery("");
+    setAccountMenuOpen(false);
+  }, []);
+
+  const onGoBack = useCallback(() => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    window.location.href = "/dashboard";
+  }, []);
+
+  const onLogout = useCallback(() => {
+    clearTokens();
+    window.location.href = "/login";
   }, []);
 
   useEffect(() => {
@@ -1163,6 +1184,7 @@ export default function ChatWorkspacePage() {
         setCommandPaletteQuery("");
         setIsScopeManagerOpen(false);
         setIsMobileSidebarOpen(false);
+        setAccountMenuOpen(false);
       }
 
       if (
@@ -1988,7 +2010,7 @@ export default function ChatWorkspacePage() {
       variant="plain"
       title=""
     >
-      <div className="relative min-h-[82dvh]">
+      <div className="relative h-[100dvh] min-h-[100dvh]">
         {isMobileSidebarOpen ? (
           <button
             type="button"
@@ -1998,10 +2020,10 @@ export default function ChatWorkspacePage() {
           />
         ) : null}
 
-        <div className="grid min-h-[82dvh] gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
         <aside
           className={[
-            "chrome-panel fixed inset-y-3 left-3 z-50 flex w-[min(88vw,23rem)] flex-col overflow-hidden rounded-[1.35rem] p-4 transition-transform duration-200 lg:static lg:inset-auto lg:z-0 lg:w-auto lg:max-h-[82dvh] lg:translate-x-0",
+            "chrome-panel fixed inset-y-3 left-3 z-50 flex w-[min(88vw,23rem)] flex-col overflow-hidden rounded-[1.35rem] p-4 transition-transform duration-200 lg:static lg:inset-auto lg:z-0 lg:h-full lg:w-auto lg:max-h-none lg:translate-x-0",
             isMobileSidebarOpen ? "translate-x-0" : "-translate-x-[110%] lg:translate-x-0",
           ].join(" ")}
         >
@@ -2337,7 +2359,7 @@ export default function ChatWorkspacePage() {
                 <div
                   ref={conversationListViewportRef}
                   onScroll={onConversationListScroll}
-                  className="max-h-[54dvh] overflow-y-auto pr-1"
+                  className="h-[calc(100dvh-32rem)] min-h-[16rem] overflow-y-auto pr-1 lg:h-[calc(100dvh-34rem)]"
                 >
                   <div
                     style={{ height: `${conversationVirtualizer.getTotalSize()}px` }}
@@ -2603,9 +2625,62 @@ export default function ChatWorkspacePage() {
             </section>
             ) : null}
           </div>
+
+          <div className="mt-3 border-t border-[color:var(--shell-border)] pt-3">
+            <div className="relative">
+              {accountMenuOpen ? (
+                <div className="absolute bottom-full left-0 mb-2 w-full rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-2 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={onGoBack}
+                    className="mb-1 inline-flex min-h-[34px] w-full items-center justify-start rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                  >
+                    ← Go back
+                  </button>
+                  <Link
+                    href="/dashboard"
+                    className="mb-1 inline-flex min-h-[34px] w-full items-center justify-start rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                  >
+                    Go to CLARA workspace
+                  </Link>
+                  <Link
+                    href="/"
+                    className="mb-1 inline-flex min-h-[34px] w-full items-center justify-start rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                  >
+                    Go to CLARA website
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="inline-flex min-h-[34px] w-full items-center justify-start rounded-lg border border-rose-300/70 bg-rose-500/10 px-3 text-xs font-semibold text-rose-700 dark:border-rose-700/70 dark:text-rose-300"
+                  >
+                    Đăng xuất
+                  </button>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setAccountMenuOpen((prev) => !prev)}
+                className="inline-flex min-h-[42px] w-full items-center justify-between rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3"
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-cyan-300/60 bg-cyan-500/10 text-[11px] font-bold text-cyan-700 dark:border-cyan-700/60 dark:text-cyan-300">
+                    {accountRole.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="text-left">
+                    <span className="block text-xs font-semibold text-[var(--text-primary)]">Account Manager</span>
+                    <span className="block text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">{accountRole}</span>
+                  </span>
+                </span>
+                <span className="text-xs text-[var(--text-muted)]">{accountMenuOpen ? "▲" : "▼"}</span>
+              </button>
+            </div>
+          </div>
         </aside>
 
-        <section className="chrome-panel flex min-h-[82dvh] flex-col overflow-hidden rounded-[1.35rem] p-4 sm:p-5">
+        <section className="chrome-panel flex h-full min-h-0 flex-col overflow-hidden rounded-[1.35rem] p-4 sm:p-5">
           <header className="border-b border-[color:var(--shell-border)] pb-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-start gap-2">
