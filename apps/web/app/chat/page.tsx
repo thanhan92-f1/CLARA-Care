@@ -27,7 +27,6 @@ import {
   streamResearchTier2Job,
 } from "@/lib/research";
 import {
-  WorkspaceChannel,
   WorkspaceConversationShare,
   WorkspaceConversationShareListItem,
   WorkspaceConversationItem,
@@ -38,16 +37,13 @@ import {
   WorkspaceSummary,
   bulkUpdateWorkspaceConversationMeta,
   createWorkspaceConversationShare,
-  createWorkspaceChannel,
   createWorkspaceFolder,
   createWorkspaceNote,
-  deleteWorkspaceChannel,
   deleteWorkspaceConversation,
   deleteWorkspaceFolder,
   deleteWorkspaceNote,
   getWorkspaceConversationShare,
   getWorkspaceSummary,
-  listWorkspaceChannels,
   listWorkspaceConversations,
   listWorkspaceFolders,
   listWorkspaceNotes,
@@ -57,7 +53,6 @@ import {
   listWorkspaceSuggestions,
   revokeWorkspaceConversationShare,
   searchWorkspace,
-  updateWorkspaceChannel,
   updateWorkspaceConversation,
   updateWorkspaceConversationMeta,
   updateWorkspaceFolder,
@@ -244,7 +239,6 @@ export default function ChatWorkspacePage() {
 
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [folders, setFolders] = useState<WorkspaceFolder[]>([]);
-  const [channels, setChannels] = useState<WorkspaceChannel[]>([]);
   const [conversations, setConversations] = useState<WorkspaceConversationItem[]>([]);
   const [notes, setNotes] = useState<WorkspaceNote[]>([]);
   const [suggestions, setSuggestions] = useState<WorkspaceSuggestion[]>([]);
@@ -264,12 +258,11 @@ export default function ChatWorkspacePage() {
   const [noteTagsDraft, setNoteTagsDraft] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [conversationTitleDraft, setConversationTitleDraft] = useState("");
+  const [folderManagerSearch, setFolderManagerSearch] = useState("");
 
   const [selectedFolderFilterId, setSelectedFolderFilterId] = useState<number | null>(null);
-  const [selectedChannelFilterId, setSelectedChannelFilterId] = useState<number | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [bulkFolderTarget, setBulkFolderTarget] = useState<string>("skip");
-  const [bulkChannelTarget, setBulkChannelTarget] = useState<string>("skip");
 
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [activeConversationMeta, setActiveConversationMeta] = useState<WorkspaceConversationItem | null>(null);
@@ -290,9 +283,7 @@ export default function ChatWorkspacePage() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [visibleConversationLimit, setVisibleConversationLimit] = useState(40);
   const [isScopeManagerOpen, setIsScopeManagerOpen] = useState(false);
-  const [scopeManagerTab, setScopeManagerTab] = useState<"folders" | "channels">("folders");
   const [scopeFolderDraft, setScopeFolderDraft] = useState("");
-  const [scopeChannelDraft, setScopeChannelDraft] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountRole, setAccountRole] = useState<UserRole>("normal");
 
@@ -340,11 +331,11 @@ export default function ChatWorkspacePage() {
       conversations: mergedConversations.length,
       messages: localMessages,
       folders: folders.length,
-      channels: channels.length,
+      channels: 0,
       notes: notes.length,
       pinned_notes: pinnedNotes,
     } satisfies WorkspaceSummary;
-  }, [channels.length, folders.length, mergedConversations, notes, summary]);
+  }, [folders.length, mergedConversations, notes, summary]);
   const focusById = useCallback((id: string) => {
     const element = document.getElementById(id);
     if (!element) return;
@@ -506,7 +497,6 @@ export default function ChatWorkspacePage() {
       const items = await listWorkspaceConversations({
         limit: 80,
         folderId: selectedFolderFilterId ?? undefined,
-        channelId: selectedChannelFilterId ?? undefined,
         favoritesOnly,
       });
       setWorkspaceApiUnavailable(false);
@@ -566,7 +556,6 @@ export default function ChatWorkspacePage() {
   }, [
     activeConversationId,
     favoritesOnly,
-    selectedChannelFilterId,
     selectedFolderFilterId,
     workspaceApiUnavailable,
   ]);
@@ -606,10 +595,9 @@ export default function ChatWorkspacePage() {
     setIsLoadingWorkspace(true);
     setError("");
     try {
-      const [summaryResult, foldersResult, channelsResult] = await Promise.allSettled([
+      const [summaryResult, foldersResult] = await Promise.allSettled([
         getWorkspaceSummary(),
         listWorkspaceFolders(false),
-        listWorkspaceChannels(false),
       ]);
 
       if (summaryResult.status === "fulfilled") {
@@ -618,10 +606,6 @@ export default function ChatWorkspacePage() {
       if (foldersResult.status === "fulfilled") {
         setFolders(foldersResult.value);
       }
-      if (channelsResult.status === "fulfilled") {
-        setChannels(channelsResult.value);
-      }
-
       await Promise.allSettled([
         loadNotes(),
         loadSuggestions(),
@@ -632,11 +616,9 @@ export default function ChatWorkspacePage() {
       const bootstrapErrors: string[] = [];
       if (summaryResult.status === "rejected") bootstrapErrors.push("summary");
       if (foldersResult.status === "rejected") bootstrapErrors.push("folders");
-      if (channelsResult.status === "rejected") bootstrapErrors.push("channels");
       const workspaceMissingSignals = [
         summaryResult.status === "rejected" ? summaryResult.reason : null,
         foldersResult.status === "rejected" ? foldersResult.reason : null,
-        channelsResult.status === "rejected" ? channelsResult.reason : null,
       ].filter((item) => item !== null);
       if (workspaceMissingSignals.some((item) => isNotFoundLikeError(item))) {
         setWorkspaceApiUnavailable(true);
@@ -810,7 +792,7 @@ export default function ChatWorkspacePage() {
 
   useEffect(() => {
     setVisibleConversationLimit(40);
-  }, [searchText, selectedFolderFilterId, selectedChannelFilterId, favoritesOnly]);
+  }, [searchText, selectedFolderFilterId, favoritesOnly]);
   const conversationVirtualizer = useVirtualizer({
     count: conversationVirtualItems.length,
     getScrollElement: () => conversationListViewportRef.current,
@@ -832,11 +814,11 @@ export default function ChatWorkspacePage() {
     if (searchResult?.folders?.length) return searchResult.folders;
     return folders;
   }, [folders, searchResult]);
-
-  const channelFilterList = useMemo(() => {
-    if (searchResult?.channels?.length) return searchResult.channels;
-    return channels;
-  }, [channels, searchResult]);
+  const folderManagerItems = useMemo(() => {
+    const keyword = folderManagerSearch.trim().toLowerCase();
+    if (!keyword) return folders;
+    return folders.filter((folder) => folder.name.toLowerCase().includes(keyword));
+  }, [folderManagerSearch, folders]);
 
   const setConversationMetaPatch = useCallback(
     (conversationId: number, patch: Partial<WorkspaceConversationItem>) => {
@@ -886,7 +868,7 @@ export default function ChatWorkspacePage() {
   }, []);
 
   const applyBulkMetaUpdate = useCallback(
-    async (payload: { folderId?: number | null; channelId?: number | null; isFavorite?: boolean }) => {
+    async (payload: { folderId?: number | null; isFavorite?: boolean }) => {
       if (workspaceApiUnavailable) {
         setNotice("Workspace API chưa sẵn sàng nên bulk metadata đang tạm khóa.");
         return;
@@ -899,7 +881,6 @@ export default function ChatWorkspacePage() {
         const result = await bulkUpdateWorkspaceConversationMeta({
           conversationIds: selectedConversationIds,
           folderId: payload.folderId,
-          channelId: payload.channelId,
           isFavorite: payload.isFavorite,
           touched: false,
         });
@@ -911,10 +892,6 @@ export default function ChatWorkspacePage() {
                   ...item,
                   folder_id:
                     payload.folderId !== undefined ? (payload.folderId ?? null) : item.folder_id,
-                  channel_id:
-                    payload.channelId !== undefined
-                      ? (payload.channelId ?? null)
-                      : item.channel_id,
                   is_favorite:
                     payload.isFavorite !== undefined ? payload.isFavorite : item.is_favorite,
                 }
@@ -931,10 +908,6 @@ export default function ChatWorkspacePage() {
                     ...item,
                     folder_id:
                       payload.folderId !== undefined ? (payload.folderId ?? null) : item.folder_id,
-                    channel_id:
-                      payload.channelId !== undefined
-                        ? (payload.channelId ?? null)
-                        : item.channel_id,
                     is_favorite:
                       payload.isFavorite !== undefined ? payload.isFavorite : item.is_favorite,
                   }
@@ -949,8 +922,6 @@ export default function ChatWorkspacePage() {
               ...prev,
               folder_id:
                 payload.folderId !== undefined ? (payload.folderId ?? null) : prev.folder_id,
-              channel_id:
-                payload.channelId !== undefined ? (payload.channelId ?? null) : prev.channel_id,
               is_favorite:
                 payload.isFavorite !== undefined ? payload.isFavorite : prev.is_favorite,
             };
@@ -1393,7 +1364,7 @@ export default function ChatWorkspacePage() {
               : nowIso,
           last_message_at: nowIso,
           folder_id: activeConversationMeta?.folder_id ?? null,
-          channel_id: activeConversationMeta?.channel_id ?? null,
+          channel_id: null,
           is_favorite: activeConversationMeta?.is_favorite ?? false,
         };
         setLocalFallbackConversations((prev) => {
@@ -1459,7 +1430,6 @@ export default function ChatWorkspacePage() {
 
   const onUpdateActiveConversationMeta = async (payload: {
     folderId?: number | null;
-    channelId?: number | null;
     isFavorite?: boolean;
   }) => {
     if (workspaceApiUnavailable) {
@@ -1473,7 +1443,6 @@ export default function ChatWorkspacePage() {
       const updated = await updateWorkspaceConversationMeta(conversationId, payload);
       setConversationMetaPatch(conversationId, {
         folder_id: updated.folder_id ?? null,
-        channel_id: updated.channel_id ?? null,
         is_favorite: updated.is_favorite,
       });
       await refreshSummary();
@@ -1519,46 +1488,6 @@ export default function ChatWorkspacePage() {
       setNotice("Đã xóa folder.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể xóa folder.");
-    }
-  };
-
-  const onCreateChannel = async (nameInput?: string) => {
-    const name = parsePromptText(nameInput ?? scopeChannelDraft);
-    if (!name) return;
-    try {
-      const created = await createWorkspaceChannel({ name });
-      setChannels((prev) => [created, ...prev]);
-      setScopeChannelDraft("");
-      await refreshSummary();
-      setNotice(`Đã tạo channel \"${created.name}\".`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể tạo channel.");
-    }
-  };
-
-  const onRenameChannel = async (channel: WorkspaceChannel) => {
-    const name = parsePromptText(window.prompt("Đổi tên channel", channel.name));
-    if (!name) return;
-    try {
-      const updated = await updateWorkspaceChannel(channel.id, { name });
-      setChannels((prev) => prev.map((item) => (item.id === channel.id ? updated : item)));
-      setNotice(`Đã cập nhật channel \"${updated.name}\".`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể đổi tên channel.");
-    }
-  };
-
-  const onDeleteChannel = async (channel: WorkspaceChannel) => {
-    const confirmed = window.confirm(`Xóa channel "${channel.name}"?`);
-    if (!confirmed) return;
-    try {
-      await deleteWorkspaceChannel(channel.id);
-      setChannels((prev) => prev.filter((item) => item.id !== channel.id));
-      if (selectedChannelFilterId === channel.id) setSelectedChannelFilterId(null);
-      await refreshSummary();
-      setNotice("Đã xóa channel.");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể xóa channel.");
     }
   };
 
@@ -2002,9 +1931,6 @@ export default function ChatWorkspacePage() {
     [displayedConversations.length]
   );
 
-  const activeFolderValue = String(activeConversationMeta?.folder_id ?? "none");
-  const activeChannelValue = String(activeConversationMeta?.channel_id ?? "none");
-
   return (
     <PageShell
       variant="plain"
@@ -2129,7 +2055,6 @@ export default function ChatWorkspacePage() {
               type="button"
               onClick={() => {
                 setSelectedFolderFilterId(null);
-                setSelectedChannelFilterId(null);
                 setFavoritesOnly(false);
               }}
               className="inline-flex min-h-[34px] items-center rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
@@ -2142,7 +2067,7 @@ export default function ChatWorkspacePage() {
             {(workspaceLeftView === "all" || workspaceLeftView === "chat") ? (
               <section className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-2.5">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
-                  Scope
+                  Folder
                 </p>
                 <div className="grid grid-cols-1 gap-2">
                   <select
@@ -2160,52 +2085,24 @@ export default function ChatWorkspacePage() {
                       </option>
                     ))}
                   </select>
-                  <select
-                    value={String(selectedChannelFilterId ?? "none")}
-                    onChange={(event) => {
-                      const raw = event.target.value;
-                      setSelectedChannelFilterId(raw === "none" ? null : Number(raw));
-                    }}
-                    className="min-h-[34px] rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-panel)] px-2 text-[11px] text-[var(--text-primary)]"
-                  >
-                    <option value="none">Channel: All</option>
-                    {channelFilterList.map((channel) => (
-                      <option key={`filter-channel-${channel.id}`} value={String(channel.id)}>
-                        Channel: #{channel.name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const draft = window.prompt("Tên folder mới");
-                      if (!draft) return;
-                      void onCreateFolder(draft);
-                    }}
-                    className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-secondary)]"
-                  >
-                    + Folder
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const draft = window.prompt("Tên channel mới");
-                      if (!draft) return;
-                      void onCreateChannel(draft);
-                    }}
-                    className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-secondary)]"
-                  >
-                    + Channel
-                  </button>
                   <button
                     type="button"
                     onClick={() => setIsScopeManagerOpen(true)}
                     className="rounded border border-cyan-300/70 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300"
                   >
-                    Manage
+                    Manage folders
                   </button>
+                  {selectedFolderFilterId !== null ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFolderFilterId(null)}
+                      className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-secondary)]"
+                    >
+                      Clear filter
+                    </button>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -2270,33 +2167,6 @@ export default function ChatWorkspacePage() {
                     >
                       Apply folder
                     </button>
-                    <select
-                      value={bulkChannelTarget}
-                      disabled={workspaceApiUnavailable}
-                      onChange={(event) => setBulkChannelTarget(event.target.value)}
-                      className="min-h-[28px] rounded border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-1.5 text-[10px] text-[var(--text-secondary)]"
-                    >
-                      <option value="skip">Channel: Skip</option>
-                      <option value="none">Channel: None</option>
-                      {channels.map((channel) => (
-                        <option key={`bulk-channel-${channel.id}`} value={String(channel.id)}>
-                          Channel: #{channel.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={workspaceApiUnavailable}
-                      onClick={() => {
-                        if (bulkChannelTarget === "skip") return;
-                        const channelId =
-                          bulkChannelTarget === "none" ? null : Number(bulkChannelTarget);
-                        void applyBulkMetaUpdate({ channelId });
-                      }}
-                      className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-secondary)] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Apply channel
-                    </button>
                     <button
                       type="button"
                       disabled={workspaceApiUnavailable}
@@ -2324,13 +2194,6 @@ export default function ChatWorkspacePage() {
                     <button
                       type="button"
                       disabled={workspaceApiUnavailable}
-                      onClick={() => void applyBulkMetaUpdate({ channelId: null })}
-                      className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-secondary)] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Clear channel
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => void bulkExportSelectedConversations("markdown")}
                       className="rounded border border-cyan-300/70 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-700"
                     >
@@ -2814,7 +2677,7 @@ export default function ChatWorkspacePage() {
             ) : null}
             {workspaceApiUnavailable ? (
               <div className="mt-2 rounded-lg border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:text-amber-200">
-                Workspace API đang chạy chế độ tương thích. Lịch sử chat vẫn được giữ qua local cache; một số thao tác nâng cao (share/folder/channel) tạm giới hạn.
+                Workspace API đang chạy chế độ tương thích. Lịch sử chat vẫn được giữ qua local cache; một số thao tác nâng cao (share/folder) tạm giới hạn.
               </div>
             ) : null}
             {shareInfo ? (
@@ -2823,80 +2686,6 @@ export default function ChatWorkspacePage() {
                 <p className="mt-1 break-all">{shareInfo.public_url}</p>
               </div>
             ) : null}
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              <div>
-                <label htmlFor="active-folder" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  Folder
-                </label>
-                <select
-                  id="active-folder"
-                  value={activeFolderValue}
-                  disabled={!activeConversationId || workspaceApiUnavailable}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    const folderId = raw === "none" ? null : Number(raw);
-                    void onUpdateActiveConversationMeta({ folderId });
-                  }}
-                  className="mt-1 min-h-[36px] w-full rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 text-sm text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value="none">No folder</option>
-                  {folders.map((folder) => (
-                    <option key={folder.id} value={String(folder.id)}>
-                      {folder.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="active-channel" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  Channel
-                </label>
-                <select
-                  id="active-channel"
-                  value={activeChannelValue}
-                  disabled={!activeConversationId || workspaceApiUnavailable}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    const channelId = raw === "none" ? null : Number(raw);
-                    void onUpdateActiveConversationMeta({ channelId });
-                  }}
-                  className="mt-1 min-h-[36px] w-full rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 text-sm text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value="none">No channel</option>
-                  {channels.map((channel) => (
-                    <option key={channel.id} value={String(channel.id)}>
-                      #{channel.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setScopeManagerTab("folders");
-                  setIsScopeManagerOpen(true);
-                }}
-                disabled={workspaceApiUnavailable}
-                className="mt-[1.1rem] inline-flex min-h-[36px] items-center justify-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-              >
-                + Folder
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setScopeManagerTab("channels");
-                  setIsScopeManagerOpen(true);
-                }}
-                disabled={workspaceApiUnavailable}
-                className="mt-[1.1rem] inline-flex min-h-[36px] items-center justify-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
-              >
-                + Channel
-              </button>
-            </div>
           </header>
 
           <div ref={conversationScrollRef} className="flex-1 space-y-4 overflow-y-auto py-4 pr-1">
@@ -2960,144 +2749,135 @@ export default function ChatWorkspacePage() {
                 </button>
               </div>
 
-              <div className="mb-3 inline-flex rounded-full border border-[color:var(--shell-border)] bg-[var(--surface-muted)] p-1">
-                <button
-                  type="button"
-                  onClick={() => setScopeManagerTab("folders")}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs font-semibold",
-                    scopeManagerTab === "folders"
-                      ? "bg-cyan-500 text-white"
-                      : "text-[var(--text-secondary)]",
-                  ].join(" ")}
-                >
-                  Folders ({folders.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScopeManagerTab("channels")}
-                  className={[
-                    "rounded-full px-3 py-1 text-xs font-semibold",
-                    scopeManagerTab === "channels"
-                      ? "bg-cyan-500 text-white"
-                      : "text-[var(--text-secondary)]",
-                  ].join(" ")}
-                >
-                  Channels ({channels.length})
-                </button>
+              <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Folders</p>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">{folders.length}</p>
+                </div>
+                <div className="rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Filter</p>
+                  <p className="line-clamp-1 text-sm font-semibold text-[var(--text-primary)]">
+                    {selectedFolderFilterId
+                      ? folders.find((folder) => folder.id === selectedFolderFilterId)?.name || "Custom"
+                      : "All folders"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">Selected chats</p>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">{selectedConversationIds.length}</p>
+                </div>
               </div>
 
-              {scopeManagerTab === "folders" ? (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <input
-                      value={scopeFolderDraft}
-                      onChange={(event) => setScopeFolderDraft(event.target.value)}
-                      placeholder="Tên folder mới..."
-                      className="min-h-[38px] flex-1 rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm text-[var(--text-primary)]"
-                    />
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    value={scopeFolderDraft}
+                    onChange={(event) => setScopeFolderDraft(event.target.value)}
+                    placeholder="Tên folder mới..."
+                    className="min-h-[38px] flex-1 rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm text-[var(--text-primary)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void onCreateFolder()}
+                    className="inline-flex min-h-[38px] items-center rounded-lg border border-cyan-300/70 bg-cyan-500/10 px-3 text-xs font-semibold text-cyan-700 dark:text-cyan-300"
+                  >
+                    + Create folder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFolderFilterId(null)}
+                    className="inline-flex min-h-[38px] items-center rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-xs font-semibold text-[var(--text-secondary)]"
+                  >
+                    Clear filter
+                  </button>
+                </div>
+
+                <input
+                  value={folderManagerSearch}
+                  onChange={(event) => setFolderManagerSearch(event.target.value)}
+                  placeholder="Tìm folder..."
+                  className="min-h-[36px] w-full rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm text-[var(--text-primary)]"
+                />
+
+                <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-2">
                     <button
                       type="button"
-                      onClick={() => void onCreateFolder()}
-                      className="inline-flex min-h-[38px] items-center rounded-lg border border-cyan-300/70 bg-cyan-500/10 px-3 text-xs font-semibold text-cyan-700 dark:text-cyan-300"
+                      onClick={() => setSelectedFolderFilterId(null)}
+                      className="line-clamp-1 text-left text-sm font-semibold text-[var(--text-primary)] hover:text-cyan-700"
                     >
-                      + Create folder
+                      All folders
                     </button>
+                    <span className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[10px] text-[var(--text-muted)]">
+                      Filter reset
+                    </span>
                   </div>
-                  <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
-                    {folders.map((folder) => (
-                      <div
-                        key={`scope-folder-${folder.id}`}
-                        className="flex items-center justify-between rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-2"
+
+                  {folderManagerItems.map((folder) => (
+                    <div
+                      key={`scope-folder-${folder.id}`}
+                      className={[
+                        "flex items-center justify-between rounded-lg border bg-[var(--surface-muted)] px-2.5 py-2",
+                        selectedFolderFilterId === folder.id
+                          ? "border-cyan-300/70"
+                          : "border-[color:var(--shell-border)]",
+                      ].join(" ")}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFolderFilterId(folder.id)}
+                        className="line-clamp-1 text-left text-sm text-[var(--text-primary)] hover:text-cyan-700"
                       >
+                        {folder.name}
+                      </button>
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => setSelectedFolderFilterId(folder.id)}
-                          className="line-clamp-1 text-left text-sm text-[var(--text-primary)] hover:text-cyan-700"
+                          className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)]"
                         >
-                          {folder.name}
+                          Filter
                         </button>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void onRenameFolder(folder)}
-                            className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)]"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void onDeleteFolder(folder)}
-                            className="rounded border border-rose-300/70 px-2 py-1 text-[11px] text-rose-600"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {!folders.length ? (
-                      <p className="rounded-lg border border-dashed border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-3 text-xs text-[var(--text-muted)]">
-                        Chưa có folder.
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <input
-                      value={scopeChannelDraft}
-                      onChange={(event) => setScopeChannelDraft(event.target.value)}
-                      placeholder="Tên channel mới..."
-                      className="min-h-[38px] flex-1 rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 text-sm text-[var(--text-primary)]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void onCreateChannel()}
-                      className="inline-flex min-h-[38px] items-center rounded-lg border border-cyan-300/70 bg-cyan-500/10 px-3 text-xs font-semibold text-cyan-700 dark:text-cyan-300"
-                    >
-                      + Create channel
-                    </button>
-                  </div>
-                  <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
-                    {channels.map((channel) => (
-                      <div
-                        key={`scope-channel-${channel.id}`}
-                        className="flex items-center justify-between rounded-lg border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-2.5 py-2"
-                      >
                         <button
                           type="button"
-                          onClick={() => setSelectedChannelFilterId(channel.id)}
-                          className="line-clamp-1 text-left text-sm text-[var(--text-primary)] hover:text-cyan-700"
+                          disabled={!activeConversationId || workspaceApiUnavailable}
+                          onClick={() => void onUpdateActiveConversationMeta({ folderId: folder.id })}
+                          className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)] disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          #{channel.name}
+                          Assign active
                         </button>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void onRenameChannel(channel)}
-                            className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)]"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void onDeleteChannel(channel)}
-                            className="rounded border border-rose-300/70 px-2 py-1 text-[11px] text-rose-600"
-                          >
-                            Delete
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          disabled={!selectedConversationIds.length || workspaceApiUnavailable}
+                          onClick={() => void applyBulkMetaUpdate({ folderId: folder.id })}
+                          className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Assign selected
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onRenameFolder(folder)}
+                          className="rounded border border-[color:var(--shell-border)] px-2 py-1 text-[11px] text-[var(--text-secondary)]"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onDeleteFolder(folder)}
+                          className="rounded border border-rose-300/70 px-2 py-1 text-[11px] text-rose-600"
+                        >
+                          Delete
+                        </button>
                       </div>
-                    ))}
-                    {!channels.length ? (
-                      <p className="rounded-lg border border-dashed border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-3 text-xs text-[var(--text-muted)]">
-                        Chưa có channel.
-                      </p>
-                    ) : null}
-                  </div>
+                    </div>
+                  ))}
+                  {!folderManagerItems.length ? (
+                    <p className="rounded-lg border border-dashed border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-3 py-3 text-xs text-[var(--text-muted)]">
+                      Không tìm thấy folder phù hợp.
+                    </p>
+                  ) : null}
                 </div>
-              )}
+              </div>
             </div>
           </div>
         ) : null}
