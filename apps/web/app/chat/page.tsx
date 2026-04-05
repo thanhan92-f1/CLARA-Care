@@ -2595,11 +2595,6 @@ export default function ChatWorkspacePage() {
                 </details>
               </div>
             </div>
-            {!activeConversationId ? (
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Chưa có conversation được lưu, nên nút xuất Word đang tạm khóa. Gửi câu hỏi đầu tiên để tạo conversation rồi xuất `.docx`.
-              </p>
-            ) : null}
             {workspaceApiUnavailable ? (
               <div className="mt-2 rounded-lg border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:text-amber-200">
                 Workspace API đang chạy chế độ tương thích. Lịch sử chat vẫn được giữ qua local cache; một số thao tác nâng cao (share/folder) tạm giới hạn.
