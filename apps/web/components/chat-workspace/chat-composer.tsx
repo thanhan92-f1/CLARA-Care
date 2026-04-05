@@ -64,9 +64,11 @@ export default function ChatComposer(props: ChatComposerProps) {
 
       <form onSubmit={onSubmit} className="space-y-2.5">
         <textarea
+          id="chat-composer-input"
           value={query}
           onChange={(event) => onChangeQuery(event.target.value)}
           disabled={isSubmitting}
+          aria-label="Chat composer input"
           placeholder="Hỏi CLARA bất cứ điều gì về an toàn thuốc, DDI, guideline..."
           className="min-h-[102px] w-full rounded-2xl border border-[color:var(--shell-border)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--text-primary)] outline-none transition focus:border-cyan-300/70 focus:ring-2 focus:ring-cyan-200/40 dark:focus:ring-cyan-900/40"
         />
@@ -127,7 +129,14 @@ export default function ChatComposer(props: ChatComposerProps) {
         </div>
       </form>
 
-      <div className="mt-2 min-h-[1.2rem] text-xs">
+      <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+        Shortcuts: <kbd className="rounded border border-[color:var(--shell-border)] px-1">Ctrl/⌘+K</kbd> search,{" "}
+        <kbd className="rounded border border-[color:var(--shell-border)] px-1">Ctrl/⌘+Shift+N</kbd> new chat,{" "}
+        <kbd className="rounded border border-[color:var(--shell-border)] px-1">Ctrl/⌘+Shift+P</kbd> command,{" "}
+        <kbd className="rounded border border-[color:var(--shell-border)] px-1">/</kbd> focus input
+      </p>
+
+      <div className="mt-1 min-h-[1.2rem] text-xs">
         {liveJobId || liveStatusNote ? (
           <p className="text-cyan-700 dark:text-cyan-300">
             {liveStatusNote || "Đang xử lý tier2 job..."}
