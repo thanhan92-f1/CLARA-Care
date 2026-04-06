@@ -436,12 +436,12 @@ export const SPONSORS = [
   {
     name: "HiTechCloud",
     href: "https://hitechcloud.vn",
-    logo: "https://hitechcloud.vn/wp-content/uploads/2025/01/hitechcloudvn.svg",
+    logo: "/partners/hitechcloud.svg",
   },
   {
     name: "BNIX",
     href: "https://bnix.vn",
-    logo: "https://bnix.vn/wp-content/uploads/2023/05/bnix-logo.png",
+    logo: "/partners/bnix-local.png",
   },
 ] as const satisfies readonly Sponsor[];
 
