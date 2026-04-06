@@ -28,24 +28,6 @@ export default function ClaraKp3Landing() {
 
   return (
     <main className="bg-slate-50 text-slate-900">
-      <style jsx global>{`
-        .glass-panel {
-          background: rgba(255, 255, 255, 0.72);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-        }
-
-        .ai-gradient-text {
-          background: linear-gradient(135deg, #006875 0%, #00daf3 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-        }
-
-        .ai-glow {
-          box-shadow: 0 0 40px -10px rgba(0, 218, 243, 0.24);
-        }
-      `}</style>
-
       <nav className="fixed inset-x-0 top-0 z-50 border-b border-slate-200/70 bg-white/85 px-4 py-4 shadow-sm backdrop-blur-xl min-[1024px]:px-8">
         <div className="mx-auto flex w-full max-w-[1380px] items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -96,7 +78,12 @@ export default function ClaraKp3Landing() {
             <h1 className="mb-6 text-4xl font-black leading-tight tracking-tight text-[#001f3d] min-[640px]:text-5xl min-[1280px]:text-7xl">
               Clinical Agent for
               <br />
-              <span className="ai-gradient-text">Retrieval &amp; Analysis</span>
+              <span
+                className="bg-[linear-gradient(135deg,#006875_0%,#00daf3_100%)] bg-clip-text text-transparent"
+                style={{ WebkitTextFillColor: "transparent" }}
+              >
+                Retrieval &amp; Analysis
+              </span>
             </h1>
 
             <p className="mb-10 max-w-xl text-lg leading-relaxed text-slate-600">
@@ -123,7 +110,14 @@ export default function ClaraKp3Landing() {
 
           <div className="relative">
             <div className="absolute -top-20 -right-20 h-[420px] w-[420px] rounded-full bg-cyan-200/35 blur-[100px]" />
-            <div className="glass-panel ai-glow relative overflow-hidden rounded-2xl border border-slate-200/70 p-1 shadow-2xl">
+            <div
+              className="relative overflow-hidden rounded-2xl border border-slate-200/70 p-1 shadow-2xl backdrop-blur-xl"
+              style={{
+                background: "rgba(255, 255, 255, 0.72)",
+                WebkitBackdropFilter: "blur(20px)",
+                boxShadow: "0 0 40px -10px rgba(0, 218, 243, 0.24)",
+              }}
+            >
               <img
                 alt="Medical AI Data Network Visualization"
                 className="h-auto w-full rounded-xl"
@@ -216,7 +210,12 @@ export default function ClaraKp3Landing() {
           <div className="grid grid-cols-2 gap-12 min-[1280px]:grid-cols-4">
             {shortMetrics.map((metric) => (
               <div key={metric.label} className="text-center">
-                <div className="mb-2 text-5xl font-black ai-gradient-text">{metric.value}</div>
+                <div
+                  className="mb-2 bg-[linear-gradient(135deg,#006875_0%,#00daf3_100%)] bg-clip-text text-5xl font-black text-transparent"
+                  style={{ WebkitTextFillColor: "transparent" }}
+                >
+                  {metric.value}
+                </div>
                 <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-100">{metric.label}</p>
               </div>
             ))}
@@ -316,7 +315,14 @@ export default function ClaraKp3Landing() {
       </section>
 
       <section className="px-4 py-24 min-[1024px]:px-8">
-        <div className="glass-panel ai-glow relative mx-auto max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#001f3d] p-10 text-center min-[1024px]:p-16">
+        <div
+          className="relative mx-auto max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#001f3d] p-10 text-center backdrop-blur-xl min-[1024px]:p-16"
+          style={{
+            background: "rgba(0, 31, 61, 0.92)",
+            WebkitBackdropFilter: "blur(20px)",
+            boxShadow: "0 0 40px -10px rgba(0, 218, 243, 0.24)",
+          }}
+        >
           <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,#00daf3,transparent_60%)]" />
           <div className="relative z-10">
             <h2 className="mb-6 text-4xl font-extrabold text-white min-[1024px]:text-5xl">
