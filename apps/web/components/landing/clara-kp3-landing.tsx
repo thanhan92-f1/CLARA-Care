@@ -6,7 +6,6 @@ import {
   FAQ_ITEMS,
   FINAL_CTA,
   HERO_METRICS,
-  INTEGRATIONS,
   MODULE_CARDS,
   OFFICES,
   OUTCOME_CARDS,
@@ -183,41 +182,29 @@ export default function ClaraKp3Landing() {
         <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SectionEyebrow>Backed by Partners</SectionEyebrow>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Hạ tầng và nguồn tri thức cho môi trường vận hành</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Đối tác hạ tầng triển khai của Project CLARA</p>
           </div>
 
-          <div className="mt-5 grid gap-3 min-[900px]:grid-cols-2">
+          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2">
             {SPONSORS.map((sponsor) => (
               <a
                 key={sponsor.name}
                 href={sponsor.href}
                 target="_blank"
                 rel="noreferrer"
-                className="flex min-h-[118px] items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 transition hover:-translate-y-0.5 hover:border-cyan-300 dark:border-slate-700 dark:bg-slate-900"
+                className="group flex min-h-[144px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 py-6 transition hover:-translate-y-0.5 hover:border-cyan-300 dark:border-slate-700 dark:bg-slate-900"
               >
                 <Image
                   src={sponsor.logo}
                   alt={`${sponsor.name} logo`}
-                  width={220}
-                  height={60}
-                  className="h-11 w-auto object-contain"
+                  width={sponsor.name === "BNIX" ? 280 : 420}
+                  height={sponsor.name === "BNIX" ? 84 : 110}
+                  className={[
+                    "w-auto object-contain transition duration-300 group-hover:scale-[1.02]",
+                    sponsor.name === "BNIX" ? "h-14 min-[1024px]:h-16" : "h-16 min-[1024px]:h-20",
+                  ].join(" ")}
                 />
-                <span className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600 dark:text-slate-300">
-                  {sponsor.name}
-                </span>
               </a>
-            ))}
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-2">
-            {INTEGRATIONS.map((integration) => (
-              <span
-                key={integration.name}
-                title={integration.description}
-                className="inline-flex min-h-9 items-center rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-              >
-                {integration.name}
-              </span>
             ))}
           </div>
         </section>
