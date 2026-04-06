@@ -1,481 +1,374 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import LandingFaqAccordion from "@/components/landing/landing-faq-accordion";
 import {
   FAQ_ITEMS,
   FINAL_CTA,
   HERO_METRICS,
   MODULE_CARDS,
   OFFICES,
-  OUTCOME_CARDS,
-  PROBLEM_POINTS,
-  ROI_METRICS,
-  SAFETY_GUARDRAILS,
   SPONSORS,
   TESTIMONIALS,
   TRUST_BADGES,
   WORKFLOW_STEPS,
 } from "@/components/landing/clara-kp3-data";
 
-function Container({
-  children,
-  className = "",
-  id,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  id?: string;
-}) {
-  return (
-    <section
-      id={id}
-      className={`mx-auto w-full max-w-[1240px] px-4 min-[768px]:px-6 min-[1280px]:px-8 ${className}`}
-    >
-      {children}
-    </section>
-  );
-}
-
-function SectionEyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">
-      {children}
-    </p>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="mt-3 text-3xl font-black uppercase leading-tight text-slate-900 min-[1024px]:text-4xl dark:text-white">
-      {children}
-    </h2>
-  );
-}
-
-function PrimaryButton({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex min-h-11 items-center justify-center rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-semibold uppercase tracking-[0.06em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-    >
-      {children}
-    </Link>
-  );
-}
-
-function SecondaryButton({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold uppercase tracking-[0.06em] text-slate-700 transition hover:-translate-y-0.5 hover:border-cyan-300 hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-cyan-500 dark:hover:text-cyan-200"
-    >
-      {children}
-    </Link>
-  );
-}
-
-function AnchorLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-    >
-      {children}
-    </a>
-  );
+function clampText(input: string, length: number) {
+  if (input.length <= length) return input;
+  return `${input.slice(0, length).trim()}...`;
 }
 
 export default function ClaraKp3Landing() {
-  const hanoiOffices = OFFICES.filter((office) => office.city === "HÀ NỘI (VN)");
-  const hueOffice = OFFICES.find((office) => office.city === "HUẾ (VN)");
-  const emailOffice = OFFICES.find((office) => office.city === "EMAIL");
-  const hotlineOffice = OFFICES.find((office) => office.city === "HOTLINE");
+  const shortFaq = FAQ_ITEMS.slice(0, 3);
+  const shortTestimonials = TESTIMONIALS.slice(0, 3);
+  const shortMetrics = HERO_METRICS.slice(0, 4);
+  const roadmap = WORKFLOW_STEPS.slice(0, 4);
+
+  const offices = OFFICES.filter((item) => item.city.includes("(VN)"));
 
   return (
-    <main className="relative overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_0%,rgba(34,211,238,0.16),transparent_36%),radial-gradient(circle_at_94%_8%,rgba(56,189,248,0.1),transparent_34%)] dark:bg-[radial-gradient(circle_at_8%_0%,rgba(34,211,238,0.24),transparent_38%),radial-gradient(circle_at_92%_10%,rgba(59,130,246,0.2),transparent_36%)]"
-      />
+    <main className="bg-slate-50 text-slate-900">
+      <style jsx global>{`
+        .glass-panel {
+          background: rgba(255, 255, 255, 0.72);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+        }
 
-      <Container className="relative z-20 pt-5">
-        <header className="sticky top-3 z-40 rounded-2xl border border-slate-200/90 bg-white/90 p-3 shadow-sm backdrop-blur-xl dark:border-slate-700/70 dark:bg-slate-900/80">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-200">
-                Project CLARA
-              </p>
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                Clinical Agent for Retrieval &amp; Analysis
-              </p>
+        .ai-gradient-text {
+          background: linear-gradient(135deg, #006875 0%, #00daf3 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+
+        .ai-glow {
+          box-shadow: 0 0 40px -10px rgba(0, 218, 243, 0.24);
+        }
+      `}</style>
+
+      <nav className="fixed inset-x-0 top-0 z-50 border-b border-slate-200/70 bg-white/85 px-4 py-4 shadow-sm backdrop-blur-xl min-[1024px]:px-8">
+        <div className="mx-auto flex w-full max-w-[1380px] items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xl font-black tracking-tight text-[#001f3d]">Project CLARA</span>
+          </div>
+
+          <div className="hidden items-center gap-8 min-[900px]:flex">
+            <a className="border-b-2 border-[#006875] pb-1 text-sm font-semibold text-[#006875]" href="#modules">
+              Modules
+            </a>
+            <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-[#001f3d]" href="#roadmap">
+              Quy trình
+            </a>
+            <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-[#001f3d]" href="#safety">
+              An toàn
+            </a>
+            <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-[#001f3d]" href="#faq">
+              FAQ
+            </a>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Tài khoản"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500"
+            >
+              <span className="text-sm font-semibold">AI</span>
+            </button>
+            <Link
+              href="/register"
+              className="inline-flex min-h-10 items-center rounded-lg bg-[#003461] px-5 text-sm font-semibold text-white transition hover:opacity-90"
+            >
+              Đặt Demo
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      <section className="relative overflow-hidden px-4 pt-28 pb-20 min-[1024px]:px-8 min-[1024px]:pt-32">
+        <div className="mx-auto grid w-full max-w-[1380px] items-center gap-14 min-[1024px]:grid-cols-2 min-[1280px]:gap-16">
+          <div className="z-10">
+            <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-cyan-50 px-3 py-1 text-sm font-semibold text-[#006875]">
+              <span className="inline-block h-2 w-2 rounded-full bg-[#00daf3]" />
+              Bước tiến tiếp theo của Trí tuệ Lâm sàng
+            </span>
+
+            <h1 className="mb-6 text-4xl font-black leading-tight tracking-tight text-[#001f3d] min-[640px]:text-5xl min-[1280px]:text-7xl">
+              Clinical Agent for
+              <br />
+              <span className="ai-gradient-text">Retrieval &amp; Analysis</span>
+            </h1>
+
+            <p className="mb-10 max-w-xl text-lg leading-relaxed text-slate-600">
+              Hệ thống AI chuyên biệt được thiết kế để giảm mệt mỏi trong lập hồ sơ và tăng cường khả năng ra quyết
+              định thông qua tổng hợp lâm sàng có độ chính xác cao.
+            </p>
+
+            <div className="flex flex-wrap gap-4">
+              <Link
+                href="/register"
+                className="inline-flex min-h-12 items-center gap-2 rounded-lg bg-[#001f3d] px-8 text-base font-bold text-white transition hover:scale-[1.02]"
+              >
+                Bắt đầu Thử nghiệm
+                <span className="text-lg">+</span>
+              </Link>
+              <Link
+                href="/research"
+                className="inline-flex min-h-12 items-center rounded-lg border border-slate-300 px-8 text-base font-bold text-[#001f3d] transition hover:bg-slate-100"
+              >
+                Xem các Modules
+              </Link>
             </div>
-
-            <nav className="flex flex-wrap items-center gap-1">
-              <AnchorLink href="#modules">Modules</AnchorLink>
-              <AnchorLink href="#workflow">Workflow</AnchorLink>
-              <AnchorLink href="#safety">Safety</AnchorLink>
-              <AnchorLink href="#faq">FAQ</AnchorLink>
-              <PrimaryButton href="/register">Đặt lịch demo</PrimaryButton>
-            </nav>
           </div>
-        </header>
-      </Container>
 
-      <Container className="relative z-10 pt-8 pb-8 min-[1024px]:pt-12">
-        <section className="overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-[0_20px_65px_-48px_rgba(2,6,23,0.55)] min-[1024px]:p-8 dark:border-slate-800 dark:bg-slate-900/80">
-          <div className="grid gap-8 min-[1024px]:grid-cols-[1.2fr_0.92fr] min-[1280px]:gap-10">
-            <div>
-              <SectionEyebrow>Healthcare AI Homepage</SectionEyebrow>
-              <h1 className="mt-3 text-4xl font-black uppercase leading-[1.04] text-slate-950 min-[640px]:text-5xl min-[1200px]:text-6xl dark:text-white">
-                Một nền tảng
-                <br />
-                <span className="text-cyan-700 dark:text-cyan-200">để vận hành AI y tế thật</span>
-              </h1>
-              <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700 min-[1024px]:text-lg dark:text-slate-300">
-                Project CLARA kết nối Research, Council, SelfMed, CareGuard, Scribe và Control Tower thành một workflow
-                có bằng chứng, có guardrail và có KPI đo theo tuần.
-              </p>
-
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <PrimaryButton href="/register">Bắt đầu pilot</PrimaryButton>
-                <SecondaryButton href="/research">Xem demo Research</SecondaryButton>
-              </div>
-
-              <div className="mt-6 grid gap-3 min-[768px]:grid-cols-3">
-                {TRUST_BADGES.map((badge) => (
-                  <article
-                    key={badge.label}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-700 dark:text-cyan-200">
-                      {badge.label}
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">{badge.detail}</p>
-                  </article>
-                ))}
+          <div className="relative">
+            <div className="absolute -top-20 -right-20 h-[420px] w-[420px] rounded-full bg-cyan-200/35 blur-[100px]" />
+            <div className="glass-panel ai-glow relative overflow-hidden rounded-2xl border border-slate-200/70 p-1 shadow-2xl">
+              <img
+                alt="Medical AI Data Network Visualization"
+                className="h-auto w-full rounded-xl"
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuD66LkhRPbbJgpLVe3hHZrr0lDbw4cZYnpsxmbrYpKAG3qY5v-1PPuS_9A41uEsJK0_JCKGpVOrIIhLM9r2HyQcOSUXNGMBobzn49Gxkmc7A9CVrbtlBXMATjvWFGHx5Ld-XTiu1yy6X-KyJhAnInSdB6nhRn6ie6qrByXnQD82zuyTKQBpGpQi6hUYI7Kr4cTuXB22LlwZFoMorUqtcqBOMxUiszo3Ok6XTqwqAKhqHI3bOLMx2iw6EKyXvho50RpdC7p3pg60l2w"
+              />
+              <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-[#001f3d]/45 to-transparent p-6 min-[1024px]:p-8">
+                <div className="flex items-center gap-3">
+                  <div className="h-2 w-2 rounded-full bg-[#00daf3]" />
+                  <span className="text-xs font-mono text-white/90">CLARA_ENGINE_ACTIVE: DATA_SYNTHESIS_RUNNING</span>
+                </div>
               </div>
             </div>
-
-            <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-4 min-[1024px]:p-5 dark:border-slate-700 dark:bg-slate-900">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">
-                Pilot Signal Board
-              </p>
-              <ul className="mt-4 space-y-3">
-                {HERO_METRICS.map((metric) => (
-                  <li
-                    key={metric.label}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-950/80"
-                  >
-                    <p className="text-2xl font-black text-slate-900 dark:text-white">{metric.value}</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-700 dark:text-slate-200">{metric.label}</p>
-                    {metric.note ? <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{metric.note}</p> : null}
-                  </li>
-                ))}
-              </ul>
-            </aside>
           </div>
-        </section>
-      </Container>
+        </div>
+      </section>
 
-      <Container className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <SectionEyebrow>Backed by Partners</SectionEyebrow>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Đối tác hạ tầng triển khai của Project CLARA</p>
-          </div>
-
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2">
+      <section className="border-y border-slate-200/80 bg-white/70 py-12">
+        <div className="mx-auto w-full max-w-[1380px] px-4 min-[1024px]:px-8">
+          <p className="mb-8 text-center text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
+            Được tin dùng bởi các đối tác hạ tầng
+          </p>
+          <div className="grid grid-cols-1 gap-4 min-[900px]:grid-cols-2">
             {SPONSORS.map((sponsor) => (
               <a
                 key={sponsor.name}
                 href={sponsor.href}
                 target="_blank"
                 rel="noreferrer"
-                className="group flex min-h-[144px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 py-6 transition hover:-translate-y-0.5 hover:border-cyan-300 dark:border-slate-700 dark:bg-slate-900"
+                className="flex min-h-[130px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 grayscale transition hover:grayscale-0"
               >
                 <Image
                   src={sponsor.logo}
                   alt={`${sponsor.name} logo`}
-                  width={sponsor.name === "BNIX" ? 280 : 420}
-                  height={sponsor.name === "BNIX" ? 84 : 110}
-                  className={[
-                    "w-auto object-contain transition duration-300 group-hover:scale-[1.02]",
-                    sponsor.name === "BNIX" ? "h-14 min-[1024px]:h-16" : "h-16 min-[1024px]:h-20",
-                  ].join(" ")}
+                  width={sponsor.name === "BNIX" ? 300 : 460}
+                  height={sponsor.name === "BNIX" ? 86 : 120}
+                  className={sponsor.name === "BNIX" ? "h-14 w-auto object-contain" : "h-16 w-auto object-contain"}
                 />
               </a>
             ))}
           </div>
-        </section>
-      </Container>
+        </div>
+      </section>
 
-      <Container className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Pain Points</SectionEyebrow>
-          <SectionTitle>Vì sao nhiều hệ thống AI y tế chưa đi vào vận hành?</SectionTitle>
+      <section className="bg-[#f1f4f7] py-24" id="safety">
+        <div className="mx-auto grid w-full max-w-[1380px] grid-cols-1 gap-10 px-4 min-[900px]:grid-cols-3 min-[1024px]:px-8">
+          {TRUST_BADGES.map((item) => (
+            <article key={item.label} className="space-y-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-sm">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#00daf3]" />
+              </div>
+              <h3 className="text-xl font-bold text-[#001f3d]">{item.label}</h3>
+              <p className="leading-relaxed text-slate-600">{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2">
-            {PROBLEM_POINTS.map((problem) => (
-              <article
-                key={problem.title}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900"
-              >
-                <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{problem.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-700 dark:text-slate-300">{problem.description}</p>
-                <p className="mt-3 text-sm font-semibold text-cyan-700 dark:text-cyan-200">{problem.consequence}</p>
-              </article>
-            ))}
+      <section className="bg-[#f7fafd] py-24" id="modules">
+        <div className="mx-auto w-full max-w-[1380px] px-4 min-[1024px]:px-8">
+          <div className="mb-20 text-center">
+            <h2 className="mb-4 text-4xl font-extrabold tracking-tight text-[#001f3d]">Hệ sinh thái CLARA Modules</h2>
+            <p className="mx-auto max-w-2xl text-slate-600">
+              Các module kết nối chặt chẽ được thiết kế để xử lý các khía cạnh chính của quy trình lâm sàng hiện đại.
+            </p>
           </div>
-        </section>
-      </Container>
 
-      <Container className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Outcome Design</SectionEyebrow>
-          <SectionTitle>Landing tập trung vào giá trị có thể đo</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[1024px]:grid-cols-3">
-            {OUTCOME_CARDS.map((outcome) => (
-              <article
-                key={outcome.title}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900"
-              >
-                <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{outcome.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-700 dark:text-slate-300">{outcome.description}</p>
-                <ul className="mt-4 space-y-2">
-                  {outcome.bullets.map((bullet) => (
-                    <li
-                      key={bullet}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-                    >
-                      {bullet}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            ))}
-          </div>
-        </section>
-      </Container>
-
-      <Container id="workflow" className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>How Project CLARA Works</SectionEyebrow>
-          <SectionTitle>Luồng 4 bước để chuyển từ demo sang vận hành thật</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[1024px]:grid-cols-2">
-            {WORKFLOW_STEPS.map((step) => (
-              <article
-                key={step.index}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900"
-              >
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">Step {step.index}</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-900 dark:text-white">{step.title}</h3>
-                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
-                  {step.subtitle}
-                </p>
-                <ul className="mt-4 space-y-2">
-                  {step.points.map((point) => (
-                    <li
-                      key={point}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-7 text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-                    >
-                      {point}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-4 text-sm font-semibold text-cyan-700 dark:text-cyan-200">Kết quả: {step.outcome}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      </Container>
-
-      <Container id="modules" className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Modules</SectionEyebrow>
-          <SectionTitle>Hệ module đầy đủ cho nghiên cứu, hội chẩn và an toàn thuốc</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
+          <div className="grid grid-cols-1 gap-8 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
             {MODULE_CARDS.map((module) => (
               <article
                 key={module.title}
-                className="flex h-full flex-col rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900"
+                className="group rounded-2xl border border-slate-200 bg-white p-8 transition-all hover:shadow-xl"
               >
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-700 dark:text-cyan-200">{module.tag}</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-900 dark:text-white">{module.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-700 dark:text-slate-300">{module.description}</p>
-                <ul className="mt-4 flex-1 space-y-2">
-                  {module.bullets.map((bullet) => (
-                    <li
-                      key={bullet}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-                    >
-                      {bullet}
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-5">
-                  <SecondaryButton href={module.href}>{module.cta}</SecondaryButton>
+                <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-[#f1f4f7] transition-colors group-hover:bg-cyan-50">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#00daf3]" />
                 </div>
+                <h4 className="mb-3 text-xl font-bold text-[#001f3d]">{module.title}</h4>
+                <p className="mb-6 text-sm leading-relaxed text-slate-600">{clampText(module.description, 155)}</p>
+                <div className="h-1 w-12 bg-slate-200 transition-all duration-300 group-hover:w-full group-hover:bg-[#00daf3]" />
               </article>
             ))}
           </div>
-        </section>
-      </Container>
+        </div>
+      </section>
 
-      <Container id="roi" className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>ROI & Measurement</SectionEyebrow>
-          <SectionTitle>Đo hiệu quả theo baseline, không đo theo cảm nhận</SectionTitle>
-          <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-700 dark:text-slate-300">
-            Các chỉ số dưới đây là khung pilot thường dùng để theo dõi tác động vận hành. Kết quả thực tế phụ thuộc
-            dữ liệu đầu vào, tỷ lệ tuân thủ workflow và mức trưởng thành của đội vận hành.
-          </p>
-
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2">
-            {ROI_METRICS.map((metric) => (
-              <article
-                key={metric.label}
-                className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-800/60 dark:bg-emerald-950/30"
-              >
-                <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">{metric.label}</p>
-                <p className="mt-2 text-2xl font-black text-slate-900 dark:text-white">{metric.target}</p>
-                <p className="mt-2 text-xs leading-6 text-slate-600 dark:text-slate-300">{metric.note}</p>
-              </article>
+      <section className="relative overflow-hidden bg-[#001f3d] py-24 text-white">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-0 left-0 h-full w-full bg-[radial-gradient(circle_at_30%_50%,#00daf3,transparent_50%)]" />
+        </div>
+        <div className="relative z-10 mx-auto w-full max-w-[1380px] px-4 min-[1024px]:px-8">
+          <div className="grid grid-cols-2 gap-12 min-[1280px]:grid-cols-4">
+            {shortMetrics.map((metric) => (
+              <div key={metric.label} className="text-center">
+                <div className="mb-2 text-5xl font-black ai-gradient-text">{metric.value}</div>
+                <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-100">{metric.label}</p>
+              </div>
             ))}
           </div>
-        </section>
-      </Container>
+        </div>
+      </section>
 
-      <Container id="safety" className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Clinical Safety & Governance</SectionEyebrow>
-          <SectionTitle>Safety-first: có guardrail, có giới hạn, có kiểm toán</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
-            {SAFETY_GUARDRAILS.map((item) => (
-              <article
-                key={item.title}
-                className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-900/70 dark:bg-cyan-950/25"
-              >
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">{item.title}</h3>
-                <p className="mt-2 text-sm leading-7 text-slate-700 dark:text-slate-300">{item.description}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm leading-7 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-            <p className="font-semibold uppercase tracking-[0.12em]">Giới hạn hệ thống</p>
-            <p className="mt-2">
-              Project CLARA là hệ thống hỗ trợ tham khảo và vận hành dựa trên bằng chứng, không thay thế chẩn đoán,
-              chỉ định điều trị hoặc phán đoán chuyên môn của bác sĩ.
-            </p>
-          </div>
-        </section>
-      </Container>
-
-      <Container className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Testimonials</SectionEyebrow>
-          <SectionTitle>Đối tác và người dùng nói gì về CLARA</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
-            {TESTIMONIALS.map((testimonial) => (
-              <article
-                key={testimonial.name}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{testimonial.name}</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">{testimonial.role}</p>
+      <section className="bg-[#f7fafd] py-28" id="roadmap">
+        <div className="mx-auto grid w-full max-w-[1380px] grid-cols-1 items-center gap-20 px-4 min-[1100px]:grid-cols-2 min-[1024px]:px-8">
+          <div className="relative">
+            <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+              <h5 className="mb-8 text-lg font-bold text-[#001f3d]">Lộ trình triển khai 4 bước</h5>
+              <div className="relative space-y-8">
+                <div className="absolute top-4 bottom-4 left-[27px] w-0.5 bg-gradient-to-b from-[#00daf3] to-transparent" />
+                {roadmap.map((step) => (
+                  <div key={step.index} className="relative flex gap-6">
+                    <div className="z-10 flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 border-white bg-cyan-100 shadow-md">
+                      <span className="font-bold text-[#001f3d]">{step.index}</span>
+                    </div>
+                    <div>
+                      <h6 className="font-bold text-[#001f3d]">{step.title}</h6>
+                      <p className="text-sm text-slate-600">{clampText(step.points[0] ?? step.outcome, 105)}</p>
+                    </div>
                   </div>
-                  <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-600 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300">
-                    {testimonial.channel}
-                  </span>
-                </div>
-                <p className="mt-4 text-lg leading-8 text-slate-700 dark:text-slate-200">&quot;{testimonial.quote}&quot;</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      </Container>
-
-      <Container id="faq" className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>FAQ</SectionEyebrow>
-          <SectionTitle>Giải đáp trước khi triển khai pilot</SectionTitle>
-          <div className="mt-6">
-            <LandingFaqAccordion items={FAQ_ITEMS} />
-          </div>
-        </section>
-      </Container>
-
-      <Container className="relative z-10 pb-10">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 min-[1024px]:p-7 dark:border-slate-800 dark:bg-slate-900/75">
-          <SectionEyebrow>Our Offices</SectionEyebrow>
-          <SectionTitle>Kênh vận hành và liên hệ</SectionTitle>
-
-          <div className="mt-6 grid gap-4 min-[1024px]:grid-cols-[1.3fr_1fr]">
-            <article className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">HÀ NỘI (VN)</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-900 dark:text-white">Delivery Hubs</h3>
-              <ul className="mt-4 space-y-3">
-                {hanoiOffices.map((office) => (
-                  <li
-                    key={office.detail}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-7 text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
-                  >
-                    {office.detail}
-                  </li>
                 ))}
-              </ul>
-            </article>
-
-            <div className="grid gap-4">
-              {hueOffice ? (
-                <article className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">
-                    {hueOffice.city}
-                  </p>
-                  <p className="mt-3 text-sm leading-7 text-slate-700 dark:text-slate-300">{hueOffice.detail}</p>
-                </article>
-              ) : null}
-
-              <article className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">Liên hệ nhanh</p>
-                {emailOffice ? <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">Email: {emailOffice.detail}</p> : null}
-                {hotlineOffice ? <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Hotline: {hotlineOffice.detail}</p> : null}
-              </article>
+              </div>
             </div>
           </div>
-        </section>
-      </Container>
 
-      <Container className="relative z-10 pb-14">
-        <section className="rounded-2xl border border-cyan-300/60 bg-cyan-500/10 p-6 min-[1024px]:p-10 dark:border-cyan-700/70 dark:bg-cyan-950/35">
-          <h2 className="text-center text-3xl font-black uppercase text-slate-900 min-[1024px]:text-4xl dark:text-white">
-            {FINAL_CTA.heading}
-          </h2>
-          <p className="mx-auto mt-4 max-w-4xl text-center text-sm leading-7 text-slate-700 min-[1024px]:text-base dark:text-slate-300">
-            {FINAL_CTA.subheading}
-          </p>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <PrimaryButton href={FINAL_CTA.href}>{FINAL_CTA.button}</PrimaryButton>
-            {FINAL_CTA.secondaryButton && FINAL_CTA.secondaryHref ? (
-              <SecondaryButton href={FINAL_CTA.secondaryHref}>{FINAL_CTA.secondaryButton}</SecondaryButton>
-            ) : null}
+          <div>
+            <h2 className="mb-6 text-4xl font-extrabold leading-tight tracking-tight text-[#001f3d]">
+              Được thiết kế cho
+              <br />
+              <span className="text-[#006875]">Kết quả Chính xác</span>
+            </h2>
+            <p className="mb-10 text-lg leading-relaxed text-slate-600">
+              Không giống các LLM phổ thông, CLARA là hệ thống chuyên biệt cho y tế, ưu tiên độ chính xác lâm sàng và
+              khả năng kiểm chứng thay vì hội thoại chung chung.
+            </p>
+            <div className="space-y-6">
+              {[
+                "Loại bỏ đáng kể gánh nặng lập hồ sơ lặp lại",
+                "Rút ngắn thời gian chuẩn bị và tìm bằng chứng",
+                "Truy xuất đa nguồn có kiểm chứng citation",
+              ].map((line) => (
+                <div key={line} className="flex items-center gap-4 rounded-xl border-l-4 border-[#00daf3] bg-[#f1f4f7] p-4">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#00daf3]" />
+                  <span className="font-semibold text-[#001f3d]">{line}</span>
+                </div>
+              ))}
+            </div>
           </div>
+        </div>
+      </section>
 
-          <footer className="mt-8 border-t border-cyan-300/50 pt-6 text-center text-sm text-slate-600 dark:border-cyan-800/60 dark:text-slate-300">
-            <p className="text-2xl font-black text-slate-900 dark:text-white">Project CLARA</p>
-            <p className="mt-2">Email: clara@thiennn.icu · Hotline: 0853374247</p>
-          </footer>
-        </section>
-      </Container>
+      <section className="bg-[#f1f4f7] py-24">
+        <div className="mx-auto w-full max-w-[1380px] px-4 min-[1024px]:px-8">
+          <h2 className="mb-16 text-center text-3xl font-bold text-[#001f3d]">Được tin dùng bởi đội ngũ lâm sàng</h2>
+          <div className="grid grid-cols-1 gap-8 min-[900px]:grid-cols-3">
+            {shortTestimonials.map((item, idx) => (
+              <article key={item.name} className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+                <p className="mb-8 italic leading-relaxed text-slate-600">&quot;{item.quote}&quot;</p>
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-700">
+                    {item.name
+                      .split(" ")
+                      .slice(-2)
+                      .map((v) => v[0])
+                      .join("")}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-[#001f3d]">{item.name}</p>
+                    <p className="text-xs text-slate-500">{idx === 0 ? "Clinical Lead" : idx === 1 ? "Health IT Lead" : item.role}</p>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-[#f7fafd] py-24" id="faq">
+        <div className="mx-auto w-full max-w-4xl px-4 min-[1024px]:px-8">
+          <h2 className="mb-12 text-center text-3xl font-bold text-[#001f3d]">Câu hỏi Thường gặp</h2>
+          <div className="space-y-4">
+            {shortFaq.map((faq) => (
+              <details key={faq.question} className="overflow-hidden rounded-xl border border-slate-200 bg-white group">
+                <summary className="flex cursor-pointer list-none items-center justify-between p-6">
+                  <span className="font-bold text-[#001f3d]">{faq.question}</span>
+                  <span className="text-slate-500 transition-transform group-open:rotate-180">▾</span>
+                </summary>
+                <div className="px-6 pb-6 text-sm text-slate-600">{faq.answer}</div>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-24 min-[1024px]:px-8">
+        <div className="glass-panel ai-glow relative mx-auto max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#001f3d] p-10 text-center min-[1024px]:p-16">
+          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,#00daf3,transparent_60%)]" />
+          <div className="relative z-10">
+            <h2 className="mb-6 text-4xl font-extrabold text-white min-[1024px]:text-5xl">
+              Sẵn sàng nâng cấp
+              <br />
+              Trí tuệ Lâm sàng của bạn?
+            </h2>
+            <p className="mx-auto mb-10 max-w-xl text-lg text-blue-100/90">{FINAL_CTA.subheading}</p>
+            <div className="flex justify-center gap-4">
+              <Link
+                href={FINAL_CTA.href}
+                className="inline-flex min-h-12 items-center rounded-xl bg-[#00e3fd] px-10 text-lg font-bold text-[#00323a] transition hover:scale-105"
+              >
+                {FINAL_CTA.button}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer className="grid grid-cols-1 gap-8 border-t border-slate-200 bg-[#f1f4f7] px-6 py-14 min-[900px]:grid-cols-3 min-[1024px]:px-12">
+        <div>
+          <span className="mb-4 block text-lg font-bold text-[#001f3d]">Project CLARA</span>
+          <p className="text-sm leading-relaxed text-slate-600">
+            AI chính xác cho thực hành lâm sàng hằng ngày.
+            <br />
+            Được xây dựng cho môi trường vận hành thực tế.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#001f3d]">Văn phòng</span>
+          {offices.slice(0, 2).map((office) => (
+            <span key={office.detail} className="text-sm text-slate-600">
+              {office.detail}
+            </span>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#001f3d]">Liên hệ</span>
+          <a className="text-sm text-slate-600 transition-colors hover:text-[#006875]" href="mailto:clara@thiennn.icu">
+            clara@thiennn.icu
+          </a>
+          <a className="text-sm text-slate-600 transition-colors hover:text-[#006875]" href="tel:0853374247">
+            0853374247
+          </a>
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            <span className="text-xs text-slate-500">© 2026 Project CLARA. Bảo lưu mọi quyền.</span>
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }
