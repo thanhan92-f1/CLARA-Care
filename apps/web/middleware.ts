@@ -9,6 +9,11 @@ const CLIENT_SESSION_COOKIE_NAME =
 
 const PUBLIC_PATHS = new Set([
   "/",
+  "/legal",
+  "/legal/privacy",
+  "/legal/terms",
+  "/legal/consent",
+  "/legal/cookies",
   "/login",
   "/register",
   "/forgot-password",

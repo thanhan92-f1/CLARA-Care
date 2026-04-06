@@ -398,6 +398,17 @@ export default function CareguardPage() {
             CLARA chỉ hỗ trợ cảnh báo tương tác thuốc và giải thích an toàn sử dụng. Ứng dụng không thay thế bác sĩ,
             không kê đơn, không chẩn đoán và không chỉ định liều dùng.
           </p>
+          <p className="mt-3 text-sm leading-7 text-slate-700">
+            Xem đầy đủ tại{" "}
+            <Link className="font-semibold text-blue-700 underline" href="/legal/consent">
+              Đồng thuận sử dụng y tế
+            </Link>
+            {" "}và{" "}
+            <Link className="font-semibold text-blue-700 underline" href="/legal/privacy">
+              Chính sách quyền riêng tư
+            </Link>
+            .
+          </p>
           <p className="mt-3 text-base text-slate-700">
             Phiên bản điều khoản hiện tại: <span className="font-semibold">{consentRequiredVersion || "-"}</span>
           </p>

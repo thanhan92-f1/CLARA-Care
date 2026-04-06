@@ -18,6 +18,11 @@ export type NavigationItem = {
 
 export const PUBLIC_ROUTES = new Set([
   "/",
+  "/legal",
+  "/legal/privacy",
+  "/legal/terms",
+  "/legal/consent",
+  "/legal/cookies",
   "/huong-dan",
   "/login",
   "/register",

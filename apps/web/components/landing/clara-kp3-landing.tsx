@@ -565,7 +565,7 @@ export default function ClaraKp3Landing() {
         </div>
       </section>
 
-      <footer className="grid grid-cols-1 gap-8 border-t border-slate-200 bg-slate-100 px-6 py-14 min-[900px]:grid-cols-3 min-[1024px]:px-12 dark:border-slate-800 dark:bg-slate-950">
+      <footer className="grid grid-cols-1 gap-8 border-t border-slate-200 bg-slate-100 px-6 py-14 min-[900px]:grid-cols-4 min-[1024px]:px-12 dark:border-slate-800 dark:bg-slate-950">
         <div>
           <span className="mb-4 block text-lg font-bold">Project CLARA</span>
           <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
@@ -580,6 +580,22 @@ export default function ClaraKp3Landing() {
           <span className="text-sm text-slate-600 dark:text-slate-300">Đặt câu hỏi</span>
           <span className="text-sm text-slate-600 dark:text-slate-300">Kiểm tra nguồn trích</span>
           <span className="text-sm text-slate-600 dark:text-slate-300">Nhận tóm tắt để ra quyết định</span>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="mb-2 text-xs font-bold uppercase tracking-[0.16em]">Pháp lý</span>
+          <Link className="text-sm text-slate-600 hover:text-cyan-700 dark:text-slate-300 dark:hover:text-cyan-300" href="/legal/terms">
+            Điều khoản sử dụng
+          </Link>
+          <Link className="text-sm text-slate-600 hover:text-cyan-700 dark:text-slate-300 dark:hover:text-cyan-300" href="/legal/privacy">
+            Chính sách quyền riêng tư
+          </Link>
+          <Link className="text-sm text-slate-600 hover:text-cyan-700 dark:text-slate-300 dark:hover:text-cyan-300" href="/legal/consent">
+            Đồng thuận y tế
+          </Link>
+          <Link className="text-sm text-slate-600 hover:text-cyan-700 dark:text-slate-300 dark:hover:text-cyan-300" href="/legal/cookies">
+            Chính sách cookie
+          </Link>
         </div>
 
         <div className="flex flex-col gap-2">

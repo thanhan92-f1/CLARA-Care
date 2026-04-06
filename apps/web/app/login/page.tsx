@@ -110,6 +110,22 @@ export default function LoginPage() {
             Quên mật khẩu?
           </Link>
         </div>
+
+        <p className="text-xs leading-6 text-slate-500">
+          Bằng việc tiếp tục, bạn xác nhận đã đọc{" "}
+          <Link href="/legal/terms" className="font-medium text-blue-700 hover:underline">
+            Điều khoản
+          </Link>
+          ,{" "}
+          <Link href="/legal/privacy" className="font-medium text-blue-700 hover:underline">
+            Quyền riêng tư
+          </Link>{" "}
+          và{" "}
+          <Link href="/legal/consent" className="font-medium text-blue-700 hover:underline">
+            Đồng thuận y tế
+          </Link>
+          .
+        </p>
       </form>
     </AuthFormShell>
   );
