@@ -35,7 +35,10 @@ export default function RegisterPage() {
         full_name: fullName,
         email,
         password,
-        role
+        role,
+        accepted_terms: true,
+        accepted_privacy: true,
+        accepted_medical_consent: true,
       });
       const tokenPreview = response.data?.verification_token_preview as string | undefined;
       const isVerified = Boolean(response.data?.is_email_verified);

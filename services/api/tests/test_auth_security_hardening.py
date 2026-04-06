@@ -102,6 +102,49 @@ def test_register_role_override_blocked_in_production(monkeypatch) -> None:
     _reset_runtime_state()
 
 
+def test_register_requires_legal_acceptance_in_production(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    _reset_runtime_state()
+
+    email = f"normal-{uuid4().hex[:8]}@example.com"
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "password": "secret123",
+            "full_name": "Normal Candidate",
+            "role": "normal",
+            "accepted_terms": True,
+            "accepted_privacy": False,
+            "accepted_medical_consent": True,
+        },
+    )
+    assert response.status_code == 400
+    assert "xác nhận đầy đủ" in response.json()["detail"]
+    _reset_runtime_state()
+
+
+def test_register_allows_normal_role_when_legal_acceptance_present_in_production(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    _reset_runtime_state()
+
+    email = f"normal-accepted-{uuid4().hex[:8]}@example.com"
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "password": "secret123",
+            "full_name": "Normal Candidate",
+            "role": "normal",
+            "accepted_terms": True,
+            "accepted_privacy": True,
+            "accepted_medical_consent": True,
+        },
+    )
+    assert response.status_code == 200
+    _reset_runtime_state()
+
+
 def test_login_guard_distributed_lockout(monkeypatch) -> None:
     monkeypatch.setenv("AUTH_LOGIN_DISTRIBUTED_ENABLED", "true")
     monkeypatch.setenv("REDIS_URL", "redis://test.invalid:6379/0")

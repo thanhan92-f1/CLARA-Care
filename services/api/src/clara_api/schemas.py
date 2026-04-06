@@ -66,6 +66,9 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(default="", max_length=255)
     role: Role = "normal"
+    accepted_terms: bool = False
+    accepted_privacy: bool = False
+    accepted_medical_consent: bool = False
 
     @field_validator("password")
     @classmethod

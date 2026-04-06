@@ -1,4 +1,11 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Trung tâm pháp lý | Project CLARA",
+  description:
+    "Tổng hợp tài liệu pháp lý của Project CLARA: Privacy Policy, Terms of Service, Consent và Cookie Policy.",
+};
 
 const LEGAL_ITEMS = [
   {
@@ -25,15 +32,15 @@ const LEGAL_ITEMS = [
 
 export default function LegalHubPage() {
   return (
-    <main className="mx-auto max-w-5xl space-y-6 px-6 py-10">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Project CLARA - Legal</p>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Trung tâm pháp lý</h1>
-        <p className="mt-3 text-sm leading-7 text-slate-600">
+    <main className="mx-auto max-w-5xl space-y-6 px-6 py-10 text-[var(--text-primary)]">
+      <section className="chrome-panel rounded-2xl border border-[color:var(--shell-border)] p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Project CLARA - Legal</p>
+        <h1 className="mt-2 text-2xl font-bold text-[var(--text-primary)]">Trung tâm pháp lý</h1>
+        <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
           Các tài liệu bên dưới giúp bạn nắm rõ cách CLARA xử lý dữ liệu, quyền và nghĩa vụ khi sử dụng sản phẩm.
         </p>
         <div className="mt-4">
-          <Link href="/" className="text-sm font-semibold text-blue-700 hover:underline">
+          <Link href="/" className="text-sm font-semibold text-[var(--text-brand)] hover:underline">
             Quay lại trang chủ
           </Link>
         </div>
@@ -41,10 +48,10 @@ export default function LegalHubPage() {
 
       <section className="grid gap-4 md:grid-cols-2">
         {LEGAL_ITEMS.map((item) => (
-          <article key={item.href} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">{item.title}</h2>
-            <p className="mt-2 text-sm leading-7 text-slate-600">{item.detail}</p>
-            <Link href={item.href} className="mt-3 inline-block text-sm font-semibold text-blue-700 hover:underline">
+          <article key={item.href} className="rounded-xl border border-[color:var(--shell-border)] bg-[var(--surface-panel)] p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">{item.title}</h2>
+            <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">{item.detail}</p>
+            <Link href={item.href} className="mt-3 inline-block text-sm font-semibold text-[var(--text-brand)] hover:underline">
               Xem chi tiết
             </Link>
           </article>
@@ -53,4 +60,3 @@ export default function LegalHubPage() {
     </main>
   );
 }
-

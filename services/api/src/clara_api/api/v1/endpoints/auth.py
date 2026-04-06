@@ -358,6 +358,16 @@ def register(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Đăng ký công khai chỉ hỗ trợ vai trò normal",
         )
+    if settings.environment.lower() == "production" and not (
+        payload.accepted_terms and payload.accepted_privacy and payload.accepted_medical_consent
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Bạn cần xác nhận đầy đủ Điều khoản sử dụng, Chính sách quyền riêng tư "
+                "và Đồng thuận sử dụng y tế trước khi tạo tài khoản."
+            ),
+        )
 
     existing = db.execute(select(User).where(User.email == normalized_email)).scalar_one_or_none()
     if existing:
