@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import { SPONSORS } from "@/components/landing/clara-kp3-data";
+import { MODULE_CARDS, SPONSORS } from "@/components/landing/clara-kp3-data";
 
 export default function ClaraKp3Landing() {
   const flowSteps = [
@@ -24,6 +24,39 @@ export default function ClaraKp3Landing() {
     { label: "Median response time", value: "< 20s" },
     { label: "Nguồn y khoa chuẩn hóa", value: "8+" },
     { label: "Luồng thao tác chính", value: "3 bước" },
+  ] as const;
+
+  const differentiators = [
+    {
+      title: "Citation-first ở mức UI flow",
+      detail:
+        "Research tách rõ các trang `details`, `citations`, `deepdive`, `analyze` để kiểm chứng nguồn theo từng bước thay vì trả lời một khối text.",
+    },
+    {
+      title: "Council wizard đa bước, giảm rối thao tác",
+      detail:
+        "Flow hội chẩn có các bước intake → specialists → review trước khi tổng hợp, giúp điều phối ca phức tạp rõ ràng hơn chatbox truyền thống.",
+    },
+    {
+      title: "SelfMed + CareGuard cho an toàn thuốc thực dụng",
+      detail:
+        "Từ tủ thuốc cá nhân, nhắc dùng thuốc đến cảnh báo DDI theo mức độ; kết hợp external connector và fallback rule trong runtime.",
+    },
+    {
+      title: "Guardrail và reliability có thể cấu hình",
+      detail:
+        "Codebase đã có gate cho reranker, NLI, policy, confidence/fallback và strict mode để kiểm soát chất lượng phản hồi theo môi trường.",
+    },
+    {
+      title: "Control Tower cho vận hành thật",
+      detail:
+        "Admin có các workspace observability, answer-flow, source-hub, knowledge-sources để theo dõi chất lượng và kiểm toán.",
+    },
+    {
+      title: "Đa nguồn tri thức y khoa + nội địa",
+      detail:
+        "Tích hợp nguồn chuẩn quốc tế và local guideline để trả lời theo ngữ cảnh Việt Nam, không chỉ dựa vào tri thức mô hình nền.",
+    },
   ] as const;
 
   const testimonials = [
@@ -73,6 +106,9 @@ export default function ClaraKp3Landing() {
           <div className="hidden items-center gap-8 min-[900px]:flex">
             <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white" href="#flow">
               Flow
+            </a>
+            <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white" href="#modules">
+              Modules
             </a>
             <a className="text-sm font-semibold text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white" href="#workspace">
               Workspace
@@ -219,9 +255,9 @@ export default function ClaraKp3Landing() {
                 <Image
                   src={sponsor.logo}
                   alt={`${sponsor.name} logo`}
-                  width={sponsor.name === "BNIX" ? 300 : 460}
-                  height={sponsor.name === "BNIX" ? 86 : 120}
-                  className={sponsor.name === "BNIX" ? "h-14 w-auto object-contain" : "h-16 w-auto object-contain"}
+                  width={sponsor.name === "BNIX" ? 300 : 560}
+                  height={sponsor.name === "BNIX" ? 86 : 180}
+                  className={sponsor.name === "BNIX" ? "h-14 w-auto object-contain" : "h-20 w-auto object-contain"}
                 />
               </a>
             ))}
@@ -252,6 +288,45 @@ export default function ClaraKp3Landing() {
                 </div>
                 <h3 className="mb-3 text-xl font-bold">{step.title}</h3>
                 <p className="text-slate-600 dark:text-slate-300">{step.detail}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-24 dark:bg-slate-900" id="modules">
+        <div className="mx-auto w-full max-w-[1320px] px-4 min-[1024px]:px-8">
+          <div className="mb-12 text-center">
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
+              Full Ecosystem
+            </p>
+            <h2 className="mb-4 text-3xl font-extrabold tracking-tight min-[900px]:text-4xl">
+              Tổng quan toàn bộ chức năng trong CLARA
+            </h2>
+            <p className="mx-auto max-w-3xl text-slate-600 dark:text-slate-300">
+              Landing tập trung conversion cho Research, nhưng toàn bộ hệ thống được thiết kế liên thông từ hỏi đáp bằng
+              chứng đến vận hành và an toàn thuốc.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
+            {MODULE_CARDS.map((module) => (
+              <article
+                key={module.title}
+                className="group rounded-2xl border border-slate-200 bg-white p-6 transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-950"
+              >
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
+                  {module.tag}
+                </p>
+                <h3 className="mb-2 text-xl font-bold">{module.title}</h3>
+                <p className="mb-4 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{module.description}</p>
+                <p className="mb-5 text-xs font-semibold text-slate-500 dark:text-slate-400">{module.bullets[0]}</p>
+                <Link
+                  href={module.href}
+                  className="inline-flex min-h-9 items-center rounded-lg border border-slate-300 px-3 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  {module.cta}
+                </Link>
               </article>
             ))}
           </div>
@@ -333,6 +408,31 @@ export default function ClaraKp3Landing() {
                 Nếu thiếu dữ liệu nền, hệ thống sẽ hạ confidence và yêu cầu xác minh thêm.
               </div>
             </article>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-50 py-24 dark:bg-slate-950">
+        <div className="mx-auto w-full max-w-[1320px] px-4 min-[1024px]:px-8">
+          <div className="mb-12 text-center">
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
+              Differentiators
+            </p>
+            <h2 className="mb-4 text-3xl font-extrabold tracking-tight min-[900px]:text-4xl">
+              Điểm nổi bật khác biệt theo đúng codebase hiện tại
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
+            {differentiators.map((item) => (
+              <article
+                key={item.title}
+                className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900"
+              >
+                <h3 className="mb-3 text-lg font-bold">{item.title}</h3>
+                <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">{item.detail}</p>
+              </article>
+            ))}
           </div>
         </div>
       </section>
