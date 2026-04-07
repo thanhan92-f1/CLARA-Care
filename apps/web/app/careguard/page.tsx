@@ -562,6 +562,15 @@ export default function CareguardPage() {
                       }`}
                     >
                       <p className="text-xl font-semibold text-slate-950">{item.drug_name}</p>
+                      {(item.dosage || item.brand_name || item.manufacturer) ? (
+                        <p className="mt-1 text-base text-slate-800">
+                          {item.dosage ? `Liều: ${item.dosage}` : "Liều: N/A"}
+                          {" · "}
+                          {item.brand_name ? `Brand: ${item.brand_name}` : "Brand: N/A"}
+                          {" · "}
+                          {item.manufacturer ? `Hãng: ${item.manufacturer}` : "Hãng: N/A"}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-lg text-slate-800">Bằng chứng: {item.evidence}</p>
                       <p className="mt-1 text-lg font-semibold text-slate-900">
                         Độ tin cậy: {Math.round(item.confidence * 100)}%
@@ -645,6 +654,13 @@ export default function CareguardPage() {
                 <li key={item.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">{item.drug_name}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {item.dosage ? `Liều: ${item.dosage}` : "Liều: N/A"}
+                      {" | "}
+                      {item.brand_name ? `Brand: ${item.brand_name}` : "Brand: N/A"}
+                      {" | "}
+                      {item.manufacturer ? `Hãng: ${item.manufacturer}` : "Hãng: N/A"}
+                    </p>
                     <p className="mt-1 text-xs text-slate-600">
                       normalized: {item.normalized_name} | nguồn: {item.source}
                     </p>

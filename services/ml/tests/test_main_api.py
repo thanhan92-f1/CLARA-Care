@@ -714,6 +714,22 @@ def test_scribe_soap_returns_structured_soap():
     assert body["objective"]["vitals"]["blood_pressure"] == "120/80"
     assert isinstance(body["assessment"]["problems"], list)
     assert isinstance(body["plan"]["next_steps"], list)
+    assert isinstance(body.get("medical_record_note"), dict)
+    assert set(
+        [
+            "chief_complaint",
+            "hpi",
+            "objective",
+            "assessment",
+            "plan",
+            "medications",
+            "follow_up",
+            "warnings",
+        ]
+    ).issubset(body["medical_record_note"].keys())
+    flow_nodes = body["metadata"].get("flow_nodes", [])
+    assert isinstance(flow_nodes, list)
+    assert any(item.get("stage") == "medical_record_note" for item in flow_nodes)
     assert body["metadata"]["fallback_used"] is True
 
 

@@ -92,6 +92,56 @@ _ALLOWED_RETRIEVAL_ROUTES = {
     "web-assisted",
     "file-grounded",
 }
+_ENGLISH_SOURCE_KEYS = {
+    "pubmed",
+    "europepmc",
+    "openalex",
+    "semantic_scholar",
+    "clinicaltrials",
+    "openfda",
+    "dailymed",
+    "rxnorm",
+}
+_VIETNAMESE_SOURCE_KEYS = {
+    "vn_moh",
+    "vn_kcb",
+    "vn_canhgiacduoc",
+    "vn_vbpl_byt",
+    "vn_dav",
+    "davidrug",
+}
+_EN_GENERIC_KEYWORD_HINTS = {
+    "interaction",
+    "guideline",
+    "guidelines",
+    "evidence",
+    "review",
+    "trial",
+    "safety",
+    "contraindication",
+    "risk",
+    "monitoring",
+    "recommendation",
+}
+_VI_GENERIC_KEYWORD_HINTS = {
+    "tuong",
+    "tac",
+    "thuoc",
+    "benh",
+    "nguoi",
+    "cao",
+    "tuoi",
+    "huong",
+    "dan",
+    "nguy",
+    "co",
+    "xuat",
+    "huyet",
+    "dieu",
+    "tri",
+    "theo",
+    "doi",
+}
 
 
 def _now_iso() -> str:
@@ -245,6 +295,147 @@ def _detect_language_hint(text: str) -> tuple[bool, bool, str]:
     if has_vietnamese_marks:
         return has_vietnamese_marks, has_english_markers, "vi"
     return has_vietnamese_marks, has_english_markers, "en"
+
+
+def _normalize_source_mode_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
+
+
+def _resolve_target_language_for_query_bucket(
+    *,
+    bucket: str,
+    source_mode: str | None,
+    language_hint: str,
+) -> str:
+    normalized_source_mode = _normalize_source_mode_key(source_mode)
+    if bucket == "scientific":
+        return "en"
+    if normalized_source_mode in _VIETNAMESE_SOURCE_KEYS:
+        return "vi"
+    if normalized_source_mode in _ENGLISH_SOURCE_KEYS:
+        return "en"
+    if language_hint in {"vi", "en"}:
+        return language_hint
+    return "mixed"
+
+
+def _filter_keywords_by_language(
+    keywords: list[str],
+    *,
+    target_language: str,
+) -> list[str]:
+    normalized = _dedupe_query_list([str(item) for item in keywords], limit=12)
+    if not normalized:
+        return []
+    if target_language not in {"vi", "en"}:
+        return normalized
+
+    filtered: list[str] = []
+    for token in normalized:
+        folded = _ascii_fold(token)
+        if not folded:
+            continue
+        if target_language == "vi" and folded in _EN_GENERIC_KEYWORD_HINTS:
+            continue
+        if target_language == "en" and folded in _VI_GENERIC_KEYWORD_HINTS:
+            continue
+        filtered.append(token)
+    return filtered or normalized
+
+
+def _apply_keyword_filter_to_query_plan(
+    *,
+    topic: str,
+    query_plan: dict[str, Any],
+    planner_keywords: list[str],
+    source_mode: str | None,
+) -> dict[str, Any]:
+    safe_plan = dict(query_plan or {})
+    source_queries_raw = safe_plan.get("source_queries")
+    source_queries = (
+        dict(source_queries_raw)
+        if isinstance(source_queries_raw, dict)
+        else {"internal": [], "scientific": [], "web": []}
+    )
+
+    fallback_seed = _dedupe_query_list(
+        [
+            *[str(item) for item in planner_keywords if str(item).strip()],
+            *query_terms(str(topic or "")),
+        ],
+        limit=12,
+    )
+    if not fallback_seed:
+        fallback_seed = ["medical safety"]
+
+    language_hint = str(safe_plan.get("language_hint") or "").strip().lower()
+    if language_hint not in {"vi", "en", "mixed"}:
+        _, _, language_hint = _detect_language_hint(topic)
+
+    keywords_by_source: dict[str, list[str]] = {}
+    target_language_by_source: dict[str, str] = {}
+    source_query_updates: dict[str, list[str]] = {}
+    fallback_buckets: list[str] = []
+
+    for bucket in ("internal", "scientific", "web"):
+        target_language = _resolve_target_language_for_query_bucket(
+            bucket=bucket,
+            source_mode=source_mode,
+            language_hint=language_hint,
+        )
+        target_language_by_source[bucket] = target_language
+        filtered_keywords = _filter_keywords_by_language(
+            fallback_seed,
+            target_language=target_language,
+        )
+        if filtered_keywords == fallback_seed:
+            fallback_buckets.append(bucket)
+        keywords_by_source[bucket] = filtered_keywords
+
+        existing_queries = _dedupe_query_list(
+            [str(item) for item in source_queries.get(bucket, []) if str(item).strip()],
+            limit=8,
+        )
+        injected_query = " ".join(filtered_keywords[:6]).strip()
+        if injected_query and all(
+            _ascii_fold(injected_query) != _ascii_fold(existing) for existing in existing_queries
+        ):
+            existing_queries = _dedupe_query_list([injected_query, *existing_queries], limit=8)
+        if not existing_queries:
+            fallback_query = (
+                str(safe_plan.get("canonical_query") or "").strip()
+                or str(safe_plan.get("original_query") or "").strip()
+                or str(topic).strip()
+            )
+            existing_queries = [fallback_query]
+        source_query_updates[bucket] = existing_queries
+
+    merged_keywords = _dedupe_query_list(
+        [
+            *(keywords_by_source.get("internal") or []),
+            *(keywords_by_source.get("scientific") or []),
+            *(keywords_by_source.get("web") or []),
+        ],
+        limit=12,
+    ) or fallback_seed
+
+    safe_plan["source_queries"] = source_query_updates
+    safe_plan["query_terms"] = merged_keywords[:10]
+    safe_plan["keyword_filter"] = {
+        "source_mode": source_mode or "default",
+        "language_hint": language_hint,
+        "target_language_by_source": target_language_by_source,
+        "keywords_by_source": keywords_by_source,
+        "fallback_buckets": fallback_buckets,
+    }
+    return {
+        "query_plan": safe_plan,
+        "keywords": merged_keywords[:10],
+        "keywords_by_source": keywords_by_source,
+        "target_language_by_source": target_language_by_source,
+        "fallback_buckets": fallback_buckets,
+        "language_hint": language_hint,
+    }
 
 
 def _normalize_retrieval_route(value: Any) -> str:
@@ -1425,6 +1616,28 @@ def _ensure_deep_beta_report_artifacts(
 ) -> str:
     output = _sanitize_deep_beta_markdown_output(markdown_text)
     appendix_sections: list[str] = []
+    if not _has_markdown_heading(output, "## Bảng tổng hợp bằng chứng"):
+        verification = evidence_verification if isinstance(evidence_verification, dict) else {}
+        summary = verification_summary if isinstance(verification_summary, dict) else {}
+        supported_count = len(verification.get("supported_claims", [])) if isinstance(
+            verification.get("supported_claims"), list
+        ) else _safe_int(summary.get("supported_claims"), 0)
+        unsupported_count = len(verification.get("unsupported_claims", [])) if isinstance(
+            verification.get("unsupported_claims"), list
+        ) else _safe_int(summary.get("unsupported_claims"), 0)
+        contradicted_count = len(verification.get("contradicted_claims", [])) if isinstance(
+            verification.get("contradicted_claims"), list
+        ) else _safe_int(summary.get("contradicted_claims"), 0)
+        support_ratio = _safe_float(summary.get("support_ratio"), 0.0)
+        appendix_sections.append(
+            "## Bảng tổng hợp bằng chứng\n"
+            "| Chỉ số | Giá trị |\n"
+            "| --- | ---: |\n"
+            f"| Supported claims | {supported_count} |\n"
+            f"| Unsupported claims | {unsupported_count} |\n"
+            f"| Contradicted claims | {contradicted_count} |\n"
+            f"| Support ratio | {round(max(0.0, min(support_ratio, 1.0)), 3)} |\n"
+        )
 
     if "| --- |" not in output:
         rows = [
@@ -1814,7 +2027,11 @@ def _refine_query_plan_with_llm(
     )
 
     try:
-        client = _build_query_planner_client(llm_runtime=llm_runtime)
+        try:
+            client = _build_query_planner_client(llm_runtime=llm_runtime)
+        except TypeError:
+            # Backward-compatible path for monkeypatched helpers that still expose no kwargs.
+            client = _build_query_planner_client()
         if client is None:
             raise RuntimeError("runtime_llm_unconfigured")
         llm_response = client.generate(prompt=prompt, system_prompt=system_prompt)
@@ -2253,6 +2470,95 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _build_evidence_review_summary(
+    *,
+    effective_context: list[dict[str, Any]],
+    deep_pass_summaries: list[dict[str, Any]],
+    evidence_verification: dict[str, Any],
+) -> dict[str, Any]:
+    source_counts: dict[str, int] = {}
+    score_values: list[float] = []
+    for row in effective_context:
+        if not isinstance(row, dict):
+            continue
+        source_key = str(row.get("source") or "unknown").strip().lower() or "unknown"
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
+        score = _safe_float(row.get("score"), -1.0)
+        if score >= 0:
+            score_values.append(max(0.0, min(1.0, score)))
+
+    total_evidence_rows = len(effective_context)
+    unique_source_count = len(source_counts)
+    average_relevance_score = (
+        round(sum(score_values) / len(score_values), 4)
+        if score_values
+        else 0.0
+    )
+
+    contradicted_claims_raw = evidence_verification.get("contradicted_claims")
+    contradicted_claims = (
+        [str(item).strip() for item in contradicted_claims_raw if str(item).strip()]
+        if isinstance(contradicted_claims_raw, list)
+        else []
+    )
+    evidence_gaps_raw = evidence_verification.get("evidence_gaps")
+    evidence_gaps = (
+        [str(item).strip() for item in evidence_gaps_raw if str(item).strip()]
+        if isinstance(evidence_gaps_raw, list)
+        else []
+    )
+
+    source_error_count = 0
+    for summary in deep_pass_summaries:
+        if not isinstance(summary, dict):
+            continue
+        source_errors = summary.get("source_errors")
+        if not isinstance(source_errors, dict):
+            continue
+        source_error_count += sum(
+            1 for value in source_errors.values() if str(value or "").strip()
+        )
+
+    missing_evidence_signals: list[str] = []
+    if total_evidence_rows < 3:
+        missing_evidence_signals.append("low_evidence_row_count")
+    if unique_source_count < 2:
+        missing_evidence_signals.append("low_source_diversity")
+    if source_error_count > 0:
+        missing_evidence_signals.append("source_connector_errors")
+    if evidence_gaps:
+        missing_evidence_signals.extend(evidence_gaps[:6])
+    missing_evidence_signals = _dedupe_query_list(missing_evidence_signals, limit=8)
+
+    if total_evidence_rows >= 8 and unique_source_count >= 3 and not contradicted_claims:
+        evidence_strength = "strong"
+    elif total_evidence_rows >= 4 and unique_source_count >= 2:
+        evidence_strength = "moderate"
+    else:
+        evidence_strength = "limited"
+
+    status = "completed" if evidence_strength in {"strong", "moderate"} else "warning"
+    note = (
+        "Evidence review completed with broad source coverage."
+        if status == "completed"
+        else "Evidence review found limited/fragile support and requires caution."
+    )
+    return {
+        "status": status,
+        "note": note,
+        "evidence_strength": evidence_strength,
+        "total_evidence_rows": total_evidence_rows,
+        "unique_source_count": unique_source_count,
+        "average_relevance_score": average_relevance_score,
+        "contradiction_count": len(contradicted_claims),
+        "contradicted_claims": contradicted_claims[:5],
+        "missing_evidence_signals": missing_evidence_signals,
+        "source_error_count": source_error_count,
+        "source_counts": source_counts,
+        "pass_count": len(deep_pass_summaries),
+    }
 
 
 def _compact_verification_matrix_rows(
@@ -3949,6 +4255,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
     )
     planner_hints["query_plan"] = base_query_plan
     run_started_at = perf_counter()
+    pipeline_node_steps: list[dict[str, Any]] = []
+    keyword_filter_report: dict[str, Any] = {}
+    keyword_filter_status = "skipped"
+    evidence_review_summary: dict[str, Any] = {}
+    evidence_review_status = "skipped"
 
     def _event(
         *,
@@ -4086,6 +4397,74 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         planner_hints["query_plan"]["router_confidence"] = _normalize_router_confidence(
             planner_hints.get("router_confidence")
         )
+
+    keyword_filter_started = perf_counter()
+    flow_events.append(
+        _event(
+            stage="keyword_filter",
+            status="started",
+            source_count=0,
+            note="Keyword filter node started (source-language alignment).",
+            component="planner",
+            payload={
+                "source_mode": source_mode or "default",
+                "language_hint": planner_hints.get("language_hint"),
+                "keywords_before": planner_hints.get("keywords", []),
+            },
+        )
+    )
+    keyword_filter_report = _apply_keyword_filter_to_query_plan(
+        topic=topic,
+        query_plan=(
+            planner_hints.get("query_plan")
+            if isinstance(planner_hints.get("query_plan"), dict)
+            else {}
+        ),
+        planner_keywords=(
+            planner_hints.get("keywords")
+            if isinstance(planner_hints.get("keywords"), list)
+            else []
+        ),
+        source_mode=source_mode,
+    )
+    planner_hints["query_plan"] = keyword_filter_report.get("query_plan", planner_hints.get("query_plan"))
+    planner_hints["keywords"] = keyword_filter_report.get("keywords", planner_hints.get("keywords", []))
+    planner_hints["keywords_by_source"] = keyword_filter_report.get("keywords_by_source", {})
+    planner_hints["target_language_by_source"] = keyword_filter_report.get(
+        "target_language_by_source", {}
+    )
+    keyword_filter_status = (
+        "warning"
+        if keyword_filter_report.get("fallback_buckets")
+        else "completed"
+    )
+    pipeline_node_steps.append(
+        {
+            "stage": "keyword_filter",
+            "status": keyword_filter_status,
+            "note": (
+                "Keyword filter completed with source-language buckets."
+                if keyword_filter_status == "completed"
+                else "Keyword filter used fallback keywords for some source buckets."
+            ),
+            "payload": keyword_filter_report,
+        }
+    )
+    flow_events.append(
+        _event(
+            stage="keyword_filter",
+            status=keyword_filter_status,
+            source_count=0,
+            note=(
+                "Keyword filter completed."
+                if keyword_filter_status == "completed"
+                else "Keyword filter completed with fallback buckets."
+            ),
+            component="planner",
+            payload=keyword_filter_report,
+            started_at=keyword_filter_started,
+        )
+    )
 
     planner_trace = _build_planner_trace(
         topic=topic,
@@ -5133,6 +5512,47 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         effective_context = merged_context[:10]
     else:
         effective_context = merged_context
+
+    evidence_review_started = perf_counter()
+    flow_events.append(
+        _event(
+            stage="evidence_review",
+            status="started",
+            source_count=len(effective_context),
+            note="Evidence review node started.",
+            component="verifier",
+            payload={
+                "deep_pass_count": len(deep_pass_summaries),
+                "context_rows": len(effective_context),
+            },
+        )
+    )
+    evidence_review_summary = _build_evidence_review_summary(
+        effective_context=effective_context,
+        deep_pass_summaries=deep_pass_summaries,
+        evidence_verification=deep_beta_evidence_verification,
+    )
+    evidence_review_status = str(evidence_review_summary.get("status") or "warning")
+    pipeline_node_steps.append(
+        {
+            "stage": "evidence_review",
+            "status": evidence_review_status,
+            "note": str(evidence_review_summary.get("note") or "Evidence review completed."),
+            "payload": evidence_review_summary,
+        }
+    )
+    flow_events.append(
+        _event(
+            stage="evidence_review",
+            status=evidence_review_status,
+            source_count=len(effective_context),
+            note=str(evidence_review_summary.get("note") or "Evidence review completed."),
+            component="verifier",
+            payload=evidence_review_summary,
+            started_at=evidence_review_started,
+        )
+    )
+
     citations = _build_citations(topic, effective_context, uploaded_documents)
     if not citations and merged_context:
         citations = _build_citations(topic, merged_context[:10], uploaded_documents)
@@ -5639,6 +6059,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
 
     metadata_stage_entries = [
         {"name": "plan", "status": "completed"},
+        {"name": "keyword_filter", "status": keyword_filter_status},
         *(
             [{"name": "deep_research", "status": "completed"}]
             if research_mode == "deep"
@@ -5700,6 +6121,7 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             else []
         ),
         {"name": "hybrid_retrieval", "status": retrieval_status},
+        {"name": "evidence_review", "status": evidence_review_status},
         {"name": "answer_synthesis", "status": answer_status},
         {"name": "verification", "status": verification_state},
         {"name": "contradiction_miner", "status": contradiction_stage_status},
@@ -5735,6 +6157,11 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         }
         for stage_entry in metadata_stage_entries
     ]
+    reasoning_steps_output = (
+        [*deep_beta_reasoning_steps, *pipeline_node_steps]
+        if research_mode == "deep_beta"
+        else list(pipeline_node_steps)
+    )
     otel_trace_metadata = _build_otel_trace_metadata(
         trace_id=trace_id,
         run_id=run_id,
@@ -6126,13 +6553,15 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "pass_summaries": deep_pass_summaries,
         "deep_research_profiles": deep_research_profiles,
         "deep_research_methodology": deep_research_method,
-        "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+        "reasoning_steps": reasoning_steps_output,
         "parallel_reasoning_nodes": (
             deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
         ),
         "evidence_verification": (
             deep_beta_evidence_verification if research_mode == "deep_beta" else {}
         ),
+        "keyword_filter": keyword_filter_report,
+        "evidence_review": evidence_review_summary,
         "retrieval_budgets": deep_beta_retrieval_budgets if research_mode == "deep_beta" else {},
         "chain_status": deep_beta_chain_status if research_mode == "deep_beta" else {},
         "source_target_objective": source_target_objective,
@@ -6194,13 +6623,15 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
             "otel_trace_metadata": otel_trace_metadata,
             "otel_export": otel_export_status,
             "deep_research_methodology": deep_research_method,
-            "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+            "reasoning_steps": reasoning_steps_output,
             "parallel_reasoning_nodes": (
                 deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
             ),
             "evidence_verification": (
                 deep_beta_evidence_verification if research_mode == "deep_beta" else {}
             ),
+            "keyword_filter": keyword_filter_report,
+            "evidence_review": evidence_review_summary,
             "pass_summaries": deep_pass_summaries if research_mode == "deep_beta" else [],
             "retrieval_budgets": (
                 deep_beta_retrieval_budgets
@@ -6258,13 +6689,15 @@ def run_research_tier2(payload: dict[str, Any]) -> dict:
         "query_plan": query_plan,
         "research_mode": research_mode,
         "deep_pass_count": len(deep_pass_summaries),
-        "reasoning_steps": deep_beta_reasoning_steps if research_mode == "deep_beta" else [],
+        "reasoning_steps": reasoning_steps_output,
         "parallel_reasoning_nodes": (
             deep_beta_parallel_reasoning_nodes if research_mode == "deep_beta" else []
         ),
         "evidence_verification": (
             deep_beta_evidence_verification if research_mode == "deep_beta" else {}
         ),
+        "keyword_filter": keyword_filter_report,
+        "evidence_review": evidence_review_summary,
         "pass_summaries": deep_pass_summaries if research_mode == "deep_beta" else [],
         "retrieval_budgets": (
             deep_beta_retrieval_budgets

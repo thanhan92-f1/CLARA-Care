@@ -213,6 +213,8 @@ class ChatResponse(BaseModel):
 
 class MedicineCabinetItemCreate(BaseModel):
     drug_name: str = Field(min_length=1, max_length=255)
+    brand_name: str = ""
+    manufacturer: str = ""
     dosage: str = ""
     dosage_form: str = ""
     quantity: float = 0.0
@@ -225,6 +227,8 @@ class MedicineCabinetItemCreate(BaseModel):
 
 class MedicineCabinetItemUpdate(BaseModel):
     drug_name: str | None = Field(default=None, min_length=1, max_length=255)
+    brand_name: str | None = None
+    manufacturer: str | None = None
     dosage: str | None = None
     dosage_form: str | None = None
     quantity: float | None = None
@@ -238,6 +242,8 @@ class MedicineCabinetItemUpdate(BaseModel):
 class MedicineCabinetItemResponse(BaseModel):
     id: int
     drug_name: str
+    brand_name: str | None = None
+    manufacturer: str | None = None
     normalized_name: str
     normalization_source: Literal["db", "candidate", "fallback"] | None = None
     normalization_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -266,6 +272,9 @@ class CabinetScanTextRequest(BaseModel):
 class CabinetScanDetection(BaseModel):
     drug_name: str
     normalized_name: str
+    dosage: str | None = None
+    brand_name: str | None = None
+    manufacturer: str | None = None
     confidence: float
     evidence: str
     mapping_source: Literal["db", "candidate", "fallback"] | None = None
@@ -274,15 +283,28 @@ class CabinetScanDetection(BaseModel):
     confirmed: bool = False
 
 
+class CabinetPrioritizedField(BaseModel):
+    drug_name: str
+    brand_name: str = ""
+    manufacturer: str = ""
+    dosage: str = ""
+
+
 class CabinetScanTextResponse(BaseModel):
     detections: list[CabinetScanDetection]
     extracted_text: str | None = None
     ocr_provider: str | None = None
     ocr_endpoint: str | None = None
+    prioritized_fields: list[CabinetPrioritizedField] = Field(default_factory=list)
 
 
 class CabinetImportRequest(BaseModel):
     detections: list[CabinetScanDetection]
+
+
+class CabinetImportResponse(BaseModel):
+    inserted: int
+    prioritized_fields: list[CabinetPrioritizedField] = Field(default_factory=list)
 
 
 class CabinetAutoDdiRequest(BaseModel):
